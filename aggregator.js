@@ -2,6 +2,7 @@ import { readFileSync, readdirSync, statSync, createReadStream } from 'fs';
 import { join, basename } from 'path';
 import { homedir } from 'os';
 import { createInterface } from 'readline';
+import { loadPricingConfig, calculateCostFromUsage } from './pricing.js';
 
 export const SESSION_DIR = join(homedir(), '.openclaw', 'agents', 'main', 'sessions');
 
@@ -41,8 +42,10 @@ export function parseSessionFile(filename) {
 
 /**
  * Parse a single JSONL file and extract usage records
+ * @param {string} filepath - 文件路径
+ * @param {Object|null} pricingConfig - 价格配置对象，null 表示使用 OpenClaw 原始成本
  */
-export async function parseSessionJsonl(filepath) {
+export async function parseSessionJsonl(filepath, pricingConfig) {
   const records = [];
 
   return new Promise((resolve, reject) => {
@@ -63,16 +66,12 @@ export async function parseSessionJsonl(filepath) {
         // Filter out OpenClaw internal messages (gateway-injected, delivery-mirror)
         if (msg.provider === 'openclaw') return;
 
-        records.push({
-          provider: msg.provider || 'unknown',
-          model: msg.model || 'unknown',
-          usage: {
-            input: msg.usage.input || 0,
-            output: msg.usage.output || 0,
-            cacheRead: msg.usage.cacheRead || 0,
-            cacheWrite: msg.usage.cacheWrite || 0,
-            totalTokens: msg.usage.totalTokens || 0,
-          },
+        const usage = {
+          input: msg.usage.input || 0,
+          output: msg.usage.output || 0,
+          cacheRead: msg.usage.cacheRead || 0,
+          cacheWrite: msg.usage.cacheWrite || 0,
+          totalTokens: msg.usage.totalTokens || 0,
           cost: {
             input: msg.usage.cost?.input || 0,
             output: msg.usage.cost?.output || 0,
@@ -80,6 +79,19 @@ export async function parseSessionJsonl(filepath) {
             cacheWrite: msg.usage.cost?.cacheWrite || 0,
             total: msg.usage.cost?.total || 0,
           },
+        };
+
+        records.push({
+          provider: msg.provider || 'unknown',
+          model: msg.model || 'unknown',
+          usage: {
+            input: usage.input,
+            output: usage.output,
+            cacheRead: usage.cacheRead,
+            cacheWrite: usage.cacheWrite,
+            totalTokens: usage.totalTokens,
+          },
+          cost: calculateCostFromUsage(usage, msg.provider, msg.model, pricingConfig),
           timestamp: obj.timestamp || null,
         });
       } catch {
@@ -94,8 +106,14 @@ export async function parseSessionJsonl(filepath) {
 
 /**
  * Aggregate all session data
+ * @param {Object|null} pricingConfig - 价格配置对象，null 时自动加载
  */
-export async function aggregateStats() {
+export async function aggregateStats(pricingConfig = null) {
+  // 如果没有提供 pricingConfig，自动加载
+  if (!pricingConfig) {
+    pricingConfig = await loadPricingConfig();
+  }
+
   const files = readdirSync(SESSION_DIR);
 
   const summary = {
@@ -126,7 +144,7 @@ export async function aggregateStats() {
       continue;
     }
 
-    const records = await parseSessionJsonl(filepath);
+    const records = await parseSessionJsonl(filepath, pricingConfig);
 
     if (records.length === 0) continue;
 

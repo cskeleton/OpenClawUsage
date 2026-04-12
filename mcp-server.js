@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { aggregateStats } from "./aggregator.js";
+import { loadPricingConfig } from "./pricing.js";
 
 // Server instance
 const server = new Server(
@@ -26,8 +27,17 @@ const CACHE_TTL = 30_000; // 30 seconds
 
 async function getData() {
   const now = Date.now();
-  if (!cachedData || now - lastFetchTime > CACHE_TTL) {
-    cachedData = await aggregateStats();
+
+  // 检查价格版本是否变化
+  const currentPricingVersion = (await loadPricingConfig()).version;
+  const cachedPricingVersion = cachedData?.pricingVersion || 'none';
+
+  if (!cachedData ||
+      now - lastFetchTime > CACHE_TTL ||
+      cachedPricingVersion !== currentPricingVersion) {
+    const pricingConfig = await loadPricingConfig();
+    cachedData = await aggregateStats(pricingConfig);
+    cachedData.pricingVersion = currentPricingVersion;
     lastFetchTime = now;
   }
   return cachedData;

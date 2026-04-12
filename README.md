@@ -14,6 +14,13 @@
   - 使 OpenClaw Agent 能够直接调用工具查询自己的 Token 消耗。
   - 提供 `get_total_usage`, `get_usage_by_model`, `get_session_stats` 等 5 个核心工具。
 
+- **自定义价格配置**：
+  - 支持按 Provider/Model 组合配置自定义价格（每 1M tokens）。
+  - 可选计价：配置了价格就用自定义价格计算成本，否则使用 OpenClaw 内置价格。
+  - 支持 Input、Output、Cache Read、Cache Write 四种价格类型。
+  - Cache 价格可选，留空时自动使用 Input/Output 价格的 10%。
+  - 独立的价格配置页面，支持添加、编辑、删除和重置价格配置。
+
 ## 📊 数据来源与原理
 
 本工具通过监听和解析 OpenClaw 本地持久化目录实现统计：
@@ -76,6 +83,59 @@ npm run mcp
   }
 }
 ```
+
+## 💰 自定义价格配置
+
+### 配置方式
+
+1. **通过 Web 界面配置**：
+   - 启动服务后访问：`http://localhost:3000`
+   - 点击右上角的"💰 价格配置"按钮
+   - 选择模型并输入价格（单位：$ / 1M tokens）
+   - 保存后立即生效
+
+2. **通过 API 配置**：
+   ```bash
+   # 获取当前价格配置
+   curl http://localhost:3001/api/pricing
+
+   # 更新价格配置
+   curl -X PUT http://localhost:3001/api/pricing \
+     -H "Content-Type: application/json" \
+     -d '{
+       "version": "1.0",
+       "updated": "2026-04-12T00:00:00.000Z",
+       "pricing": {
+         "openai/gpt-4": {
+           "input": 30,
+           "output": 60,
+           "cacheRead": 3,
+           "cacheWrite": 6
+         }
+       }
+     }'
+
+   # 重置为默认配置（使用 OpenClaw 内置价格）
+   curl -X POST http://localhost:3001/api/pricing/reset
+   ```
+
+### 价格计算规则
+
+- **价格单位**：每 1M tokens（例如：$30/1M input tokens）
+- **计算公式**：成本 = (用量 / 1,000,000) × 价格
+- **Cache 价格**：如果留空，自动使用 Input/Output 价格的 10%
+- **可选计价**：只对配置了价格的模型使用自定义价格，其他模型使用 OpenClaw 内置价格
+
+### 示例
+
+配置 `openai/gpt-4` 的价格：
+- Input: $30/1M
+- Output: $60/1M
+- Cache Read: 留空（自动使用 $3/1M）
+- Cache Write: 留空（自动使用 $6/1M）
+
+使用 100,000 input tokens，成本计算为：
+- 100,000 / 1,000,000 × 30 = $3
 
 ## 📂 项目结构
 

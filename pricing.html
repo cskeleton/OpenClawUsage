@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>价格配置 - OpenClaw Usage</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/src/style.css" />
+  <style>
+    /* 页面特定样式 */
+    .pricing-page {
+      min-height: 100vh;
+      padding: 40px;
+    }
+
+    .pricing-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 30px;
+    }
+
+    .pricing-header h1 {
+      font-size: 2rem;
+      color: var(--text-primary);
+    }
+
+    .pricing-header .actions {
+      display: flex;
+      gap: 12px;
+    }
+
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-secondary);
+      text-decoration: none;
+      margin-bottom: 20px;
+      transition: color 0.2s;
+    }
+
+    .back-link:hover {
+      color: var(--accent-indigo);
+    }
+  </style>
+</head>
+<body>
+  <div class="pricing-page">
+    <!-- 返回链接 -->
+    <a href="/" class="back-link">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M19 12H5M12 19l-7-7 7-7"/>
+      </svg>
+      返回仪表盘
+    </a>
+
+    <!-- 页面头部 -->
+    <div class="pricing-header">
+      <div>
+        <h1>💰 价格配置</h1>
+        <p class="subtitle">配置各模型的价格（每 1M tokens）</p>
+      </div>
+      <div class="actions">
+        <button id="reset-pricing-btn" class="btn-secondary">重置</button>
+        <button id="save-pricing-btn" class="btn-primary">保存配置</button>
+      </div>
+    </div>
+
+    <!-- 价格表格 -->
+    <div class="glass-card">
+      <table id="pricing-table">
+        <thead>
+          <tr>
+            <th>Provider/Model</th>
+            <th>Input ($/1M)</th>
+            <th>Output ($/1M)</th>
+            <th>Cache Read ($/1M)</th>
+            <th>Cache Write ($/1M)</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="pricing-tbody"></tbody>
+      </table>
+    </div>
+
+    <!-- 添加新价格 -->
+    <div class="glass-card" style="margin-top: 20px;">
+      <h3 style="margin-bottom: 15px;">添加新价格</h3>
+      <div class="pricing-add-row">
+        <select id="new-model-select" style="flex: 2;">
+          <option value="">选择模型...</option>
+        </select>
+        <input type="number" id="new-input-price" placeholder="Input ($/1M)" step="0.01" style="flex: 1;">
+        <input type="number" id="new-output-price" placeholder="Output ($/1M)" step="0.01" style="flex: 1;">
+        <input type="number" id="new-cache-read-price" placeholder="Cache Read (可选)" step="0.01" style="flex: 1;">
+        <input type="number" id="new-cache-write-price" placeholder="Cache Write (可选)" step="0.01" style="flex: 1;">
+        <button id="add-pricing-btn" class="btn-primary">添加</button>
+      </div>
+    </div>
+
+    <!-- 说明 -->
+    <div class="glass-card" style="margin-top: 20px;">
+      <h3 style="margin-bottom: 10px;">📝 说明</h3>
+      <ul style="color: var(--text-secondary); line-height: 1.8; padding-left: 20px;">
+        <li>价格单位为每 1M tokens（例如：$30/1M input tokens）</li>
+        <li>如果配置了价格，则使用自定义价格计算成本</li>
+        <li>如果未配置价格，则使用 OpenClaw 内置的成本计算</li>
+        <li>Cache Read/Write 价格留空时，自动使用 Input/Output 价格的 10%</li>
+        <li>保存价格配置后会自动失效缓存，重新计算所有成本</li>
+      </ul>
+    </div>
+  </div>
+
+  <script type="module" src="/src/pricing.js"></script>
+</body>
+</html>

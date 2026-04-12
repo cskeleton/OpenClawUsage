@@ -14,6 +14,13 @@ A standalone token usage statistics and visualization tool for OpenClaw. It pars
   - Enables OpenClaw Agents to query their own token consumption directly.
   - Provides 5 core tools: `get_total_usage`, `get_usage_by_model`, `list_recent_sessions`, etc.
 
+- **Custom Pricing Configuration**:
+  - Configure custom prices per Provider/Model combination (per 1M tokens).
+  - Optional pricing: Uses custom prices when configured, otherwise falls back to OpenClaw's built-in cost calculation.
+  - Supports 4 price types: Input, Output, Cache Read, Cache Write.
+  - Cache prices are optional; when left empty, automatically use 10% of Input/Output prices.
+  - Dedicated pricing configuration page with add/edit/delete/reset functionality.
+
 ## 📊 Data Source & Logic
 
 The tool monitors and parses the local OpenClaw persistence directory:
@@ -76,6 +83,59 @@ Add the following to your OpenClaw or Claude Desktop MCP config:
   }
 }
 ```
+
+## 💰 Custom Pricing Configuration
+
+### Configuration Methods
+
+1. **Via Web Interface**:
+   - Start the service and visit: `http://localhost:3000`
+   - Click the "💰 Pricing Config" button in the top-right corner
+   - Select a model and enter the price (unit: $ / 1M tokens)
+   - Save and changes take effect immediately
+
+2. **Via API**:
+   ```bash
+   # Get current pricing configuration
+   curl http://localhost:3001/api/pricing
+
+   # Update pricing configuration
+   curl -X PUT http://localhost:3001/api/pricing \
+     -H "Content-Type: application/json" \
+     -d '{
+       "version": "1.0",
+       "updated": "2026-04-12T00:00:00.000Z",
+       "pricing": {
+         "openai/gpt-4": {
+           "input": 30,
+           "output": 60,
+           "cacheRead": 3,
+           "cacheWrite": 6
+         }
+       }
+     }'
+
+   # Reset to default configuration (use OpenClaw built-in pricing)
+   curl -X POST http://localhost:3001/api/pricing/reset
+   ```
+
+### Pricing Calculation Rules
+
+- **Price Unit**: Per 1M tokens (e.g., $30/1M input tokens)
+- **Calculation Formula**: Cost = (Usage / 1,000,000) × Price
+- **Cache Prices**: If left empty, automatically use 10% of Input/Output prices
+- **Optional Pricing**: Only applies custom pricing to configured models; others use OpenClaw built-in pricing
+
+### Example
+
+Configure pricing for `openai/gpt-4`:
+- Input: $30/1M
+- Output: $60/1M
+- Cache Read: Left empty (automatically uses $3/1M)
+- Cache Write: Left empty (automatically uses $6/1M)
+
+Using 100,000 input tokens, the cost is calculated as:
+- 100,000 / 1,000,000 × 30 = $3
 
 ## 📜 License
 

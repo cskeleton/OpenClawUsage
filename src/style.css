@@ -704,3 +704,217 @@ tbody td {
 .main-content > *:nth-child(3) { animation-delay: 0.15s; }
 .main-content > *:nth-child(4) { animation-delay: 0.2s; }
 .main-content > *:nth-child(5) { animation-delay: 0.25s; }
+
+/* ---- Pricing Configuration ---- */
+.btn-pricing {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--gradient-card);
+  border: 1px solid var(--border-color);
+  color: var(--accent-amber);
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-decoration: none;
+  transition: all 0.2s;
+  font-size: 0.9rem;
+  font-weight: 500;
+  backdrop-filter: blur(12px);
+}
+
+.btn-pricing:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--border-glow);
+  box-shadow: var(--shadow-glow);
+  transform: translateY(-1px);
+}
+
+#pricing-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+#pricing-table th,
+#pricing-table td {
+  padding: 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+}
+
+#pricing-table th {
+  color: var(--text-secondary);
+  font-weight: 500;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+#pricing-table tr:hover {
+  background: var(--bg-card-hover);
+}
+
+.pricing-input {
+  width: 100px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xs);
+  padding: 8px 12px;
+  color: var(--text-primary);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.95rem;
+  transition: all 0.2s;
+}
+
+.pricing-input:focus {
+  outline: none;
+  border-color: var(--accent-indigo);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+}
+
+.pricing-input::placeholder {
+  color: var(--text-muted);
+  font-family: var(--font);
+  font-size: 0.85rem;
+}
+
+.pricing-add-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.pricing-add-row select,
+.pricing-add-row input {
+  flex: 1;
+  min-width: 150px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xs);
+  padding: 10px 14px;
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.pricing-add-row select:focus,
+.pricing-add-row input:focus {
+  outline: none;
+  border-color: var(--accent-indigo);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+}
+
+.pricing-add-row select {
+  cursor: pointer;
+}
+
+.pricing-add-row option {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.btn-primary {
+  background: var(--gradient-primary);
+  border: none;
+  color: white;
+  padding: 10px 24px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.2s;
+  white-space: nowrap;
+  font-family: var(--font);
+  font-size: 0.9rem;
+}
+
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+}
+
+.btn-primary:active {
+  transform: translateY(0);
+}
+
+.btn-secondary {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  padding: 10px 24px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.2s;
+  white-space: nowrap;
+  font-family: var(--font);
+  font-size: 0.9rem;
+}
+
+.btn-secondary:hover {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+  border-color: var(--border-glow);
+}
+
+.btn-delete {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+  padding: 6px 12px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: all 0.2s;
+  font-family: var(--font);
+  font-weight: 500;
+}
+
+.btn-delete:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.5);
+  transform: translateY(-1px);
+}
+
+.btn-delete:active {
+  transform: translateY(0);
+}
+
+/* Pricing page responsive */
+@media (max-width: 768px) {
+  .pricing-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+  }
+
+  .pricing-header .actions {
+    width: 100%;
+  }
+
+  .pricing-header .actions button {
+    flex: 1;
+  }
+
+  .pricing-add-row {
+    flex-direction: column;
+  }
+
+  .pricing-add-row select,
+  .pricing-add-row input {
+    width: 100%;
+    min-width: unset;
+  }
+
+  #pricing-table th,
+  #pricing-table td {
+    padding: 12px 8px;
+    font-size: 0.8rem;
+  }
+
+  .pricing-input {
+    width: 80px;
+    font-size: 0.85rem;
+  }
+}
