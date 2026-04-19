@@ -19,11 +19,11 @@
   - 提供 `get_total_usage`, `get_usage_by_model`, `get_session_stats` 等 5 个核心工具。
 
 - **自定义价格配置**：
-  - 支持按 Provider/Model 组合配置自定义价格（每 1M tokens）。
+  - 支持按 Provider/Model 组合配置自定义价格（单位 **$/M**，每百万 tokens）。
   - **两级开关**：可关闭「启用自定义价格」（全局），或对单条规则关闭「启用」，以便在**自定义单价重算的理论成本**与**会话中 OpenClaw 写入的账面成本**之间切换。
-  - 价格配置页提供 **OpenClaw 内置价格（参考）** 表格：只读 `openclaw.json` 中已声明 `cost` 的模型，便于决定是否需要覆盖。
+  - 价格配置页提供 **OpenClaw 内置价格（参考）** 与 **缺少价格的模型（参考）**：数据来自 `OPENCLAW_CONFIG_DIR`（默认 `~/.openclaw`）下的 `agents/main/agent/models.json`，两表在同一文件内按「有/无有效单价」划分。
   - 支持 Input、Output、Cache Read、Cache Write 四种价格类型。
-  - Cache 价格可选，留空时自动使用 Input/Output 价格的 10%。
+  - Cache 价格可选；留空时不设单独缓存价，**按 Input / Output 原价计算**（读用 Input、写用 Output）。
   - 独立的价格配置页面，支持添加、编辑、删除和重置价格配置。
 
 ## 💰 价格配置文件路径
@@ -37,6 +37,15 @@
 | 1️⃣ | `OPENCLAW_DIR` 环境变量 | `OPENCLAW_DIR=/自定义/path` |
 | 2️⃣ | `openclaw.json` 中的 `agents.defaults.workspace` 配置 | `/Users/gc/gcDora` → 存到 `gcDora` 目录 |
 | 3️⃣ | 回退 `~/.openclaw/` | 默认 fallback |
+
+### 模型目录（models.json，用于价格参考 API）
+
+| 变量 | 含义 |
+|------|------|
+| `OPENCLAW_CONFIG_DIR` | 配置根目录；未设置时默认为 `~/.openclaw` |
+| 模型列表文件 | `$OPENCLAW_CONFIG_DIR/agents/main/agent/models.json` |
+
+与 `OPENCLAW_DIR`（用于定价配置文件路径探测）相互独立，可分别指向不同根目录。
 
 ### 迁移逻辑
 
@@ -127,7 +136,7 @@ npm run mcp
 1. **通过 Web 界面配置**：
    - 启动服务后访问：`http://localhost:3000`
    - 点击右上角的"💰 价格配置"按钮
-   - 选择模型并输入价格（单位：$ / 1M tokens）
+   - 选择模型并输入价格（单位：$/M）
    - 保存后立即生效
 
 2. **通过 API 配置**：
@@ -151,7 +160,7 @@ npm run mcp
        }
      }'
 
-   # 列出 openclaw.json 中带 cost 的模型（与当前自定义价对照）
+   # 列出 models.json 中有单价 / 缺少价格的模型（与当前自定义价对照）
    curl http://localhost:3001/api/openclaw/models
 
    # 重置为默认配置（使用 OpenClaw 内置价格）
@@ -160,9 +169,9 @@ npm run mcp
 
 ### 价格计算规则
 
-- **价格单位**：每 1M tokens（例如：$30/1M input tokens）
+- **价格单位**：$/M（每百万 tokens 的美元价，例如 Input $30/M）
 - **计算公式**：成本 = (用量 / 1,000,000) × 价格
-- **Cache 价格**：如果留空，自动使用 Input/Output 价格的 10%
+- **Cache 价格**：留空表示不设单独缓存价；**按 Input / Output 原价计算**（读取量用 Input 单价，写入量用 Output 单价）
 - **全局开关 `enabled`**（可选，默认视为开启）：为 `false` 时，**全部**模型使用会话 JSONL 中的 OpenClaw 账面成本（`usage.cost`），不进行自定义重算。
 - **单条规则 `pricing[k].enabled`**（可选，默认视为开启）：为 `false` 时，**仅该** `provider/model` 使用 OpenClaw 账面成本；其余仍按自定义规则计算（在全局开启的前提下）。
 - **可选计价**：仅当全局开启、且某模型存在自定义规则且该规则启用时，对该模型使用自定义单价；否则使用 OpenClaw 账面成本。
@@ -170,10 +179,10 @@ npm run mcp
 ### 示例
 
 配置 `openai/gpt-4` 的价格：
-- Input: $30/1M
-- Output: $60/1M
-- Cache Read: 留空（自动使用 $3/1M）
-- Cache Write: 留空（自动使用 $6/1M）
+- Input: $30/M
+- Output: $60/M
+- Cache Read: 留空（按 Input $30/M 原价计）
+- Cache Write: 留空（按 Output $60/M 原价计）
 
 使用 100,000 input tokens，成本计算为：
 - 100,000 / 1,000,000 × 30 = $3
@@ -184,7 +193,7 @@ npm run mcp
 - `mcp-server.js`: MCP 服务端入口（@modelcontextprotocol/sdk）。
 - `aggregator.js`: 共享的数据处理引擎，负责解析 `~/.openclaw` 下的 JSONL 文件。
 - `pricing.js`: 价格配置加载与保存，支持动态路径检测与成本计算。
-- `openclaw-config.js`: 读取 OpenClaw `openclaw.json` 中带 `cost` 的模型列表（供参考 API 使用）。
+- `openclaw-config.js`: 读取 `agents/main/agent/models.json`（`OPENCLAW_CONFIG_DIR` 或默认 `~/.openclaw`），划分有/无有效单价模型（供参考 API 使用）。
 - `pricing.json.example`: 价格配置模板（git 跟踪）。
 - `index.html` & `src/`: 前端可视化界面代码。
 

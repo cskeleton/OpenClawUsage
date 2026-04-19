@@ -2,12 +2,20 @@
   "version": 1,
   "transcripts": [
     {
+      "path": "/Users/gc/.cursor/projects/Users-gc-Dev-MyProject-OpenClawUsage/agent-transcripts/3e6793c3-a6a4-4e5f-9b77-86731592c307/3e6793c3-a6a4-4e5f-9b77-86731592c307.jsonl",
+      "mtime": 1776612722
+    },
+    {
       "path": "/Users/gc/.cursor/projects/Users-gc-Dev-MyProject-OpenClawUsage/agent-transcripts/50677a52-54c3-4bf4-b912-08b8aa946d29/50677a52-54c3-4bf4-b912-08b8aa946d29.jsonl",
-      "mtime": 1776603527
+      "mtime": 1776603842
     },
     {
       "path": "/Users/gc/.cursor/projects/Users-gc-Dev-MyProject-OpenClawUsage/agent-transcripts/64533ca8-806d-4011-9649-f8bbee5fcfa7/64533ca8-806d-4011-9649-f8bbee5fcfa7.jsonl",
       "mtime": 1776600050
+    },
+    {
+      "path": "/Users/gc/.cursor/projects/Users-gc-Dev-MyProject-OpenClawUsage/agent-transcripts/c060014e-da83-405a-975e-e288656c35a6/c060014e-da83-405a-975e-e288656c35a6.jsonl",
+      "mtime": 1776605621
     }
   ]
 }

@@ -1,34 +1,43 @@
 import { readFile } from 'fs/promises';
 import { homedir } from 'os';
 import { join as pathJoin } from 'path';
-import { detectOpenClawDir } from './pricing.js';
 
 /**
- * 解析 openclaw.json 路径：优先与价格配置同目录，其次 ~/.openclaw/openclaw.json
- * @returns {Promise<string|null>} 成功时返回绝对路径，失败时 null
+ * 配置根目录：与 shell `CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-$HOME/.openclaw}"` 一致
+ * @returns {string}
  */
-async function resolveOpenclawJsonPath() {
-  const dir = await detectOpenClawDir();
-  const primary = pathJoin(dir, 'openclaw.json');
+export function getOpenClawConfigDir() {
+  return process.env.OPENCLAW_CONFIG_DIR
+    ? process.env.OPENCLAW_CONFIG_DIR
+    : pathJoin(homedir(), '.openclaw');
+}
+
+/**
+ * agents/main/agent/models.json 的绝对路径（不检查存在性）
+ * @returns {string}
+ */
+export function getAgentModelsJsonPath() {
+  return pathJoin(getOpenClawConfigDir(), 'agents', 'main', 'agent', 'models.json');
+}
+
+/**
+ * 解析 agents/main/agent/models.json：存在则返回绝对路径，否则 null
+ * @returns {Promise<string|null>}
+ */
+export async function resolveAgentModelsJsonPath() {
+  const p = getAgentModelsJsonPath();
   try {
-    await readFile(primary, 'utf-8');
-    return primary;
+    await readFile(p, 'utf-8');
+    return p;
   } catch (e) {
-    if (e.code !== 'ENOENT') throw e;
+    if (e.code === 'ENOENT') return null;
+    throw e;
   }
-  const fallback = pathJoin(homedir(), '.openclaw', 'openclaw.json');
-  try {
-    await readFile(fallback, 'utf-8');
-    return fallback;
-  } catch (e) {
-    if (e.code !== 'ENOENT') throw e;
-  }
-  return null;
 }
 
 /**
  * 判断 cost 是否视为「有有效单价」（input 或 output 非零）
- * @param {Object} cost
+ * @param {Object|null} cost
  * @returns {boolean}
  */
 function hasMeaningfulCost(cost) {
@@ -39,18 +48,35 @@ function hasMeaningfulCost(cost) {
 }
 
 /**
- * 从 OpenClaw 的 openclaw.json 读取 models.providers 下带 cost 的模型列表（扁平化）
- * @returns {Promise<Array<{ provider: string, model: string, displayName: string, cost: object, contextWindow: number|null, maxTokens: number|null }>>}
+ * 将模型条目上的 cost 规范化为数值对象；无 cost 字段时返回 null
+ * @param {Object} m
+ * @returns {{ input: number, output: number, cacheRead: number, cacheWrite: number }|null}
  */
-export async function listOpenClawPricedModels() {
-  const jsonPath = await resolveOpenclawJsonPath();
-  if (!jsonPath) return [];
+function normalizeCostFromModel(m) {
+  if (!m || typeof m !== 'object' || !m.cost || typeof m.cost !== 'object') return null;
+  const c = m.cost;
+  return {
+    input: typeof c.input === 'number' ? c.input : 0,
+    output: typeof c.output === 'number' ? c.output : 0,
+    cacheRead:
+      c.cacheRead !== undefined && c.cacheRead !== null ? Number(c.cacheRead) : 0,
+    cacheWrite:
+      c.cacheWrite !== undefined && c.cacheWrite !== null ? Number(c.cacheWrite) : 0,
+  };
+}
 
+/**
+ * 从 models.json 读取全部可用模型（唯一目录源）
+ * @returns {Promise<Array<{ provider: string, model: string, displayName: string, cost: object|null, contextWindow: number|null, maxTokens: number|null, sources: string[] }>>}
+ */
+async function listAllModelsFromModelsJson() {
+  const p = getAgentModelsJsonPath();
   let raw;
   try {
-    raw = await readFile(jsonPath, 'utf-8');
-  } catch {
-    return [];
+    raw = await readFile(p, 'utf-8');
+  } catch (e) {
+    if (e.code === 'ENOENT') return [];
+    throw e;
   }
 
   let config;
@@ -60,10 +86,10 @@ export async function listOpenClawPricedModels() {
     return [];
   }
 
-  const providers = config?.models?.providers;
+  const providers = config?.providers || config?.models?.providers;
   if (!providers || typeof providers !== 'object') return [];
 
-  const out = [];
+  const rows = [];
   for (const [providerName, providerObj] of Object.entries(providers)) {
     const models = providerObj?.models;
     if (!Array.isArray(models)) continue;
@@ -72,32 +98,53 @@ export async function listOpenClawPricedModels() {
       if (!m || typeof m !== 'object') continue;
       const id = typeof m.id === 'string' ? m.id : '';
       if (!id) continue;
-      if (!hasMeaningfulCost(m.cost)) continue;
 
-      const cost = {
-        input: typeof m.cost.input === 'number' ? m.cost.input : 0,
-        output: typeof m.cost.output === 'number' ? m.cost.output : 0,
-        cacheRead:
-          m.cost.cacheRead !== undefined && m.cost.cacheRead !== null
-            ? Number(m.cost.cacheRead)
-            : 0,
-        cacheWrite:
-          m.cost.cacheWrite !== undefined && m.cost.cacheWrite !== null
-            ? Number(m.cost.cacheWrite)
-            : 0,
-      };
-
-      out.push({
+      rows.push({
         provider: providerName,
         model: id,
         displayName: typeof m.name === 'string' ? m.name : id,
-        cost,
-        contextWindow:
-          typeof m.contextWindow === 'number' ? m.contextWindow : null,
+        cost: normalizeCostFromModel(m),
+        contextWindow: typeof m.contextWindow === 'number' ? m.contextWindow : null,
         maxTokens: typeof m.maxTokens === 'number' ? m.maxTokens : null,
+        sources: ['modelsJson'],
       });
     }
   }
 
-  return out;
+  rows.sort((a, b) => {
+    const ka = `${a.provider}/${a.model}`;
+    const kb = `${b.provider}/${b.model}`;
+    return ka.localeCompare(kb);
+  });
+  return rows;
+}
+
+/**
+ * 内置价参考表：models.json 中带有效 input/output 单价的模型（与「缺少价格」互为补集）
+ * @returns {Promise<Array<{ provider: string, model: string, displayName: string, cost: object, contextWindow: number|null, maxTokens: number|null }>>}
+ */
+export async function listOpenClawPricedModels() {
+  const all = await listAllModelsFromModelsJson();
+  return all
+    .filter((row) => hasMeaningfulCost(row.cost))
+    .map((row) => {
+      const cost = row.cost;
+      return {
+        provider: row.provider,
+        model: row.model,
+        displayName: row.displayName,
+        cost,
+        contextWindow: row.contextWindow,
+        maxTokens: row.maxTokens,
+      };
+    });
+}
+
+/**
+ * models.json 中未声明有效 input/output 单价的模型
+ * @returns {Promise<Array<{ provider: string, model: string, displayName: string, cost: object|null, contextWindow: number|null, maxTokens: number|null, sources: string[] }>>}
+ */
+export async function listUnpricedModels() {
+  const all = await listAllModelsFromModelsJson();
+  return all.filter((row) => !hasMeaningfulCost(row.cost));
 }

@@ -6,7 +6,7 @@ import {
   savePricingConfig,
   validatePricingConfig,
 } from './pricing.js';
-import { listOpenClawPricedModels } from './openclaw-config.js';
+import { listOpenClawPricedModels, listUnpricedModels } from './openclaw-config.js';
 
 const app = express();
 const PORT = 3001;
@@ -99,12 +99,13 @@ app.post('/api/pricing/reset', async (req, res) => {
   }
 });
 
-// GET /api/openclaw/models - OpenClaw openclaw.json 中带 cost 的模型 + 与自定义价对照
+// GET /api/openclaw/models - models.json 中有/无单价模型 + 与自定义价对照
 app.get('/api/openclaw/models', async (req, res) => {
   try {
-    const [priced, pricingConfig] = await Promise.all([
+    const [priced, pricingConfig, unpriced] = await Promise.all([
       listOpenClawPricedModels(),
       loadPricingConfig(),
+      listUnpricedModels(),
     ]);
     const customMap = pricingConfig.pricing || {};
     const rows = priced.map((row) => {
@@ -131,7 +132,17 @@ app.get('/api/openclaw/models', async (req, res) => {
         custom,
       };
     });
-    res.json({ models: rows });
+    const unpricedModels = unpriced.map((row) => ({
+      key: `${row.provider}/${row.model}`,
+      provider: row.provider,
+      model: row.model,
+      displayName: row.displayName,
+      cost: row.cost,
+      contextWindow: row.contextWindow,
+      maxTokens: row.maxTokens,
+      sources: row.sources,
+    }));
+    res.json({ models: rows, unpricedModels });
   } catch (err) {
     console.error('Error listing OpenClaw priced models:', err);
     res.status(500).json({ error: err.message });

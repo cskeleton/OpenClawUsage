@@ -15,11 +15,11 @@ A standalone token usage statistics and visualization tool for OpenClaw. It pars
   - Provides 5 core tools: `get_total_usage`, `get_usage_by_model`, `list_recent_sessions`, etc.
 
 - **Custom Pricing Configuration**:
-  - Configure custom prices per Provider/Model combination (per 1M tokens).
-  - **Two-level toggles**: Turn off **Enable custom pricing** globally, or disable a single rule, to switch between **recalculated costs from your custom $/1M rates** and **per-message costs embedded in sessions** (`usage.cost`, as produced by OpenClaw).
-  - The pricing page includes an **OpenClaw built-in prices (reference)** table: read-only list of models that declare `cost` in `openclaw.json`, to help decide what to override.
+  - Configure custom prices per Provider/Model combination (unit **$/M**, per million tokens).
+  - **Two-level toggles**: Turn off **Enable custom pricing** globally, or disable a single rule, to switch between **recalculated costs from your custom $/M rates** and **per-message costs embedded in sessions** (`usage.cost`, as produced by OpenClaw).
+  - The pricing page includes **OpenClaw built-in prices (reference)** and **Models missing prices (reference)**: both are derived from `agents/main/agent/models.json` under `OPENCLAW_CONFIG_DIR` (default `~/.openclaw`), split by whether input/output rates are present.
   - Supports 4 price types: Input, Output, Cache Read, Cache Write.
-  - Cache prices are optional; when left empty, automatically use 10% of Input/Output prices.
+  - Cache prices are optional; when left empty, costs are computed **at the Input / Output list price** (read traffic at Input $/M, write traffic at Output $/M; no separate cache rate).
   - Dedicated pricing configuration page with add/edit/delete/reset functionality.
   - **Dynamic config path**: The pricing file (`openclaw-usage-pricing.json`) auto-detects the OpenClaw workspace directory, so it travels with your config across machines.
 
@@ -100,6 +100,15 @@ The pricing config file (`openclaw-usage-pricing.json`) uses **dynamic path dete
 | 2️⃣ | `agents.defaults.workspace` in `openclaw.json` | `/Users/gc/gcDora` → stored under `gcDora` dir |
 | 3️⃣ | Fallback `~/.openclaw/` | Default fallback |
 
+#### Model catalog (`models.json`, pricing reference API)
+
+| Variable | Meaning |
+|----------|---------|
+| `OPENCLAW_CONFIG_DIR` | Config root; defaults to `~/.openclaw` if unset |
+| Model list file | `$OPENCLAW_CONFIG_DIR/agents/main/agent/models.json` |
+
+Independent of `OPENCLAW_DIR` (used for pricing file path detection).
+
 #### Migration Logic
 
 On startup, the tool automatically handles path compatibility and migration:
@@ -124,7 +133,7 @@ Instead of under `~/.openclaw/`. This keeps the pricing config bound to the Open
 1. **Via Web Interface**:
    - Start the service and visit: `http://localhost:3000`
    - Click the "💰 Pricing Config" button in the top-right corner
-   - Select a model and enter the price (unit: $ / 1M tokens)
+   - Select a model and enter the price (unit: $/M)
    - Save and changes take effect immediately
 
 2. **Via API**:
@@ -148,7 +157,7 @@ Instead of under `~/.openclaw/`. This keeps the pricing config bound to the Open
        }
      }'
 
-   # List models with cost in openclaw.json (joined with current custom rules)
+   # List models with / without prices from models.json (joined with current custom rules)
    curl http://localhost:3001/api/openclaw/models
 
    # Reset to default configuration (use OpenClaw built-in pricing)
@@ -157,20 +166,20 @@ Instead of under `~/.openclaw/`. This keeps the pricing config bound to the Open
 
 ### Pricing Calculation Rules
 
-- **Price Unit**: Per 1M tokens (e.g., $30/1M input tokens)
+- **Price Unit**: $/M (USD per million tokens per field)
 - **Calculation Formula**: Cost = (Usage / 1,000,000) × Price
-- **Cache Prices**: If left empty, automatically use 10% of Input/Output prices
+- **Cache prices**: If left empty, cache read volume uses the **Input** price and cache write volume uses the **Output** price ($/M).
 - **Global `enabled`** (optional, defaults to on): When `false`, **all** models use session `usage.cost` (OpenClaw’s per-message cost breakdown); no custom recalculation.
 - **Per-rule `pricing[k].enabled`** (optional, defaults to on): When `false`, **only that** `provider/model` uses session `usage.cost`; other models still use custom rates (if global custom pricing is on).
-- **Optional Pricing**: Custom $/1M applies only when global custom pricing is on, a rule exists for that model, and that rule is enabled; otherwise session `usage.cost` is used.
+- **Optional Pricing**: Custom $/M applies only when global custom pricing is on, a rule exists for that model, and that rule is enabled; otherwise session `usage.cost` is used.
 
 ### Example
 
 Configure pricing for `openai/gpt-4`:
-- Input: $30/1M
-- Output: $60/1M
-- Cache Read: Left empty (automatically uses $3/1M)
-- Cache Write: Left empty (automatically uses $6/1M)
+- Input: $30/M
+- Output: $60/M
+- Cache Read: Left empty (priced at Input $30/M)
+- Cache Write: Left empty (priced at Output $60/M)
 
 Using 100,000 input tokens, the cost is calculated as:
 - 100,000 / 1,000,000 × 30 = $3

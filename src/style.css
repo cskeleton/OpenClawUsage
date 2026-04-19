@@ -865,6 +865,74 @@ html.theme-dark .date-input {
   background: var(--bg-card-hover);
 }
 
+#openclaw-ref-table,
+#unpriced-models-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+#openclaw-ref-table th,
+#openclaw-ref-table td,
+#unpriced-models-table th,
+#unpriced-models-table td {
+  padding: 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+}
+
+#openclaw-ref-table th,
+#unpriced-models-table th {
+  color: var(--text-secondary);
+  font-weight: 500;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+#openclaw-ref-table tr:hover,
+#unpriced-models-table tr:hover {
+  background: var(--bg-card-hover);
+}
+
+.table-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 8px;
+}
+
+.pagination-info {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.btn-pagination {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-family: var(--font);
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.btn-pagination:hover:not(:disabled) {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+  border-color: var(--border-glow);
+}
+
+.btn-pagination:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .pricing-input {
   width: 100px;
   background: var(--bg-input);
@@ -875,6 +943,29 @@ html.theme-dark .date-input {
   font-family: 'SF Mono', 'Fira Code', monospace;
   font-size: 0.95rem;
   transition: all 0.2s;
+}
+
+/* Cache 列 hint 较长：略加宽 + placeholder 略缩，减少截断；完整说明用 title 悬停 */
+#pricing-table .pricing-input--cache {
+  min-width: 7.5rem;
+  width: 100%;
+  max-width: 11rem;
+}
+
+#pricing-table .pricing-input--cache::placeholder {
+  font-size: 0.72rem;
+  font-family: var(--font);
+  letter-spacing: -0.02em;
+}
+
+.pricing-add-row .pricing-input--cache {
+  min-width: 7rem;
+}
+
+.pricing-add-row .pricing-input--cache::placeholder {
+  font-size: 0.72rem;
+  font-family: var(--font);
+  letter-spacing: -0.02em;
 }
 
 .pricing-input:focus {
@@ -993,6 +1084,46 @@ html.theme-dark .date-input {
   transform: translateY(0);
 }
 
+/* 参考表操作列：与行内徽章、数字尺度一致 */
+.btn-openclaw-row {
+  padding: 6px 12px;
+  border-radius: var(--radius-xs);
+  font-size: 0.85rem;
+  font-weight: 500;
+  font-family: var(--font);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+
+.btn-openclaw-row.btn-secondary {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+}
+
+.btn-openclaw-row.btn-secondary:hover {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+  border-color: var(--border-glow);
+}
+
+.btn-openclaw-row-accent {
+  border: none;
+  color: #fff;
+  background: var(--gradient-primary);
+  box-shadow: 0 2px 8px rgba(234, 88, 12, 0.22);
+}
+
+.btn-openclaw-row-accent:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(234, 88, 12, 0.3);
+}
+
+.btn-openclaw-row-accent:active {
+  transform: translateY(0);
+}
+
 /* Pricing page responsive */
 @media (max-width: 768px) {
   .pricing-header {
@@ -1020,7 +1151,11 @@ html.theme-dark .date-input {
   }
 
   #pricing-table th,
-  #pricing-table td {
+  #pricing-table td,
+  #openclaw-ref-table th,
+  #openclaw-ref-table td,
+  #unpriced-models-table th,
+  #unpriced-models-table td {
     padding: 12px 8px;
     font-size: 0.8rem;
   }
@@ -1155,6 +1290,67 @@ tr.pricing-row-highlight {
 
 .pricing-page .glass-card {
   padding: 24px;
+}
+
+/* 价格页：参考卡片折叠标题（三角 + 标题行） */
+.pricing-collapsible-card .pricing-collapse-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 0;
+  margin: 0 0 0 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-primary);
+  font-family: var(--font);
+  transition: color 0.2s;
+}
+
+.pricing-collapsible-card .pricing-collapse-toggle:hover {
+  color: var(--accent-orange);
+}
+
+.pricing-collapsible-card .pricing-collapse-toggle:hover .pricing-collapse-chevron {
+  border-left-color: var(--accent-orange);
+}
+
+.pricing-collapsible-card .pricing-collapse-toggle:focus-visible {
+  outline: 2px solid var(--accent-orange);
+  outline-offset: 4px;
+  border-radius: var(--radius-xs);
+}
+
+.pricing-collapse-chevron {
+  flex-shrink: 0;
+  display: inline-block;
+  width: 0;
+  height: 0;
+  margin-top: 2px;
+  border-style: solid;
+  border-width: 5px 0 5px 7px;
+  border-color: transparent transparent transparent var(--text-secondary);
+  transition: transform 0.2s ease;
+}
+
+.pricing-collapse-toggle[aria-expanded='true'] .pricing-collapse-chevron {
+  transform: rotate(90deg);
+}
+
+.pricing-collapse-heading {
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.pricing-collapse-panel {
+  margin-top: 12px;
+}
+
+.pricing-collapse-panel[hidden] {
+  display: none !important;
 }
 
 .pricing-header {

@@ -6,7 +6,7 @@ import { homedir } from 'os';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// 价格单位：每 1M tokens
+// 展示单位 $/M；内部仍按每 1e6 tokens 换算
 const TOKENS_PER_UNIT = 1_000_000;
 
 /**
@@ -197,13 +197,13 @@ export function calculateCostFromUsage(usage, provider, model, pricingConfig) {
     return openclawCostFallback(usage);
   }
 
-  // 计算成本：价格（每 1M tokens） * 用量（tokens） / 1M
+  // 计算成本：价格（$/M） * 用量（tokens） / 1e6
   const inputCost = (pricing.input * (usage.input || 0)) / TOKENS_PER_UNIT;
   const outputCost = (pricing.output * (usage.output || 0)) / TOKENS_PER_UNIT;
 
-  // 缓存价格：如果为 null，使用 input/output 价格的 10%
-  const cacheReadPrice = pricing.cacheRead ?? (pricing.input * 0.1);
-  const cacheWritePrice = pricing.cacheWrite ?? (pricing.output * 0.1);
+  // 缓存单价留空：无单独缓存价，按 Input/Output 原价计算缓存 token 费用
+  const cacheReadPrice = pricing.cacheRead ?? pricing.input;
+  const cacheWritePrice = pricing.cacheWrite ?? pricing.output;
 
   const cacheReadCost = (cacheReadPrice * (usage.cacheRead || 0)) / TOKENS_PER_UNIT;
   const cacheWriteCost = (cacheWritePrice * (usage.cacheWrite || 0)) / TOKENS_PER_UNIT;

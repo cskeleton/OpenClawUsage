@@ -43,17 +43,17 @@
             <div class="tooltip-popup glass-card">
               <h4>📝 说明</h4>
               <ul>
-                <li>价格单位为每 1M tokens（例如：$30/1M input tokens）</li>
+                <li>价格单位为 <strong>$/M</strong>（每百万 tokens 的美元价）</li>
                 <li>关闭「启用自定义价格」或关闭某一行的「启用」后，该范围使用会话中的 OpenClaw 账面成本</li>
                 <li>开启全局且开启对应行时，使用自定义单价重算成本（理论价）</li>
-                <li>参考表仅展示 <code>openclaw.json</code> 中已声明 cost 的模型；未列出则以会话为准</li>
-                <li>Cache Read/Write 价格留空时，自动使用 Input/Output 价格的 10%</li>
+                <li>参考表基于 <code>models.json</code>（<code>$OPENCLAW_CONFIG_DIR</code> 或默认 <code>~/.openclaw</code> 下 <code>agents/main/agent/models.json</code>）中带有效单价的模型</li>
+                <li>Cache Read/Write 留空表示不设单独缓存价：<strong>按 Input / Output 原价计算</strong>（读取用 Input 单价，写入用 Output 单价）</li>
                 <li>保存价格配置或切换开关后会自动失效缓存，重新计算所有成本</li>
               </ul>
             </div>
           </div>
         </h1>
-        <p class="subtitle">配置各模型的价格（每 1M tokens）</p>
+        <p class="subtitle">配置各模型的价格（$/M）</p>
       </div>
       <div class="actions">
         <div class="theme-switch" role="group" aria-label="主题">
@@ -77,10 +77,10 @@
           <tr>
             <th>启用</th>
             <th>Provider/Model</th>
-            <th>Input ($/1M)</th>
-            <th>Output ($/1M)</th>
-            <th>Cache Read ($/1M)</th>
-            <th>Cache Write ($/1M)</th>
+            <th>Input ($/M)</th>
+            <th>Output ($/M)</th>
+            <th>Cache Read ($/M)</th>
+            <th>Cache Write ($/M)</th>
             <th>操作</th>
           </tr>
         </thead>
@@ -95,36 +95,82 @@
         <select id="new-model-select" style="flex: 2;">
           <option value="">选择模型...</option>
         </select>
-        <input type="number" id="new-input-price" placeholder="Input ($/1M)" step="0.01" style="flex: 1;">
-        <input type="number" id="new-output-price" placeholder="Output ($/1M)" step="0.01" style="flex: 1;">
-        <input type="number" id="new-cache-read-price" placeholder="Cache Read (可选)" step="0.01" style="flex: 1;">
-        <input type="number" id="new-cache-write-price" placeholder="Cache Write (可选)" step="0.01" style="flex: 1;">
+        <input type="number" id="new-input-price" placeholder="Input ($/M)" step="0.01" style="flex: 1;">
+        <input type="number" id="new-output-price" placeholder="Output ($/M)" step="0.01" style="flex: 1;">
+        <input type="number" id="new-cache-read-price" class="pricing-input--cache" placeholder="留空按 Input 原价" title="留空时按该行 Input 单价（$/M）计算 Cache Read 费用" step="0.01" style="flex: 1; min-width: 7rem;">
+        <input type="number" id="new-cache-write-price" class="pricing-input--cache" placeholder="留空按 Output 原价" title="留空时按该行 Output 单价（$/M）计算 Cache Write 费用" step="0.01" style="flex: 1; min-width: 7rem;">
         <button id="add-pricing-btn" class="btn-primary">添加</button>
       </div>
     </div>
 
-    <!-- OpenClaw 内置价格参考（只读 openclaw.json） -->
-    <div class="glass-card" style="margin-top: 20px;">
-      <h3 style="margin-bottom: 8px;">OpenClaw 内置价格（参考）</h3>
-      <p class="subtitle" style="margin-bottom: 15px;">
-        读取自 OpenClaw 的 <code>openclaw.json</code>（<code>models.providers[].models[].cost</code>）。「已覆盖」表示上方自定义表中已有同名 <code>provider/model</code> 规则。
-      </p>
-      <div style="overflow-x: auto;">
-        <table id="openclaw-ref-table">
-          <thead>
-            <tr>
-              <th>Provider / Model</th>
-              <th>Input ($/1M)</th>
-              <th>Output ($/1M)</th>
-              <th>Cache Read ($/1M)</th>
-              <th>Cache Write ($/1M)</th>
-              <th>Context</th>
-              <th>状态</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody id="openclaw-ref-tbody"></tbody>
-        </table>
+    <!-- OpenClaw 内置价格参考（models.json 中有单价条目） -->
+    <div class="glass-card pricing-collapsible-card" style="margin-top: 20px;">
+      <button
+        type="button"
+        class="pricing-collapse-toggle"
+        id="openclaw-ref-collapse-toggle"
+        aria-expanded="false"
+        aria-controls="openclaw-ref-panel"
+      >
+        <span class="pricing-collapse-chevron" aria-hidden="true"></span>
+        <span class="pricing-collapse-heading">OpenClaw 内置价格（参考）</span>
+      </button>
+      <div id="openclaw-ref-panel" class="pricing-collapse-panel" hidden>
+        <p class="subtitle" style="margin-bottom: 15px;">
+          读取自 <code>$OPENCLAW_CONFIG_DIR/agents/main/agent/models.json</code>（未设置环境变量时默认为 <code>~/.openclaw/...</code>）中已声明有效 input/output 单价的模型。「已覆盖」表示上方自定义表中已有同名 <code>provider/model</code> 规则。
+        </p>
+        <div style="overflow-x: auto;">
+          <table id="openclaw-ref-table">
+            <thead>
+              <tr>
+                <th>Provider / Model</th>
+                <th>Input ($/M)</th>
+                <th>Output ($/M)</th>
+                <th>Cache Read ($/M)</th>
+                <th>Cache Write ($/M)</th>
+                <th>Context</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="openclaw-ref-tbody"></tbody>
+          </table>
+        </div>
+        <div id="openclaw-ref-pagination" class="table-pagination" aria-label="参考表分页"></div>
+      </div>
+    </div>
+
+    <!-- 缺少价格的模型（与上表同一 models.json，无有效单价） -->
+    <div class="glass-card pricing-collapsible-card" style="margin-top: 20px;">
+      <button
+        type="button"
+        class="pricing-collapse-toggle"
+        id="unpriced-models-collapse-toggle"
+        aria-expanded="false"
+        aria-controls="unpriced-models-panel"
+      >
+        <span class="pricing-collapse-chevron" aria-hidden="true"></span>
+        <span class="pricing-collapse-heading">缺少价格的模型（参考）</span>
+      </button>
+      <div id="unpriced-models-panel" class="pricing-collapse-panel" hidden>
+        <p class="subtitle" style="margin-bottom: 15px;">
+          与上方同一文件：列出其中尚未声明有效 input/output 单价的模型（与「内置价格」表互为补集）。路径规则：<code>OPENCLAW_CONFIG_DIR</code> 或默认 <code>~/.openclaw</code> 下的 <code>agents/main/agent/models.json</code>。
+        </p>
+        <div style="overflow-x: auto;">
+          <table id="unpriced-models-table">
+            <thead>
+              <tr>
+                <th>Provider / Model</th>
+                <th>名称</th>
+                <th>Context</th>
+                <th>Input / Output ($/M)</th>
+                <th>来源</th>
+              </tr>
+            </thead>
+            <tbody id="unpriced-models-tbody"></tbody>
+          </table>
+        </div>
+        <div id="unpriced-models-pagination" class="table-pagination" aria-label="缺少价格表分页"></div>
       </div>
     </div>
   </div>
