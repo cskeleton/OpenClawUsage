@@ -20,7 +20,8 @@
 
 - **自定义价格配置**：
   - 支持按 Provider/Model 组合配置自定义价格（每 1M tokens）。
-  - 可选计价：配置了价格就用自定义价格计算成本，否则使用 OpenClaw 内置价格。
+  - **两级开关**：可关闭「启用自定义价格」（全局），或对单条规则关闭「启用」，以便在**自定义单价重算的理论成本**与**会话中 OpenClaw 写入的账面成本**之间切换。
+  - 价格配置页提供 **OpenClaw 内置价格（参考）** 表格：只读 `openclaw.json` 中已声明 `cost` 的模型，便于决定是否需要覆盖。
   - 支持 Input、Output、Cache Read、Cache Write 四种价格类型。
   - Cache 价格可选，留空时自动使用 Input/Output 价格的 10%。
   - 独立的价格配置页面，支持添加、编辑、删除和重置价格配置。
@@ -150,6 +151,9 @@ npm run mcp
        }
      }'
 
+   # 列出 openclaw.json 中带 cost 的模型（与当前自定义价对照）
+   curl http://localhost:3001/api/openclaw/models
+
    # 重置为默认配置（使用 OpenClaw 内置价格）
    curl -X POST http://localhost:3001/api/pricing/reset
    ```
@@ -159,7 +163,9 @@ npm run mcp
 - **价格单位**：每 1M tokens（例如：$30/1M input tokens）
 - **计算公式**：成本 = (用量 / 1,000,000) × 价格
 - **Cache 价格**：如果留空，自动使用 Input/Output 价格的 10%
-- **可选计价**：只对配置了价格的模型使用自定义价格，其他模型使用 OpenClaw 内置价格
+- **全局开关 `enabled`**（可选，默认视为开启）：为 `false` 时，**全部**模型使用会话 JSONL 中的 OpenClaw 账面成本（`usage.cost`），不进行自定义重算。
+- **单条规则 `pricing[k].enabled`**（可选，默认视为开启）：为 `false` 时，**仅该** `provider/model` 使用 OpenClaw 账面成本；其余仍按自定义规则计算（在全局开启的前提下）。
+- **可选计价**：仅当全局开启、且某模型存在自定义规则且该规则启用时，对该模型使用自定义单价；否则使用 OpenClaw 账面成本。
 
 ### 示例
 
@@ -177,7 +183,8 @@ npm run mcp
 - `server.js`: Web API 服务端入口（Express）。
 - `mcp-server.js`: MCP 服务端入口（@modelcontextprotocol/sdk）。
 - `aggregator.js`: 共享的数据处理引擎，负责解析 `~/.openclaw` 下的 JSONL 文件。
-- `pricing.js`: 价格配置加载与保存，支持动态路径检测。
+- `pricing.js`: 价格配置加载与保存，支持动态路径检测与成本计算。
+- `openclaw-config.js`: 读取 OpenClaw `openclaw.json` 中带 `cost` 的模型列表（供参考 API 使用）。
 - `pricing.json.example`: 价格配置模板（git 跟踪）。
 - `index.html` & `src/`: 前端可视化界面代码。
 

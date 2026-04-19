@@ -16,7 +16,8 @@ A standalone token usage statistics and visualization tool for OpenClaw. It pars
 
 - **Custom Pricing Configuration**:
   - Configure custom prices per Provider/Model combination (per 1M tokens).
-  - Optional pricing: Uses custom prices when configured, otherwise falls back to OpenClaw's built-in cost calculation.
+  - **Two-level toggles**: Turn off **Enable custom pricing** globally, or disable a single rule, to switch between **recalculated costs from your custom $/1M rates** and **per-message costs embedded in sessions** (`usage.cost`, as produced by OpenClaw).
+  - The pricing page includes an **OpenClaw built-in prices (reference)** table: read-only list of models that declare `cost` in `openclaw.json`, to help decide what to override.
   - Supports 4 price types: Input, Output, Cache Read, Cache Write.
   - Cache prices are optional; when left empty, automatically use 10% of Input/Output prices.
   - Dedicated pricing configuration page with add/edit/delete/reset functionality.
@@ -147,6 +148,9 @@ Instead of under `~/.openclaw/`. This keeps the pricing config bound to the Open
        }
      }'
 
+   # List models with cost in openclaw.json (joined with current custom rules)
+   curl http://localhost:3001/api/openclaw/models
+
    # Reset to default configuration (use OpenClaw built-in pricing)
    curl -X POST http://localhost:3001/api/pricing/reset
    ```
@@ -156,7 +160,9 @@ Instead of under `~/.openclaw/`. This keeps the pricing config bound to the Open
 - **Price Unit**: Per 1M tokens (e.g., $30/1M input tokens)
 - **Calculation Formula**: Cost = (Usage / 1,000,000) × Price
 - **Cache Prices**: If left empty, automatically use 10% of Input/Output prices
-- **Optional Pricing**: Only applies custom pricing to configured models; others use OpenClaw built-in pricing
+- **Global `enabled`** (optional, defaults to on): When `false`, **all** models use session `usage.cost` (OpenClaw’s per-message cost breakdown); no custom recalculation.
+- **Per-rule `pricing[k].enabled`** (optional, defaults to on): When `false`, **only that** `provider/model` uses session `usage.cost`; other models still use custom rates (if global custom pricing is on).
+- **Optional Pricing**: Custom $/1M applies only when global custom pricing is on, a rule exists for that model, and that rule is enabled; otherwise session `usage.cost` is used.
 
 ### Example
 

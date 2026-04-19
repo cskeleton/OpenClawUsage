@@ -40,11 +40,29 @@ function getColor(index) {
   return COLORS[COLOR_KEYS[index % COLOR_KEYS.length]];
 }
 
-// Common chart defaults
+/**
+ * 从 CSS 变量读取当前主题的图表配色（随浅色/深色切换）
+ * @returns {{ text: string, border: string, grid: string, tooltipBg: string, tooltipTitle: string, tooltipBody: string, tooltipBorder: string }}
+ */
+function getChartThemeFromCss() {
+  const root = document.documentElement;
+  const s = getComputedStyle(root);
+  const text = (s.getPropertyValue('--chart-text') || '#78716c').trim();
+  const border = (s.getPropertyValue('--chart-border') || 'rgba(234, 88, 12, 0.12)').trim();
+  const grid = (s.getPropertyValue('--chart-grid') || 'rgba(234, 88, 12, 0.08)').trim();
+  const tooltipBg = (s.getPropertyValue('--chart-tooltip-bg') || 'rgba(28, 25, 23, 0.92)').trim();
+  const tooltipTitle = (s.getPropertyValue('--chart-tooltip-title') || '#fafaf9').trim();
+  const tooltipBody = (s.getPropertyValue('--chart-tooltip-body') || '#a8a29e').trim();
+  const tooltipBorder = (s.getPropertyValue('--chart-tooltip-border') || 'rgba(249, 115, 22, 0.35)').trim();
+  return { text, border, grid, tooltipBg, tooltipTitle, tooltipBody, tooltipBorder };
+}
+
+// Common chart defaults（随主题刷新）
 function setChartDefaults() {
-  Chart.defaults.color = '#94a3b8';
-  Chart.defaults.borderColor = 'rgba(99, 102, 241, 0.1)';
-  Chart.defaults.font.family = "'Inter', sans-serif";
+  const t = getChartThemeFromCss();
+  Chart.defaults.color = t.text;
+  Chart.defaults.borderColor = t.border;
+  Chart.defaults.font.family = "'Inter', -apple-system, BlinkMacSystemFont, sans-serif";
   Chart.defaults.font.size = 12;
   Chart.defaults.plugins.legend.labels.usePointStyle = true;
   Chart.defaults.plugins.legend.labels.pointStyle = 'circle';
@@ -57,15 +75,18 @@ function formatTickValue(v) {
   return v;
 }
 
-const tooltipConfig = {
-  backgroundColor: 'rgba(15, 23, 42, 0.9)',
-  borderColor: 'rgba(99, 102, 241, 0.3)',
-  borderWidth: 1,
-  titleColor: '#f1f5f9',
-  bodyColor: '#94a3b8',
-  padding: 12,
-  cornerRadius: 8,
-};
+function getTooltipConfig() {
+  const t = getChartThemeFromCss();
+  return {
+    backgroundColor: t.tooltipBg,
+    borderColor: t.tooltipBorder,
+    borderWidth: 1,
+    titleColor: t.tooltipTitle,
+    bodyColor: t.tooltipBody,
+    padding: 12,
+    cornerRadius: 12,
+  };
+}
 
 // ---- Timeline Chart ----
 function renderTimelineChart(byDate) {
@@ -121,7 +142,7 @@ function renderTimelineChart(byDate) {
       interaction: { mode: 'index', intersect: false },
       plugins: {
         tooltip: {
-          ...tooltipConfig,
+          ...getTooltipConfig(),
           callbacks: {
             label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()}`,
           },
@@ -131,7 +152,7 @@ function renderTimelineChart(byDate) {
         y: {
           beginAtZero: true,
           ticks: { callback: formatTickValue },
-          grid: { color: 'rgba(99, 102, 241, 0.06)' },
+          grid: { color: getChartThemeFromCss().grid },
         },
         x: { grid: { display: false } },
       },
@@ -170,7 +191,7 @@ function renderProviderChart(byProvider) {
       plugins: {
         legend: { position: 'bottom' },
         tooltip: {
-          ...tooltipConfig,
+          ...getTooltipConfig(),
           callbacks: {
             label: (ctx) => ` ${ctx.label}: $${ctx.parsed.toFixed(4)}`,
           },
@@ -242,7 +263,7 @@ function renderModelChart(byModel) {
       indexAxis: 'x',
       plugins: {
         tooltip: {
-          ...tooltipConfig,
+          ...getTooltipConfig(),
           callbacks: {
             label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()}`,
           },
@@ -267,7 +288,7 @@ function renderModelChart(byModel) {
               return formatTickValue(v);
             },
           },
-          grid: { color: 'rgba(99, 102, 241, 0.06)' },
+          grid: { color: getChartThemeFromCss().grid },
         },
         x: {
           grid: { display: false },

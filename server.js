@@ -6,6 +6,7 @@ import {
   savePricingConfig,
   validatePricingConfig,
 } from './pricing.js';
+import { listOpenClawPricedModels } from './openclaw-config.js';
 
 const app = express();
 const PORT = 3001;
@@ -81,6 +82,7 @@ app.post('/api/pricing/reset', async (req, res) => {
   try {
     const defaultConfig = {
       version: '1.0',
+      enabled: true,
       updated: new Date().toISOString(),
       pricing: {}
     };
@@ -93,6 +95,45 @@ app.post('/api/pricing/reset', async (req, res) => {
     res.json({ ok: true, updated: defaultConfig.updated });
   } catch (err) {
     console.error('Error resetting pricing config:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/openclaw/models - OpenClaw openclaw.json 中带 cost 的模型 + 与自定义价对照
+app.get('/api/openclaw/models', async (req, res) => {
+  try {
+    const [priced, pricingConfig] = await Promise.all([
+      listOpenClawPricedModels(),
+      loadPricingConfig(),
+    ]);
+    const customMap = pricingConfig.pricing || {};
+    const rows = priced.map((row) => {
+      const key = `${row.provider}/${row.model}`;
+      const rule = customMap[key];
+      let custom = null;
+      if (rule) {
+        custom = {
+          input: rule.input,
+          output: rule.output,
+          cacheRead: rule.cacheRead ?? null,
+          cacheWrite: rule.cacheWrite ?? null,
+          enabled: rule.enabled !== false,
+        };
+      }
+      return {
+        key,
+        provider: row.provider,
+        model: row.model,
+        displayName: row.displayName,
+        cost: row.cost,
+        contextWindow: row.contextWindow,
+        maxTokens: row.maxTokens,
+        custom,
+      };
+    });
+    res.json({ models: rows });
+  } catch (err) {
+    console.error('Error listing OpenClaw priced models:', err);
     res.status(500).json({ error: err.message });
   }
 });

@@ -9,6 +9,20 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/src/style.css" />
+  <script>
+    (function () {
+      try {
+        var m = localStorage.getItem('openclaw-theme') || 'system';
+        var dark = m === 'dark' || (m === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.classList.add(dark ? 'theme-dark' : 'theme-light');
+        document.documentElement.dataset.themeMode = m;
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+      } catch (e) {
+        document.documentElement.classList.add('theme-light');
+      }
+    })();
+  </script>
+  <script src="/src/theme.js"></script>
 </head>
 <body>
   <div id="app">
@@ -22,6 +36,11 @@
         </div>
       </div>
       <div class="header-right">
+        <div class="theme-switch" role="group" aria-label="主题">
+          <button type="button" data-theme-control="light" title="浅色">🌞</button>
+          <button type="button" data-theme-control="dark" title="深色">🌙</button>
+          <button type="button" data-theme-control="system" title="跟随系统">💻</button>
+        </div>
         <a href="/pricing.html" class="btn-pricing" title="配置价格">
           💰 价格配置
         </a>

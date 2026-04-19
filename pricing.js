@@ -14,7 +14,7 @@ const TOKENS_PER_UNIT = 1_000_000;
  * 优先级：OPENCLAW_CONFIG_PATH env > ~/.openclaw/ > ~/openclaw/
  * @returns {Promise<string>} OpenClaw 工作目录路径
  */
-async function detectOpenClawDir() {
+export async function detectOpenClawDir() {
     // 1. 环境变量优先
     const envPath = process.env.OPENCLAW_DIR;
     if (envPath) return envPath;
@@ -107,6 +107,10 @@ export function validatePricingConfig(config) {
     throw new Error('价格配置必须包含 version 字段');
   }
 
+  if (config.enabled !== undefined && typeof config.enabled !== 'boolean') {
+    throw new Error('价格配置的 enabled 必须为布尔值');
+  }
+
   if (!config.pricing || typeof config.pricing !== 'object') {
     throw new Error('价格配置必须包含 pricing 字段');
   }
@@ -119,6 +123,10 @@ export function validatePricingConfig(config) {
 
     if (!pricing || typeof pricing !== 'object') {
       throw new Error(`模型 ${modelKey} 的价格配置必须是一个对象`);
+    }
+
+    if (pricing.enabled !== undefined && typeof pricing.enabled !== 'boolean') {
+      throw new Error(`模型 ${modelKey} 的 enabled 必须为布尔值`);
     }
 
     if (typeof pricing.input !== 'number' || pricing.input < 0) {
@@ -144,6 +152,22 @@ export function validatePricingConfig(config) {
 }
 
 /**
+ * 使用会话中 OpenClaw 写入的原始成本（账面价）
+ * @param {Object} usage
+ * @returns {{ input: number, output: number, cacheRead: number, cacheWrite: number, total: number, source: string }}
+ */
+function openclawCostFallback(usage) {
+  return {
+    input: usage.cost?.input || 0,
+    output: usage.cost?.output || 0,
+    cacheRead: usage.cost?.cacheRead || 0,
+    cacheWrite: usage.cost?.cacheWrite || 0,
+    total: usage.cost?.total || 0,
+    source: 'openclaw',
+  };
+}
+
+/**
  * 根据使用量计算成本
  * @param {Object} usage - 使用量对象 {input, output, cacheRead, cacheWrite, totalTokens, cost}
  * @param {string} provider - 提供商
@@ -152,31 +176,22 @@ export function validatePricingConfig(config) {
  * @returns {Object} 计算结果 {input, output, cacheRead, cacheWrite, total, source}
  */
 export function calculateCostFromUsage(usage, provider, model, pricingConfig) {
-  // 如果没有配置价格，返回 OpenClaw 原始成本
-  if (!pricingConfig || !pricingConfig.pricing || Object.keys(pricingConfig.pricing).length === 0) {
-    return {
-      input: usage.cost?.input || 0,
-      output: usage.cost?.output || 0,
-      cacheRead: usage.cost?.cacheRead || 0,
-      cacheWrite: usage.cost?.cacheWrite || 0,
-      total: usage.cost?.total || 0,
-      source: 'openclaw'
-    };
+  // 未加载配置或全局关闭自定义价：使用 OpenClaw 原始成本
+  if (!pricingConfig || pricingConfig.enabled === false) {
+    return openclawCostFallback(usage);
+  }
+
+  // 没有条目时：使用 OpenClaw 原始成本
+  if (!pricingConfig.pricing || Object.keys(pricingConfig.pricing).length === 0) {
+    return openclawCostFallback(usage);
   }
 
   const modelKey = `${provider}/${model}`;
   const pricing = pricingConfig.pricing[modelKey];
 
-  // 如果该模型没有配置价格，返回 OpenClaw 原始成本
-  if (!pricing) {
-    return {
-      input: usage.cost?.input || 0,
-      output: usage.cost?.output || 0,
-      cacheRead: usage.cost?.cacheRead || 0,
-      cacheWrite: usage.cost?.cacheWrite || 0,
-      total: usage.cost?.total || 0,
-      source: 'openclaw'
-    };
+  // 未配置该模型或该条规则关闭：使用 OpenClaw 原始成本
+  if (!pricing || pricing.enabled === false) {
+    return openclawCostFallback(usage);
   }
 
   // 计算成本：价格（每 1M tokens） * 用量（tokens） / 1M

@@ -27,17 +27,15 @@ const CACHE_TTL = 30_000; // 30 seconds
 
 async function getData() {
   const now = Date.now();
+  const pricingConfig = await loadPricingConfig();
+  // 以 updated 时间戳为失效键：任意保存（含开关、单价）都会更新 updated
+  const currentUpdated = pricingConfig.updated || '';
+  const cachedUpdated = cachedData?.pricingUpdated || '';
 
-  // 检查价格版本是否变化
-  const currentPricingVersion = (await loadPricingConfig()).version;
-  const cachedPricingVersion = cachedData?.pricingVersion || 'none';
-
-  if (!cachedData ||
-      now - lastFetchTime > CACHE_TTL ||
-      cachedPricingVersion !== currentPricingVersion) {
-    const pricingConfig = await loadPricingConfig();
+  if (!cachedData || now - lastFetchTime > CACHE_TTL || currentUpdated !== cachedUpdated) {
     cachedData = await aggregateStats(pricingConfig);
-    cachedData.pricingVersion = currentPricingVersion;
+    cachedData.pricingUpdated = currentUpdated;
+    cachedData.pricingVersion = pricingConfig.version;
     lastFetchTime = now;
   }
   return cachedData;

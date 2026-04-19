@@ -567,6 +567,14 @@ async function init() {
   }
 }
 
+// 主题切换后刷新图表配色（Chart.js 默认值与 tooltip 随 CSS 变量更新）
+window.addEventListener('openclaw-themechange', () => {
+  if (!fullData) return;
+  const from = document.getElementById('date-from')?.value || null;
+  const to = document.getElementById('date-to')?.value || null;
+  applyFilter(from, to);
+});
+
 // Refresh button
 document.getElementById('refresh-btn').addEventListener('click', async () => {
   const btn = document.getElementById('refresh-btn');
