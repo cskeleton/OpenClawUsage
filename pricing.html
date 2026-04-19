@@ -73,7 +73,7 @@
                   <li>单价按<strong>每百万 tokens</strong>的美元计价（与下方数值列一致）</li>
                   <li>关闭「启用」或关闭某一行的「启用」后，该范围使用会话中的 OpenClaw 账面成本</li>
                   <li>开启「启用」且开启对应行时，使用自定义单价重算成本（理论价）</li>
-                  <li>参考表基于 <code>models.json</code>（<code>$OPENCLAW_CONFIG_DIR</code> 或默认 <code>~/.openclaw</code> 下 <code>agents/main/agent/models.json</code>）中带有效单价的模型</li>
+                  <li>下方「内置价格」「缺少价格」参考表来自 <code>models.json</code>（<code>$OPENCLAW_CONFIG_DIR</code> 或默认 <code>~/.openclaw</code> 下 <code>agents/main/agent/models.json</code>）中的模型条目；<strong>实际在 OpenClaw 里能选择的模型</strong>取决于 <code>openclaw.json</code> 中 <code>agents.defaults.models</code> 的配置，与参考表并非一一对应</li>
                   <li>Cache Read/Write 留空表示不设单独缓存价：<strong>按 Input / Output 原价计算</strong>（读取用 Input 单价，写入用 Output 单价）</li>
                   <li>修改后会自动保存到配置文件并失效聚合缓存，重新计算成本</li>
                   <li>支持<strong>通配符</strong>（如 <code>*/claude-*</code>）与<strong>正则</strong>（如 <code>/claude.*/i</code>）规则，按声明顺序匹配完整 <code>provider/model</code>；<strong>精确规则优先</strong></li>
@@ -174,7 +174,7 @@
       </button>
       <div id="openclaw-ref-panel" class="pricing-collapse-panel" hidden>
         <p class="subtitle" style="margin-bottom: 15px;">
-          读取自 <code>$OPENCLAW_CONFIG_DIR/agents/main/agent/models.json</code>（未设置环境变量时默认为 <code>~/.openclaw/...</code>）中已声明有效 input/output 单价的模型。「已覆盖」表示上方自定义表中已有同名 <code>provider/model</code> 规则。
+          读取自 <code>$OPENCLAW_CONFIG_DIR/agents/main/agent/models.json</code>（未设置环境变量时默认为 <code>~/.openclaw/...</code>）中已声明有效 input/output 单价的模型。「已覆盖」表示上方自定义表中已有匹配该 <code>provider/model</code> 的规则（含通配符/正则）。<strong>实际在 OpenClaw 里能选择的模型</strong>取决于 <code>openclaw.json</code> 内 <code>agents.defaults.models</code> 的配置。
         </p>
         <div style="overflow-x: auto;">
           <table id="openclaw-ref-table">
@@ -211,7 +211,7 @@
       </button>
       <div id="unpriced-models-panel" class="pricing-collapse-panel" hidden>
         <p class="subtitle" style="margin-bottom: 15px;">
-          与上方同一文件：列出其中尚未声明有效 input/output 单价的模型（与「内置价格」表互为补集）。路径规则：<code>OPENCLAW_CONFIG_DIR</code> 或默认 <code>~/.openclaw</code> 下的 <code>agents/main/agent/models.json</code>。
+          与「内置价格」同一文件：列出其中尚未声明有效 input/output 单价的模型（两表互为补集）。「已覆盖」表示上方自定义表中已有匹配该 <code>provider/model</code> 的规则。<strong>实际在 OpenClaw 里能选择的模型</strong>取决于 <code>openclaw.json</code> 内 <code>agents.defaults.models</code> 的配置。
         </p>
         <div style="overflow-x: auto;">
           <table id="unpriced-models-table">
@@ -220,8 +220,8 @@
                 <th>Provider / Model</th>
                 <th>名称</th>
                 <th>Context</th>
-                <th>Input / Output</th>
-                <th>来源</th>
+                <th>状态</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody id="unpriced-models-tbody"></tbody>

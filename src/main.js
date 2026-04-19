@@ -237,12 +237,6 @@ function renderSummaryCards(summary) {
       valueClass: 'gradient-emerald',
     },
     {
-      icon: '💰', label: '总费用',
-      value: formatCost(summary.totalCost),
-      sub: `均 ${formatCost(summary.totalRequests > 0 ? summary.totalCost / summary.totalRequests : 0)}/请求`,
-      valueClass: 'gradient-amber',
-    },
-    {
       icon: '💾', label: 'Cache Write',
       value: formatNumber(summary.totalCacheWrite),
       sub: `Read: ${formatNumber(summary.totalCacheRead)}`,
@@ -253,6 +247,12 @@ function renderSummaryCards(summary) {
       value: summary.totalSessions.toLocaleString(),
       sub: `均 ${formatNumber(avgPerRequest)} tokens/请求`,
       valueClass: 'gradient-violet',
+    },
+    {
+      icon: '💰', label: '总费用',
+      value: formatCost(summary.totalCost),
+      sub: `均 ${formatCost(summary.totalRequests > 0 ? summary.totalCost / summary.totalRequests : 0)}/请求`,
+      valueClass: 'gradient-amber',
     },
   ];
 

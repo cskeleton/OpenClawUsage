@@ -133,16 +133,30 @@ app.get('/api/openclaw/models', async (req, res) => {
         custom,
       };
     });
-    const unpricedModels = unpriced.map((row) => ({
-      key: `${row.provider}/${row.model}`,
-      provider: row.provider,
-      model: row.model,
-      displayName: row.displayName,
-      cost: row.cost,
-      contextWindow: row.contextWindow,
-      maxTokens: row.maxTokens,
-      sources: row.sources,
-    }));
+    const unpricedModels = unpriced.map((row) => {
+      const key = `${row.provider}/${row.model}`;
+      const rule = findMatchingPricing(key, customMap);
+      let custom = null;
+      if (rule) {
+        custom = {
+          input: rule.input,
+          output: rule.output,
+          cacheRead: rule.cacheRead ?? null,
+          cacheWrite: rule.cacheWrite ?? null,
+          enabled: rule.enabled !== false,
+        };
+      }
+      return {
+        key,
+        provider: row.provider,
+        model: row.model,
+        displayName: row.displayName,
+        cost: row.cost,
+        contextWindow: row.contextWindow,
+        maxTokens: row.maxTokens,
+        custom,
+      };
+    });
     res.json({ models: rows, unpricedModels });
   } catch (err) {
     console.error('Error listing OpenClaw priced models:', err);

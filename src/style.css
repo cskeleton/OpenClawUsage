@@ -346,9 +346,9 @@ body::after {
 .stat-card:nth-child(1) .stat-icon { background: rgba(234, 88, 12, 0.1); color: var(--accent-orange); }
 .stat-card:nth-child(2) .stat-icon { background: rgba(13, 148, 136, 0.1); color: var(--accent-cyan); }
 .stat-card:nth-child(3) .stat-icon { background: rgba(5, 150, 105, 0.1); color: var(--accent-emerald); }
-.stat-card:nth-child(4) .stat-icon { background: rgba(217, 119, 6, 0.1); color: var(--accent-amber); }
-.stat-card:nth-child(5) .stat-icon { background: rgba(225, 29, 72, 0.1); color: var(--accent-rose); }
-.stat-card:nth-child(6) .stat-icon { background: rgba(234, 88, 12, 0.1); color: var(--accent-violet); }
+.stat-card:nth-child(4) .stat-icon { background: rgba(225, 29, 72, 0.1); color: var(--accent-rose); }
+.stat-card:nth-child(5) .stat-icon { background: rgba(234, 88, 12, 0.1); color: var(--accent-violet); }
+.stat-card:nth-child(6) .stat-icon { background: rgba(217, 119, 6, 0.1); color: var(--accent-amber); }
 
 .stat-card .stat-label {
   color: var(--text-secondary);

@@ -156,16 +156,6 @@ function renderOpenClawReference(models, { resetPage = true } = {}) {
 }
 
 /**
- * 将 sources 数组格式化为可读标签
- * @param {string[]|undefined} sources
- */
-function formatModelSources(sources) {
-  if (!sources || !sources.length) return '—';
-  const labels = { openclaw: 'openclaw.json', modelsJson: 'models.json' };
-  return sources.map((s) => labels[s] || s).join(' · ');
-}
-
-/**
  * 渲染「缺少价格的模型」表
  * @param {Array} rows
  * @param {{ resetPage?: boolean }} [options]
@@ -184,7 +174,7 @@ function renderUnpricedModels(rows, { resetPage = true } = {}) {
     tbody.innerHTML = `
       <tr>
         <td colspan="5" style="text-align: center; color: var(--text-secondary); padding: 24px;">
-          models.json 中暂无缺少有效单价的模型，或文件不可读
+          暂无缺少有效单价的模型，或文件不可读
         </td>
       </tr>
     `;
@@ -203,16 +193,25 @@ function renderUnpricedModels(rows, { resetPage = true } = {}) {
   const ctx = (cw) => (cw != null ? String(cw) : '—');
 
   tbody.innerHTML = pageRows
-    .map(
-      (row) => `
+    .map((row) => {
+      let badge = '<span class="badge badge-muted">未覆盖</span>';
+      if (row.custom) {
+        badge = row.custom.enabled
+          ? '<span class="badge badge-ok">已覆盖·启用</span>'
+          : '<span class="badge badge-warn">已覆盖·禁用</span>';
+      }
+      const action = row.custom
+        ? `<button type="button" class="btn-openclaw-row btn-secondary btn-locate-unpriced" data-key="${escapeAttr(row.key)}">定位规则</button>`
+        : `<button type="button" class="btn-openclaw-row btn-openclaw-row-accent btn-copy-unpriced" data-key="${escapeAttr(row.key)}">复制到自定义</button>`;
+      return `
       <tr>
         <td><strong>${escapeHtml(row.key)}</strong></td>
         <td>${escapeHtml(row.displayName || '')}</td>
         <td>${ctx(row.contextWindow)}</td>
-        <td style="color: var(--text-secondary);">—</td>
-        <td><span style="font-size:0.85rem;">${escapeHtml(formatModelSources(row.sources))}</span></td>
-      </tr>`
-    )
+        <td>${badge}</td>
+        <td>${action}</td>
+      </tr>`;
+    })
     .join('');
 
   if (pag) {
@@ -794,6 +793,37 @@ function copyOpenClawToForm(key) {
 }
 
 /**
+ * 将缺少内置单价的模型键填入「添加新价格」表单（无参考价，需自行填写单价）
+ * @param {string} key
+ */
+function copyUnpricedToForm(key) {
+  const row = lastUnpricedModels.find((m) => m.key === key);
+  if (!row) return;
+
+  if (pricingTableEditingKey !== null) {
+    alert('请先完成或取消表格中正在编辑的行');
+    return;
+  }
+
+  const mtEl = document.getElementById('new-match-type');
+  if (mtEl) mtEl.value = 'exact';
+  syncNewMatchTypeUI();
+
+  ensureModelDatalistOption(key);
+  const modelInput = document.getElementById('new-model-input');
+  if (modelInput) modelInput.value = key;
+  syncNewModelClearVisibility();
+
+  document.getElementById('new-input-price').value = '';
+  document.getElementById('new-output-price').value = '';
+  document.getElementById('new-cache-read-price').value = '';
+  document.getElementById('new-cache-write-price').value = '';
+
+  document.getElementById('add-pricing-section')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  showPricingToast('已填入模型键，请填写 Input/Output 单价');
+}
+
+/**
  * 高亮表格中的自定义规则行
  * @param {string} key
  */
@@ -856,6 +886,16 @@ document.getElementById('openclaw-ref-tbody').addEventListener('click', (e) => {
   const locBtn = e.target.closest('.btn-locate');
   if (copyBtn) {
     copyOpenClawToForm(copyBtn.dataset.key);
+  } else if (locBtn) {
+    locatePricingRow(locBtn.dataset.key);
+  }
+});
+
+document.getElementById('unpriced-models-tbody')?.addEventListener('click', (e) => {
+  const copyBtn = e.target.closest('.btn-copy-unpriced');
+  const locBtn = e.target.closest('.btn-locate-unpriced');
+  if (copyBtn) {
+    copyUnpricedToForm(copyBtn.dataset.key);
   } else if (locBtn) {
     locatePricingRow(locBtn.dataset.key);
   }
