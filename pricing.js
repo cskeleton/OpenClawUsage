@@ -25,7 +25,10 @@ export async function detectOpenClawDir() {
         const configData = await readFile(defaultConfigPath, 'utf-8');
         const config = JSON.parse(configData);
         const workspace = config?.agents?.defaults?.workspace;
-        if (workspace) return dirname(workspace); // workspace 是文件路径，取其目录
+        if (workspace && typeof workspace === 'string') {
+            // 兼容两种格式：目录路径（新）与文件路径（旧）
+            return workspace.endsWith('.json') ? dirname(workspace) : workspace;
+        }
     } catch {}
 
     // 3. 回退到 ~/.openclaw/
