@@ -1,0 +1,24 @@
+{
+  "version": "1.0",
+  "updated": "2026-04-19T00:00:00.000Z",
+  "pricing": {
+    "minimax-portal/MiniMax-M2.7": {
+      "input": 0.30,
+      "output": 1.20,
+      "cacheRead": 0.06,
+      "cacheWrite": 0.375
+    },
+    "google-vertex/gemini-3.1-pro-preview": {
+      "input": 0.30,
+      "output": 1.20,
+      "cacheRead": null,
+      "cacheWrite": null
+    },
+    "openrouter/qwen/qwen3.6-plus": {
+      "input": 0.50,
+      "output": 3.00,
+      "cacheRead": null,
+      "cacheWrite": null
+    }
+  }
+}

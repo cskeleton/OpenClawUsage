@@ -1,5 +1,9 @@
 # OpenClaw Token 用量统计工具
 
+> ⚠️ 本文档为中文版。英文版详见 [README_EN.md](README_EN.md)。
+
+---
+
 这是一个为 OpenClaw 开发的独立 Token 用量统计与可视化工具。它通过直接解析本地 Session 文件（JSONL 格式），提供实时的费用监控和数据分析。
 
 ## 🌟 核心功能
@@ -7,7 +11,7 @@
 - **可视化仪表盘 (Web UI)**：基于 Vite + Chart.js 构建的暗黑风格界面。
   - **全量统计**：支持活跃（Active）、重置（Reset）和已删除（Deleted）的所有会话统计。
   - **时间筛选**：支持预设时间段（今天、最近 7 天、本月等）及自定义日期范围。
-  - **度量指标**：统计 Input/Output Tokens、费用趋势、Provider 分布以及缓存命中（Cache Read/Write）。
+  - **度量指标**：统计 Input/Output Tokens、费用趋势、Provider 分布以及缓存命中（ Cache Read/Write）。
   - **交互体验**：Model 对比支持对数坐标（Log Scale），解决小数据量不可见问题；Session 明细支持分页、搜索与排序。
   
 - **MCP 服务端 (Model Context Protocol)**：
@@ -20,6 +24,37 @@
   - 支持 Input、Output、Cache Read、Cache Write 四种价格类型。
   - Cache 价格可选，留空时自动使用 Input/Output 价格的 10%。
   - 独立的价格配置页面，支持添加、编辑、删除和重置价格配置。
+
+## 💰 价格配置文件路径
+
+价格配置文件（`openclaw-usage-pricing.json`）采用**动态路径检测**，优先跟随 OpenClaw 工作目录而非固定路径，以确保多机器使用时配置可跟随。
+
+### 路径优先级（由高到低）
+
+| 优先级 | 来源 | 示例 |
+|--------|------|------|
+| 1️⃣ | `OPENCLAW_DIR` 环境变量 | `OPENCLAW_DIR=/自定义/path` |
+| 2️⃣ | `openclaw.json` 中的 `agents.defaults.workspace` 配置 | `/Users/gc/gcDora` → 存到 `gcDora` 目录 |
+| 3️⃣ | 回退 `~/.openclaw/` | 默认 fallback |
+
+### 迁移逻辑
+
+工具启动时会自动检查路径兼容性和迁移需求：
+
+1. 优先读取新路径（跟随 OpenClaw 工作目录）。
+2. 若新路径不存在，尝试旧路径 `~/.openclaw/openclaw-usage-pricing.json`。
+3. 若旧路径存在，自动将其内容复制到新路径，完成无缝迁移。
+4. 若两个路径均不存在，创建空配置（使用 OpenClaw 内置价格）。
+
+### 示例
+
+假设 `openclaw.json` 配置了 `"workspace": "/Users/gc/gcDora"`，则价格配置实际存储在：
+
+```
+/Users/gc/gcDora/openclaw-usage-pricing.json
+```
+
+而非 `~/.openclaw/` 下。这确保了配置与 OpenClaw 工作空间绑定，便于多机器共享或通过 dotfiles 管理。
 
 ## 📊 数据来源与原理
 
@@ -142,6 +177,8 @@ npm run mcp
 - `server.js`: Web API 服务端入口（Express）。
 - `mcp-server.js`: MCP 服务端入口（@modelcontextprotocol/sdk）。
 - `aggregator.js`: 共享的数据处理引擎，负责解析 `~/.openclaw` 下的 JSONL 文件。
+- `pricing.js`: 价格配置加载与保存，支持动态路径检测。
+- `pricing.json.example`: 价格配置模板（git 跟踪）。
 - `index.html` & `src/`: 前端可视化界面代码。
 
 ## 📜 开源协议

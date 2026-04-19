@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'fs/promises';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { dirname } from 'path';
+import { homedir } from 'os';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -9,28 +9,71 @@ const __dirname = dirname(__filename);
 // 价格单位：每 1M tokens
 const TOKENS_PER_UNIT = 1_000_000;
 
-// 配置文件路径
-const PRICING_CONFIG_PATH = join(__dirname, 'pricing.json');
+/**
+ * 动态检测 OpenClaw 工作目录
+ * 优先级：OPENCLAW_CONFIG_PATH env > ~/.openclaw/ > ~/openclaw/
+ * @returns {Promise<string>} OpenClaw 工作目录路径
+ */
+async function detectOpenClawDir() {
+    // 1. 环境变量优先
+    const envPath = process.env.OPENCLAW_DIR;
+    if (envPath) return envPath;
+
+    // 2. 从 openclaw.json 读取 workspace 配置
+    const defaultConfigPath = join(homedir(), '.openclaw', 'openclaw.json');
+    try {
+        const configData = await readFile(defaultConfigPath, 'utf-8');
+        const config = JSON.parse(configData);
+        const workspace = config?.agents?.defaults?.workspace;
+        if (workspace) return dirname(workspace); // workspace 是文件路径，取其目录
+    } catch {}
+
+    // 3. 回退到 ~/.openclaw/
+    return join(homedir(), '.openclaw');
+}
+
+// 配置文件路径：动态检测 OpenClaw 工作目录
+let _pricingConfigPath = null;
+async function getPricingConfigPath() {
+    if (_pricingConfigPath) return _pricingConfigPath;
+    const openclawDir = await detectOpenClawDir();
+    _pricingConfigPath = join(openclawDir, 'openclaw-usage-pricing.json');
+    return _pricingConfigPath;
+}
+
+// 旧路径兼容（用于首次迁移）
+const LEGACY_PRICING_PATH = join(homedir(), '.openclaw', 'openclaw-usage-pricing.json');
 
 /**
  * 加载价格配置
  * @returns {Promise<Object>} 价格配置对象
  */
 export async function loadPricingConfig() {
+  const configPath = await getPricingConfigPath();
+
+  // 尝试新路径
   try {
-    const data = await readFile(PRICING_CONFIG_PATH, 'utf-8');
+    const data = await readFile(configPath, 'utf-8');
     return JSON.parse(data);
   } catch (error) {
-    // 文件不存在时返回默认配置
-    if (error.code === 'ENOENT') {
-      return {
-        version: '1.0',
-        updated: new Date().toISOString(),
-        pricing: {}
-      };
-    }
-    throw error;
+    if (error.code !== 'ENOENT') throw error;
   }
+
+  // 新路径不存在时，尝试旧路径（用于从旧配置迁移）
+  try {
+    const legacyData = await readFile(LEGACY_PRICING_PATH, 'utf-8');
+    const config = JSON.parse(legacyData);
+    // 自动迁移到新路径
+    await savePricingConfig(config);
+    return config;
+  } catch {}
+
+  // 全部不存在时返回默认配置
+  return {
+    version: '1.0',
+    updated: new Date().toISOString(),
+    pricing: {}
+  };
 }
 
 /**
@@ -45,8 +88,9 @@ export async function savePricingConfig(config) {
   // 更新时间戳
   config.updated = new Date().toISOString();
 
-  // 写入文件
-  await writeFile(PRICING_CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
+  // 写入动态路径
+  const configPath = await getPricingConfigPath();
+  await writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
 }
 
 /**

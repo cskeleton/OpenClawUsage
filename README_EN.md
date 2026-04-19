@@ -20,6 +20,7 @@ A standalone token usage statistics and visualization tool for OpenClaw. It pars
   - Supports 4 price types: Input, Output, Cache Read, Cache Write.
   - Cache prices are optional; when left empty, automatically use 10% of Input/Output prices.
   - Dedicated pricing configuration page with add/edit/delete/reset functionality.
+  - **Dynamic config path**: The pricing file (`openclaw-usage-pricing.json`) auto-detects the OpenClaw workspace directory, so it travels with your config across machines.
 
 ## 📊 Data Source & Logic
 
@@ -85,6 +86,37 @@ Add the following to your OpenClaw or Claude Desktop MCP config:
 ```
 
 ## 💰 Custom Pricing Configuration
+
+### Pricing Config File Path
+
+The pricing config file (`openclaw-usage-pricing.json`) uses **dynamic path detection** to follow the OpenClaw workspace directory, ensuring the config travels with your setup across different machines.
+
+#### Path Priority (highest to lowest)
+
+| Priority | Source | Example |
+|----------|--------|---------|
+| 1️⃣ | `OPENCLAW_DIR` environment variable | `OPENCLAW_DIR=/custom/path` |
+| 2️⃣ | `agents.defaults.workspace` in `openclaw.json` | `/Users/gc/gcDora` → stored under `gcDora` dir |
+| 3️⃣ | Fallback `~/.openclaw/` | Default fallback |
+
+#### Migration Logic
+
+On startup, the tool automatically handles path compatibility and migration:
+
+1. Reads from the new path (following the OpenClaw workspace directory).
+2. If the new path doesn't exist, tries the legacy path `~/.openclaw/openclaw-usage-pricing.json`.
+3. If the legacy path exists, automatically copies its content to the new path for seamless migration.
+4. If neither path exists, creates an empty config (falls back to OpenClaw built-in pricing).
+
+#### Example
+
+If `openclaw.json` has `"workspace": "/Users/gc/gcDora"`, the pricing config is stored at:
+
+```
+/Users/gc/gcDora/openclaw-usage-pricing.json
+```
+
+Instead of under `~/.openclaw/`. This keeps the pricing config bound to the OpenClaw workspace, making it easy to manage via dotfiles or share across machines.
 
 ### Configuration Methods
 
