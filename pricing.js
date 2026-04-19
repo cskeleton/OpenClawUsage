@@ -9,6 +9,115 @@ const __dirname = dirname(__filename);
 // 展示单位 $/M；内部仍按每 1e6 tokens 换算
 const TOKENS_PER_UNIT = 1_000_000;
 
+/** @typedef {'exact' | 'wildcard' | 'regex'} PricingMatchType */
+
+/**
+ * 将 glob 风格通配符转为匹配完整 modelKey 的正则（^...$）
+ * @param {string} pattern - 通配符模式（作用于整串 `provider/model`）
+ * @returns {RegExp}
+ */
+export function wildcardToRegex(pattern) {
+  if (typeof pattern !== 'string') {
+    throw new TypeError('通配符模式必须是字符串');
+  }
+  let out = '';
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i];
+    if (c === '*') {
+      out += '.*';
+    } else if (c === '?') {
+      out += '.';
+    } else if ('\\^$+{}[]|().'.includes(c)) {
+      out += `\\${c}`;
+    } else {
+      out += c;
+    }
+  }
+  return new RegExp(`^${out}$`);
+}
+
+/**
+ * 解析 `/pattern/flags` 形式的正则键（键为完整字符串，非 RegExp 对象）
+ * @param {string} key - 配置中的键
+ * @returns {RegExp|null} 无法解析时返回 null
+ */
+export function parseRegexEntry(key) {
+  if (typeof key !== 'string' || !key.startsWith('/')) {
+    return null;
+  }
+  const lastSlash = key.lastIndexOf('/');
+  if (lastSlash <= 0) {
+    return null;
+  }
+  const body = key.slice(1, lastSlash);
+  const flags = key.slice(lastSlash + 1);
+  try {
+    return new RegExp(body, flags);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 规范化 matchType（缺省为 exact）
+ * @param {string|undefined|null} matchType
+ * @returns {PricingMatchType}
+ */
+function normalizeMatchType(matchType) {
+  if (matchType === undefined || matchType === null || matchType === '') {
+    return 'exact';
+  }
+  return /** @type {PricingMatchType} */ (matchType);
+}
+
+/**
+ * 是否为通配符 / 正则模式规则
+ * @param {PricingMatchType} mt
+ */
+function isPatternMatchType(mt) {
+  return mt === 'wildcard' || mt === 'regex';
+}
+
+/**
+ * 在 pricing 表中查找适用于 modelKey 的一条规则（含优先级）
+ * @param {string} modelKey - `provider/model`
+ * @param {Record<string, object>} pricingMap - config.pricing
+ * @returns {object|null} 命中的价格条目，无则 null
+ */
+export function findMatchingPricing(modelKey, pricingMap) {
+  if (!pricingMap || typeof pricingMap !== 'object') {
+    return null;
+  }
+
+  const direct = pricingMap[modelKey];
+  if (direct && direct.enabled !== false) {
+    const mt = normalizeMatchType(direct.matchType);
+    if (mt === 'exact') {
+      return direct;
+    }
+  }
+
+  for (const [key, entry] of Object.entries(pricingMap)) {
+    if (!entry || entry.enabled === false) continue;
+    const mt = normalizeMatchType(entry.matchType);
+    if (!isPatternMatchType(mt)) continue;
+
+    if (mt === 'wildcard') {
+      try {
+        const re = wildcardToRegex(key);
+        if (re.test(modelKey)) return entry;
+      } catch {
+        continue;
+      }
+    } else if (mt === 'regex') {
+      const re = parseRegexEntry(key);
+      if (re && re.test(modelKey)) return entry;
+    }
+  }
+
+  return null;
+}
+
 /**
  * 动态检测 OpenClaw 工作目录
  * 优先级：OPENCLAW_CONFIG_PATH env > ~/.openclaw/ > ~/openclaw/
@@ -151,6 +260,28 @@ export function validatePricingConfig(config) {
         throw new Error(`模型 ${modelKey} 的 Cache Write 价格必须是非负数或 null`);
       }
     }
+
+    const mtRaw = pricing.matchType;
+    if (mtRaw !== undefined && mtRaw !== null && mtRaw !== '') {
+      if (mtRaw !== 'exact' && mtRaw !== 'wildcard' && mtRaw !== 'regex') {
+        throw new Error(`模型 ${modelKey} 的 matchType 必须为 exact、wildcard 或 regex`);
+      }
+    }
+
+    const mt = normalizeMatchType(pricing.matchType);
+    if (mt === 'regex') {
+      const re = parseRegexEntry(modelKey);
+      if (!re) {
+        throw new Error(`模型 ${modelKey} 的正则键格式无效（需为 /pattern/flags 且正则可编译）`);
+      }
+    }
+    if (mt === 'wildcard') {
+      try {
+        wildcardToRegex(modelKey);
+      } catch (e) {
+        throw new Error(`模型 ${modelKey} 的通配符模式无效: ${e.message}`);
+      }
+    }
   }
 }
 
@@ -190,7 +321,7 @@ export function calculateCostFromUsage(usage, provider, model, pricingConfig) {
   }
 
   const modelKey = `${provider}/${model}`;
-  const pricing = pricingConfig.pricing[modelKey];
+  const pricing = findMatchingPricing(modelKey, pricingConfig.pricing);
 
   // 未配置该模型或该条规则关闭：使用 OpenClaw 原始成本
   if (!pricing || pricing.enabled === false) {

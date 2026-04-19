@@ -36,24 +36,52 @@
     <!-- 页面头部 -->
     <div class="pricing-header">
       <div>
-        <h1 style="display: flex; align-items: center;">
-          💰 价格配置
+        <h1 class="pricing-title-row">
+          <span class="pricing-title-text">💰 价格配置</span>
+          <label
+            class="pricing-enable-integrated"
+            title="关闭后仪表盘与统计使用会话中的 OpenClaw 账面成本；下方配置仍可编辑，仅表示当前未生效"
+          >
+            <span class="pricing-enable-integrated-track">
+              <input
+                type="checkbox"
+                id="custom-pricing-enabled"
+                class="pricing-enable-integrated-input"
+                checked
+                aria-label="启用自定义单价"
+              />
+              <span class="pricing-enable-integrated-word">启用</span>
+              <span class="pricing-enable-integrated-rail" aria-hidden="true">
+                <span class="pricing-enable-integrated-knob"></span>
+              </span>
+            </span>
+          </label>
           <div class="tooltip-wrapper">
-            <span class="help-icon">?</span>
+            <button
+              type="button"
+              class="help-icon"
+              id="pricing-help-copy-btn"
+              title="悬停查看说明；点击复制全部说明到剪贴板"
+              aria-label="价格说明，悬停查看，点击复制"
+            >
+              ?
+            </button>
             <div class="tooltip-popup glass-card">
-              <h4>📝 说明</h4>
-              <ul>
-                <li>价格单位为 <strong>$/M</strong>（每百万 tokens 的美元价）</li>
-                <li>关闭「启用自定义价格」或关闭某一行的「启用」后，该范围使用会话中的 OpenClaw 账面成本</li>
-                <li>开启全局且开启对应行时，使用自定义单价重算成本（理论价）</li>
-                <li>参考表基于 <code>models.json</code>（<code>$OPENCLAW_CONFIG_DIR</code> 或默认 <code>~/.openclaw</code> 下 <code>agents/main/agent/models.json</code>）中带有效单价的模型</li>
-                <li>Cache Read/Write 留空表示不设单独缓存价：<strong>按 Input / Output 原价计算</strong>（读取用 Input 单价，写入用 Output 单价）</li>
-                <li>保存价格配置或切换开关后会自动失效缓存，重新计算所有成本</li>
-              </ul>
+              <div id="pricing-help-copy-content">
+                <h4>📝 说明</h4>
+                <ul>
+                  <li>单价按<strong>每百万 tokens</strong>的美元计价（与下方数值列一致）</li>
+                  <li>关闭「启用」或关闭某一行的「启用」后，该范围使用会话中的 OpenClaw 账面成本</li>
+                  <li>开启「启用」且开启对应行时，使用自定义单价重算成本（理论价）</li>
+                  <li>参考表基于 <code>models.json</code>（<code>$OPENCLAW_CONFIG_DIR</code> 或默认 <code>~/.openclaw</code> 下 <code>agents/main/agent/models.json</code>）中带有效单价的模型</li>
+                  <li>Cache Read/Write 留空表示不设单独缓存价：<strong>按 Input / Output 原价计算</strong>（读取用 Input 单价，写入用 Output 单价）</li>
+                  <li>修改后会自动保存到配置文件并失效聚合缓存，重新计算成本</li>
+                  <li>支持<strong>通配符</strong>（如 <code>*/claude-*</code>）与<strong>正则</strong>（如 <code>/claude.*/i</code>）规则，按声明顺序匹配完整 <code>provider/model</code>；<strong>精确规则优先</strong></li>
+                </ul>
+              </div>
             </div>
           </div>
         </h1>
-        <p class="subtitle">配置各模型的价格（$/M）</p>
       </div>
       <div class="actions">
         <div class="theme-switch" role="group" aria-label="主题">
@@ -61,27 +89,35 @@
           <button type="button" data-theme-control="dark" title="深色">🌙</button>
           <button type="button" data-theme-control="system" title="跟随系统">💻</button>
         </div>
-        <label class="switch-label" title="关闭后仪表盘与统计使用会话中的 OpenClaw 账面成本">
-          <input type="checkbox" id="custom-pricing-enabled" checked />
-          启用自定义价格
-        </label>
         <button id="reset-pricing-btn" class="btn-secondary">重置</button>
-        <button id="save-pricing-btn" class="btn-primary">保存配置</button>
       </div>
     </div>
 
-    <!-- 价格表格 -->
+    <div id="pricing-config-stack" class="pricing-config-stack">
+    <!-- 已配置价格 -->
     <div class="glass-card">
+      <h3 style="margin-bottom: 15px;">已配置价格</h3>
       <table id="pricing-table">
+        <colgroup>
+          <col class="pricing-col-enable" />
+          <col class="pricing-col-model" />
+          <col class="pricing-col-match" />
+          <col class="pricing-col-num" />
+          <col class="pricing-col-num" />
+          <col class="pricing-col-cache" />
+          <col class="pricing-col-cache" />
+          <col class="pricing-col-action" />
+        </colgroup>
         <thead>
           <tr>
-            <th>启用</th>
+            <th class="col-center">启用</th>
             <th>Provider/Model</th>
-            <th>Input ($/M)</th>
-            <th>Output ($/M)</th>
-            <th>Cache Read ($/M)</th>
-            <th>Cache Write ($/M)</th>
-            <th>操作</th>
+            <th class="col-center">类型</th>
+            <th class="col-numeric">Input</th>
+            <th class="col-numeric">Output</th>
+            <th class="col-numeric">Cache Read</th>
+            <th class="col-numeric">Cache Write</th>
+            <th class="col-center">操作</th>
           </tr>
         </thead>
         <tbody id="pricing-tbody"></tbody>
@@ -92,14 +128,35 @@
     <div id="add-pricing-section" class="glass-card" style="margin-top: 20px;">
       <h3 style="margin-bottom: 15px;">添加新价格</h3>
       <div class="pricing-add-row">
-        <select id="new-model-select" style="flex: 2;">
-          <option value="">选择模型...</option>
+        <div class="pricing-add-combobox-wrap">
+          <input
+            type="text"
+            id="new-model-input"
+            class="pricing-add-combobox"
+            list="new-model-datalist"
+            placeholder="选择或输入 provider/model（通配符/正则下可填模式）"
+            autocomplete="off"
+            aria-label="模型或匹配模式"
+          />
+          <button type="button" id="new-model-clear" class="pricing-input-clear" aria-label="清空" hidden>
+            ×
+          </button>
+        </div>
+        <datalist id="new-model-datalist"></datalist>
+        <select id="new-match-type" title="精确：与会话键完全一致；通配符/正则：匹配整串 provider/model">
+          <option value="exact">精确</option>
+          <option value="wildcard">通配符</option>
+          <option value="regex">正则</option>
         </select>
-        <input type="number" id="new-input-price" placeholder="Input ($/M)" step="0.01" style="flex: 1;">
-        <input type="number" id="new-output-price" placeholder="Output ($/M)" step="0.01" style="flex: 1;">
-        <input type="number" id="new-cache-read-price" class="pricing-input--cache" placeholder="留空按 Input 原价" title="留空时按该行 Input 单价（$/M）计算 Cache Read 费用" step="0.01" style="flex: 1; min-width: 7rem;">
-        <input type="number" id="new-cache-write-price" class="pricing-input--cache" placeholder="留空按 Output 原价" title="留空时按该行 Output 单价（$/M）计算 Cache Write 费用" step="0.01" style="flex: 1; min-width: 7rem;">
-        <button id="add-pricing-btn" class="btn-primary">添加</button>
+        <input type="number" id="new-input-price" placeholder="Input" step="0.01" />
+        <input type="number" id="new-output-price" placeholder="Output" step="0.01" />
+        <input type="number" id="new-cache-read-price" class="pricing-input--cache" placeholder="留空按 Input 原价" title="留空时按该行 Input 单价计算 Cache Read 费用" step="0.01" />
+        <input type="number" id="new-cache-write-price" class="pricing-input--cache" placeholder="留空按 Output 原价" title="留空时按该行 Output 单价计算 Cache Write 费用" step="0.01" />
+        <button id="add-pricing-btn" class="btn-primary" type="button">添加</button>
+        <p id="new-pattern-hint" class="pricing-pattern-hint pricing-add-hint-full" hidden>
+          通配符：<code>*</code> 任意长度，<code>?</code> 单字符。正则：须以 <code>/</code> 开头，可为 <code>/pattern/flags</code>。
+        </p>
+        <p id="new-pattern-error" class="pricing-pattern-error pricing-add-hint-full" role="alert" hidden></p>
       </div>
     </div>
 
@@ -124,10 +181,10 @@
             <thead>
               <tr>
                 <th>Provider / Model</th>
-                <th>Input ($/M)</th>
-                <th>Output ($/M)</th>
-                <th>Cache Read ($/M)</th>
-                <th>Cache Write ($/M)</th>
+                <th>Input</th>
+                <th>Output</th>
+                <th>Cache Read</th>
+                <th>Cache Write</th>
                 <th>Context</th>
                 <th>状态</th>
                 <th>操作</th>
@@ -163,7 +220,7 @@
                 <th>Provider / Model</th>
                 <th>名称</th>
                 <th>Context</th>
-                <th>Input / Output ($/M)</th>
+                <th>Input / Output</th>
                 <th>来源</th>
               </tr>
             </thead>
@@ -173,7 +230,10 @@
         <div id="unpriced-models-pagination" class="table-pagination" aria-label="缺少价格表分页"></div>
       </div>
     </div>
+    </div>
   </div>
+
+  <div id="pricing-toast" class="pricing-toast" role="status" aria-live="polite" hidden></div>
 
   <script type="module" src="/src/pricing.js"></script>
 </body>

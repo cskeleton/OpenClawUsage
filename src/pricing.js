@@ -34,6 +34,35 @@ async function fetchOpenClawModels() {
   return res.json();
 }
 
+/** 根据全局「启用」开关，为下方配置区叠加灰色强调（仍可交互） */
+function syncCustomPricingDisabledUI() {
+  const el = document.getElementById('custom-pricing-enabled');
+  const stack = document.getElementById('pricing-config-stack');
+  if (!el || !stack) return;
+  stack.classList.toggle('pricing-config-stack--custom-disabled', !el.checked);
+}
+
+/**
+ * 将当前 pricingConfig 同步到服务端（自动保存）
+ */
+async function persistPricingConfigToServer() {
+  if (!pricingConfig) return;
+  const globalEl = document.getElementById('custom-pricing-enabled');
+  if (globalEl) {
+    pricingConfig.enabled = globalEl.checked;
+  }
+  try {
+    const res = await updatePricingConfig(pricingConfig);
+    if (res && res.updated) {
+      pricingConfig.updated = res.updated;
+    }
+  } catch (err) {
+    alert('同步失败: ' + err.message);
+    await loadData();
+    throw err;
+  }
+}
+
 /** 供「复制为自定义」等操作查找完整行数据 */
 let lastOpenClawModels = [];
 
@@ -210,20 +239,125 @@ function escapeAttr(s) {
 }
 
 /**
- * 在下拉框中确保存在指定 provider/model 选项（会话中未出现时）
+ * 客户端校验通配符 / 正则键（与后端 pricing.js 语义一致）
+ * @param {string} matchType
  * @param {string} key
+ * @returns {string} 空字符串表示通过，否则为错误信息
  */
-function ensureModelOption(key) {
-  const select = document.getElementById('new-model-select');
-  if ([...select.options].some((o) => o.value === key)) return;
-  const opt = document.createElement('option');
-  opt.value = key;
-  opt.textContent = key;
-  select.appendChild(opt);
+function validateClientPattern(matchType, key) {
+  const k = String(key).trim();
+  if (!k) return '请填写模型键或模式';
+  if (matchType === 'regex') {
+    if (!k.startsWith('/')) return '正则键须以 / 开头（如 /pattern/i）';
+    const lastSlash = k.lastIndexOf('/');
+    if (lastSlash <= 0) return '正则键须为 /pattern/ 或 /pattern/flags 形式';
+    const body = k.slice(1, lastSlash);
+    const flags = k.slice(lastSlash + 1);
+    try {
+      void new RegExp(body, flags);
+      return '';
+    } catch (e) {
+      return e.message || '正则无法编译';
+    }
+  }
+  if (matchType === 'wildcard') {
+    try {
+      let out = '';
+      for (let i = 0; i < k.length; i++) {
+        const c = k[i];
+        if (c === '*') out += '.*';
+        else if (c === '?') out += '.';
+        else if ('\\^$+{}[]|().'.includes(c)) out += `\\${c}`;
+        else out += c;
+      }
+      void new RegExp(`^${out}$`);
+      return '';
+    } catch (e) {
+      return e.message || '通配符无法构成有效规则';
+    }
+  }
+  return '';
+}
+
+/** 添加规则区：通配符/正则时显示提示并校验 combobox 内容 */
+function syncNewMatchTypeUI() {
+  const mtEl = document.getElementById('new-match-type');
+  const hint = document.getElementById('new-pattern-hint');
+  const errEl = document.getElementById('new-pattern-error');
+  if (!mtEl) return;
+  const mt = mtEl.value;
+  if (mt === 'exact') {
+    if (hint) hint.hidden = true;
+    if (errEl) errEl.hidden = true;
+  } else {
+    if (hint) hint.hidden = false;
+    onNewModelKeyInput();
+  }
+}
+
+/** combobox 在通配符/正则模式下实时校验 */
+function onNewModelKeyInput() {
+  const mtEl = document.getElementById('new-match-type');
+  const errEl = document.getElementById('new-pattern-error');
+  if (!mtEl || !errEl) return;
+  const mt = mtEl.value;
+  if (mt === 'exact') return;
+  const key = document.getElementById('new-model-input')?.value ?? '';
+  if (!key.trim()) {
+    errEl.hidden = true;
+    return;
+  }
+  const err = validateClientPattern(mt, key);
+  if (err) {
+    errEl.textContent = err;
+    errEl.hidden = false;
+  } else {
+    errEl.hidden = true;
+  }
 }
 
 /**
- * 渲染价格表格
+ * 在 datalist 中确保存在指定 provider/model 建议项（参考表复制等场景）
+ * @param {string} key
+ */
+function ensureModelDatalistOption(key) {
+  const dl = document.getElementById('new-model-datalist');
+  if (!dl) return;
+  if ([...dl.querySelectorAll('option')].some((o) => o.value === key)) return;
+  const opt = document.createElement('option');
+  opt.value = key;
+  dl.appendChild(opt);
+}
+
+/** 当前正在编辑的行（原始键），与 pricingConfig 中的 key 一致 */
+let pricingTableEditingKey = null;
+
+/**
+ * 只读单元格展示价格数字
+ * @param {number|null|undefined} n
+ */
+function fmtDisplayPrice(n) {
+  if (typeof n !== 'number' || Number.isNaN(n)) return '—';
+  if (n === 0) return '0';
+  return String(n);
+}
+
+/**
+ * 匹配类型中文标签（只读展示）
+ * @param {'exact'|'wildcard'|'regex'} mt
+ */
+function matchTypeBadgeHtml(mt) {
+  if (mt === 'wildcard') {
+    return '<span class="badge badge-ok">通配符</span>';
+  }
+  if (mt === 'regex') {
+    return '<span class="badge badge-warn">正则</span>';
+  }
+  return '<span class="badge badge-muted">精确</span>';
+}
+
+/**
+ * 渲染价格表格（默认只读；一行「编辑」后进入编辑模式）
  * @param {Object} config
  */
 function renderPricingTable(config) {
@@ -233,7 +367,7 @@ function renderPricingTable(config) {
   if (models.length === 0) {
     tbody.innerHTML = `
       <tr>
-        <td colspan="7" style="text-align: center; color: var(--text-secondary); padding: 40px;">
+        <td colspan="8" style="text-align: center; color: var(--text-secondary); padding: 40px;">
           暂无价格配置，添加配置后生效
         </td>
       </tr>
@@ -244,15 +378,60 @@ function renderPricingTable(config) {
   const rows = models
     .map(([model, prices]) => {
       const enabled = prices.enabled !== false;
+      const mt =
+        prices.matchType === 'wildcard' || prices.matchType === 'regex' ? prices.matchType : 'exact';
+      const isEditing = pricingTableEditingKey === model;
+      const mtSel = (v) => (mt === v ? ' selected' : '');
+
+      if (isEditing) {
+        return `
+    <tr data-model="${escapeAttr(model)}" data-row-editing="true">
+      <td class="col-center">
+        <label class="toggle-switch" title="关闭则该行使用 OpenClaw 账面价">
+          <input type="checkbox" class="row-enabled-toggle" data-field="enabled" ${enabled ? 'checked' : ''} aria-label="启用该行自定义单价" />
+          <span class="toggle-slider" aria-hidden="true"></span>
+        </label>
+      </td>
+      <td class="col-model-key">
+        <input type="text" class="pricing-key-input" data-field="modelKey" value="${escapeAttr(model)}" list="new-model-datalist" spellcheck="false" autocomplete="off" />
+      </td>
+      <td class="col-center">
+        <select class="pricing-match-select" data-field="matchType" title="匹配类型">
+          <option value="exact"${mtSel('exact')}>精确</option>
+          <option value="wildcard"${mtSel('wildcard')}>通配符</option>
+          <option value="regex"${mtSel('regex')}>正则</option>
+        </select>
+      </td>
+      <td class="col-numeric"><input type="number" class="pricing-input" data-field="input" value="${prices.input}" step="0.01"></td>
+      <td class="col-numeric"><input type="number" class="pricing-input" data-field="output" value="${prices.output}" step="0.01"></td>
+      <td class="col-numeric"><input type="number" class="pricing-input pricing-input--cache" data-field="cacheRead" value="${prices.cacheRead ?? ''}" step="0.01" placeholder="留空按 Input 原价" title="留空时按该行 Input 单价计算 Cache Read 费用"></td>
+      <td class="col-numeric"><input type="number" class="pricing-input pricing-input--cache" data-field="cacheWrite" value="${prices.cacheWrite ?? ''}" step="0.01" placeholder="留空按 Output 原价" title="留空时按该行 Output 单价计算 Cache Write 费用"></td>
+      <td class="col-center pricing-actions-cell">
+        <button type="button" class="btn-row-done btn-primary" data-original-model="${escapeAttr(model)}">完成</button>
+        <button type="button" class="btn-row-cancel btn-secondary">取消</button>
+      </td>
+    </tr>
+  `;
+      }
+
       return `
     <tr data-model="${escapeAttr(model)}">
-      <td style="text-align:center;"><input type="checkbox" class="row-enabled-toggle" data-field="enabled" ${enabled ? 'checked' : ''} title="取消勾选则该行使用 OpenClaw 账面价" /></td>
-      <td><strong>${escapeHtml(model)}</strong></td>
-      <td><input type="number" class="pricing-input" data-field="input" value="${prices.input}" step="0.01"></td>
-      <td><input type="number" class="pricing-input" data-field="output" value="${prices.output}" step="0.01"></td>
-      <td><input type="number" class="pricing-input pricing-input--cache" data-field="cacheRead" value="${prices.cacheRead || ''}" step="0.01" placeholder="留空按 Input 原价" title="留空时按该行 Input 单价（$/M）计算 Cache Read 费用"></td>
-      <td><input type="number" class="pricing-input pricing-input--cache" data-field="cacheWrite" value="${prices.cacheWrite || ''}" step="0.01" placeholder="留空按 Output 原价" title="留空时按该行 Output 单价（$/M）计算 Cache Write 费用"></td>
-      <td><button class="btn-delete" data-model="${escapeAttr(model)}">删除</button></td>
+      <td class="col-center">
+        <label class="toggle-switch" title="关闭则该行使用 OpenClaw 账面价">
+          <input type="checkbox" class="row-enabled-toggle" data-field="enabled" ${enabled ? 'checked' : ''} aria-label="启用该行自定义单价" />
+          <span class="toggle-slider" aria-hidden="true"></span>
+        </label>
+      </td>
+      <td class="col-model-key"><span class="pricing-cell-readonly"><strong>${escapeHtml(model)}</strong></span></td>
+      <td class="col-center">${matchTypeBadgeHtml(mt)}</td>
+      <td class="col-numeric"><span class="pricing-cell-readonly pricing-cell-num">${fmtDisplayPrice(prices.input)}</span></td>
+      <td class="col-numeric"><span class="pricing-cell-readonly pricing-cell-num">${fmtDisplayPrice(prices.output)}</span></td>
+      <td class="col-numeric"><span class="pricing-cell-readonly pricing-cell-num">${fmtDisplayPrice(prices.cacheRead != null ? prices.cacheRead : null)}</span></td>
+      <td class="col-numeric"><span class="pricing-cell-readonly pricing-cell-num">${fmtDisplayPrice(prices.cacheWrite != null ? prices.cacheWrite : null)}</span></td>
+      <td class="col-center pricing-actions-cell">
+        <button type="button" class="btn-row-edit btn-secondary" data-model="${escapeAttr(model)}">编辑</button>
+        <button type="button" class="btn-delete" data-model="${escapeAttr(model)}">删除</button>
+      </td>
     </tr>
   `;
     })
@@ -260,17 +439,122 @@ function renderPricingTable(config) {
   tbody.innerHTML = rows;
 }
 
-// 填充模型选择下拉框
-function populateModelSelect(availableModels, configuredModels) {
-  const select = document.getElementById('new-model-select');
+/**
+ * 进入行编辑
+ * @param {string} model
+ */
+function beginRowEdit(model) {
+  if (pricingTableEditingKey !== null && pricingTableEditingKey !== model) {
+    alert('请先完成或取消正在编辑的行');
+    return;
+  }
+  pricingTableEditingKey = model;
+  renderPricingTable(pricingConfig);
+  requestAnimationFrame(() => {
+    document
+      .querySelector(`#pricing-tbody tr[data-model="${CSS.escape(model)}"] .pricing-key-input`)
+      ?.focus();
+  });
+}
+
+/**
+ * 取消行编辑（丢弃未保存到内存的修改，从 pricingConfig 重绘）
+ */
+function cancelRowEdit() {
+  pricingTableEditingKey = null;
+  renderPricingTable(pricingConfig);
+}
+
+/**
+ * 将编辑行写回 pricingConfig（内存），并退出编辑
+ * @param {string} originalModel
+ */
+async function applyRowEdit(originalModel) {
+  const row = document.querySelector(`#pricing-tbody tr[data-model="${CSS.escape(originalModel)}"]`);
+  if (!row) return;
+
+  const newKey = (row.querySelector('[data-field="modelKey"]')?.value ?? '').trim();
+  if (!newKey) {
+    alert('模型键不能为空');
+    return;
+  }
+
+  const matchTypeEl = row.querySelector('[data-field="matchType"]');
+  const matchType = matchTypeEl ? matchTypeEl.value : 'exact';
+  const input = parseFloat(row.querySelector('[data-field="input"]').value);
+  const output = parseFloat(row.querySelector('[data-field="output"]').value);
+  const cacheRead = row.querySelector('[data-field="cacheRead"]').value;
+  const cacheWrite = row.querySelector('[data-field="cacheWrite"]').value;
+  const enabledEl = row.querySelector('.row-enabled-toggle');
+  const enabled = enabledEl ? enabledEl.checked : true;
+
+  if (isNaN(input) || isNaN(output) || input < 0 || output < 0) {
+    alert('Input 和 Output 价格必须为有效的非负数');
+    return;
+  }
+
+  const patErr = matchType !== 'exact' ? validateClientPattern(matchType, newKey) : '';
+  if (patErr) {
+    alert(`${newKey}：${patErr}`);
+    return;
+  }
+
+  if (!pricingConfig.pricing) pricingConfig.pricing = {};
+  if (newKey !== originalModel && pricingConfig.pricing[newKey]) {
+    alert('已存在相同键的规则，请使用其他键名');
+    return;
+  }
+
+  const entry = {
+    input,
+    output,
+    cacheRead: cacheRead ? parseFloat(cacheRead) : null,
+    cacheWrite: cacheWrite ? parseFloat(cacheWrite) : null,
+    enabled,
+  };
+  if (matchType !== 'exact') {
+    entry.matchType = matchType;
+  }
+
+  if (newKey !== originalModel) {
+    delete pricingConfig.pricing[originalModel];
+  }
+  pricingConfig.pricing[newKey] = entry;
+  pricingTableEditingKey = null;
+  try {
+    await persistPricingConfigToServer();
+    renderPricingTable(pricingConfig);
+    fetchAvailableModels().then(({ models }) => {
+      populateModelDatalist(models, pricingConfig.pricing);
+    });
+    fetchOpenClawModels()
+      .then((oc) => {
+        renderOpenClawReference(oc.models || [], { resetPage: true });
+        renderUnpricedModels(oc.unpricedModels || [], { resetPage: true });
+      })
+      .catch(() => {});
+  } catch {
+    /* persistPricingConfigToServer 已 loadData */
+  }
+}
+
+/**
+ * 填充「添加新价格」combobox 的 datalist（未配置的会话模型候选）
+ * @param {string[]} availableModels
+ * @param {Record<string, unknown>} configuredModels
+ */
+function populateModelDatalist(availableModels, configuredModels) {
+  const dl = document.getElementById('new-model-datalist');
+  if (!dl) return;
   const configuredKeys = Object.keys(configuredModels);
-
-  const options = availableModels
-    .filter((model) => !configuredKeys.includes(model))
-    .map((model) => `<option value="${escapeAttr(model)}">${escapeHtml(model)}</option>`)
-    .join('');
-
-  select.innerHTML = `<option value="">选择模型...</option>${options}`;
+  dl.innerHTML = '';
+  availableModels
+    .filter((m) => !configuredKeys.includes(m))
+    .forEach((model) => {
+      const opt = document.createElement('option');
+      opt.value = model;
+      dl.appendChild(opt);
+    });
 }
 
 // 加载数据
@@ -291,61 +575,18 @@ async function loadData() {
     if (globalEl) {
       globalEl.checked = pricingConfig.enabled !== false;
     }
+    syncCustomPricingDisabledUI();
 
+    pricingTableEditingKey = null;
     renderPricingTable(pricingConfig);
-    populateModelSelect(models, pricingConfig.pricing || {});
+    populateModelDatalist(models, pricingConfig.pricing || {});
     renderOpenClawReference(openclawData.models || [], { resetPage: true });
     renderUnpricedModels(openclawData.unpricedModels || [], { resetPage: true });
+    syncNewModelClearVisibility();
   } catch (error) {
     alert('加载价格配置失败: ' + error.message);
-  }
-}
-
-/**
- * 从表格收集 pricing 对象（含每行 enabled）
- */
-function collectPricingFromTable() {
-  const newPricing = {};
-  document.querySelectorAll('#pricing-tbody tr[data-model]').forEach((row) => {
-    const model = row.dataset.model;
-    const input = parseFloat(row.querySelector('[data-field="input"]').value);
-    const output = parseFloat(row.querySelector('[data-field="output"]').value);
-    const cacheRead = row.querySelector('[data-field="cacheRead"]').value;
-    const cacheWrite = row.querySelector('[data-field="cacheWrite"]').value;
-    const enabledEl = row.querySelector('.row-enabled-toggle');
-    const enabled = enabledEl ? enabledEl.checked : true;
-
-    if (isNaN(input) || isNaN(output) || input < 0 || output < 0) {
-      throw new Error(`${model} 的 Input 和 Output 价格必须为有效的非负数`);
-    }
-
-    newPricing[model] = {
-      input,
-      output,
-      cacheRead: cacheRead ? parseFloat(cacheRead) : null,
-      cacheWrite: cacheWrite ? parseFloat(cacheWrite) : null,
-      enabled,
-    };
-  });
-  return newPricing;
-}
-
-// 保存配置
-async function savePricingConfig() {
-  try {
-    const newPricing = collectPricingFromTable();
-    pricingConfig.pricing = newPricing;
-    pricingConfig.updated = new Date().toISOString();
-    const globalEl = document.getElementById('custom-pricing-enabled');
-    if (globalEl) {
-      pricingConfig.enabled = globalEl.checked;
-    }
-
-    await updatePricingConfig(pricingConfig);
-    alert('价格配置已保存！成本将使用新价格重新计算。');
-    await loadData();
-  } catch (error) {
-    alert('保存失败: ' + error.message);
+  } finally {
+    syncCustomPricingDisabledUI();
   }
 }
 
@@ -366,16 +607,34 @@ async function resetConfig() {
 
 // 添加新价格
 async function addPricing() {
-  const modelSelect = document.getElementById('new-model-select');
+  if (pricingTableEditingKey !== null) {
+    alert('请先完成或取消表格中正在编辑的行');
+    return;
+  }
+  const matchTypeEl = document.getElementById('new-match-type');
+  const modelInput = document.getElementById('new-model-input');
   const inputPrice = document.getElementById('new-input-price');
   const outputPrice = document.getElementById('new-output-price');
   const cacheReadPrice = document.getElementById('new-cache-read-price');
   const cacheWritePrice = document.getElementById('new-cache-write-price');
+  const errEl = document.getElementById('new-pattern-error');
 
-  const model = modelSelect.value;
+  const matchType = matchTypeEl ? matchTypeEl.value : 'exact';
+  const model = (modelInput?.value ?? '').trim();
   if (!model) {
-    alert('请选择一个模型');
+    alert('请填写或选择 provider/model（或通配符/正则模式）');
     return;
+  }
+  if (matchType !== 'exact') {
+    const perr = validateClientPattern(matchType, model);
+    if (perr) {
+      if (errEl) {
+        errEl.textContent = perr;
+        errEl.hidden = false;
+      }
+      return;
+    }
+    if (errEl) errEl.hidden = true;
   }
 
   const input = parseFloat(inputPrice.value);
@@ -390,74 +649,116 @@ async function addPricing() {
   const cacheWrite = cacheWritePrice.value ? parseFloat(cacheWritePrice.value) : null;
 
   if (!pricingConfig.pricing) pricingConfig.pricing = {};
-  pricingConfig.pricing[model] = {
+  if (pricingConfig.pricing[model]) {
+    alert('已存在相同键的规则，请删除后再添加或保存后编辑');
+    return;
+  }
+
+  const row = {
     input,
     output,
     cacheRead,
     cacheWrite,
     enabled: true,
   };
+  if (matchType !== 'exact') {
+    row.matchType = matchType;
+  }
+  pricingConfig.pricing[model] = row;
 
   // 清空输入
-  modelSelect.value = '';
+  if (modelInput) modelInput.value = '';
   inputPrice.value = '';
   outputPrice.value = '';
   cacheReadPrice.value = '';
   cacheWritePrice.value = '';
+  if (matchTypeEl) matchTypeEl.value = 'exact';
+  syncNewMatchTypeUI();
+  syncNewModelClearVisibility();
 
-  // 重新渲染
-  renderPricingTable(pricingConfig);
-  const { models } = await fetchAvailableModels();
-  populateModelSelect(models, pricingConfig.pricing);
   try {
-    const oc = await fetchOpenClawModels();
-    renderOpenClawReference(oc.models || [], { resetPage: true });
-    renderUnpricedModels(oc.unpricedModels || [], { resetPage: true });
-  } catch (_) {
-    /* 忽略 */
+    await persistPricingConfigToServer();
+    renderPricingTable(pricingConfig);
+    const { models } = await fetchAvailableModels();
+    populateModelDatalist(models, pricingConfig.pricing);
+    try {
+      const oc = await fetchOpenClawModels();
+      renderOpenClawReference(oc.models || [], { resetPage: true });
+      renderUnpricedModels(oc.unpricedModels || [], { resetPage: true });
+    } catch (_) {
+      /* 忽略 */
+    }
+  } catch {
+    /* persistPricingConfigToServer 已 loadData */
   }
 }
 
 // 删除价格
-function deletePricing(model) {
+async function deletePricing(model) {
   if (!confirm(`确定要删除 ${model} 的价格配置吗？`)) {
     return;
   }
 
+  if (pricingTableEditingKey === model) {
+    pricingTableEditingKey = null;
+  }
   delete pricingConfig.pricing[model];
-  renderPricingTable(pricingConfig);
-
-  fetchAvailableModels().then(({ models }) => {
-    populateModelSelect(models, pricingConfig.pricing);
-  });
-  fetchOpenClawModels()
-    .then((oc) => {
-      renderOpenClawReference(oc.models || [], { resetPage: true });
-      renderUnpricedModels(oc.unpricedModels || [], { resetPage: true });
-    })
-    .catch(() => {});
+  try {
+    await persistPricingConfigToServer();
+    renderPricingTable(pricingConfig);
+    fetchAvailableModels().then(({ models }) => {
+      populateModelDatalist(models, pricingConfig.pricing);
+    });
+    fetchOpenClawModels()
+      .then((oc) => {
+        renderOpenClawReference(oc.models || [], { resetPage: true });
+        renderUnpricedModels(oc.unpricedModels || [], { resetPage: true });
+      })
+      .catch(() => {});
+  } catch {
+    /* persistPricingConfigToServer 已 loadData */
+  }
 }
 
 /**
- * 全局开关：立即保存
+ * 全局开关：立即同步
  */
 async function onGlobalEnabledChange(e) {
   if (!pricingConfig) return;
   const checked = e.target.checked;
   pricingConfig.enabled = checked;
+  syncCustomPricingDisabledUI();
   try {
-    await updatePricingConfig(pricingConfig);
-    alert(
-      checked
-        ? '已启用自定义单价（按上方规则重算理论成本）'
-        : '已切换为使用 OpenClaw 会话中的账面成本（未覆盖的模型亦如此）'
-    );
-    await loadData();
-  } catch (err) {
-    alert('保存失败: ' + err.message);
+    await persistPricingConfigToServer();
+  } catch {
     e.target.checked = !checked;
     pricingConfig.enabled = !checked;
+    syncCustomPricingDisabledUI();
   }
+}
+
+/**
+ * 行内启用开关：立即同步（与是否处于编辑模式无关）
+ * @param {Event} e
+ */
+function onRowEnabledChange(e) {
+  const t = e.target;
+  if (!t.classList.contains('row-enabled-toggle')) return;
+  const row = t.closest('tr[data-model]');
+  if (!row || !pricingConfig?.pricing) return;
+  const model = row.dataset.model;
+  const entry = pricingConfig.pricing[model];
+  if (!entry) return;
+  entry.enabled = t.checked;
+  persistPricingConfigToServer();
+}
+
+/** 添加区模型输入右侧「清空」按钮显隐 */
+function syncNewModelClearVisibility() {
+  const input = document.getElementById('new-model-input');
+  const btn = document.getElementById('new-model-clear');
+  if (!input || !btn) return;
+  btn.hidden = !input.value.trim();
 }
 
 /**
@@ -468,9 +769,19 @@ function copyOpenClawToForm(key) {
   const row = lastOpenClawModels.find((m) => m.key === key);
   if (!row) return;
 
-  ensureModelOption(key);
-  const select = document.getElementById('new-model-select');
-  select.value = key;
+  if (pricingTableEditingKey !== null) {
+    alert('请先完成或取消表格中正在编辑的行');
+    return;
+  }
+
+  const mtEl = document.getElementById('new-match-type');
+  if (mtEl) mtEl.value = 'exact';
+  syncNewMatchTypeUI();
+
+  ensureModelDatalistOption(key);
+  const modelInput = document.getElementById('new-model-input');
+  if (modelInput) modelInput.value = key;
+  syncNewModelClearVisibility();
 
   document.getElementById('new-input-price').value = row.cost.input;
   document.getElementById('new-output-price').value = row.cost.output;
@@ -498,16 +809,45 @@ function locatePricingRow(key) {
 }
 
 // 事件监听
-document.getElementById('save-pricing-btn').addEventListener('click', savePricingConfig);
 document.getElementById('reset-pricing-btn').addEventListener('click', resetConfig);
 document.getElementById('add-pricing-btn').addEventListener('click', addPricing);
 
+document.getElementById('new-match-type')?.addEventListener('change', syncNewMatchTypeUI);
+document.getElementById('new-model-input')?.addEventListener('input', () => {
+  onNewModelKeyInput();
+  syncNewModelClearVisibility();
+});
+document.getElementById('new-model-clear')?.addEventListener('click', () => {
+  const input = document.getElementById('new-model-input');
+  if (input) input.value = '';
+  syncNewModelClearVisibility();
+  onNewModelKeyInput();
+  input?.focus();
+});
+
 document.getElementById('custom-pricing-enabled').addEventListener('change', onGlobalEnabledChange);
 
+document.getElementById('pricing-tbody').addEventListener('change', onRowEnabledChange);
+
 document.getElementById('pricing-tbody').addEventListener('click', (e) => {
-  if (e.target.classList.contains('btn-delete')) {
-    const model = e.target.dataset.model;
-    deletePricing(model);
+  const doneBtn = e.target.closest('.btn-row-done');
+  const cancelBtn = e.target.closest('.btn-row-cancel');
+  const editBtn = e.target.closest('.btn-row-edit');
+  const delBtn = e.target.closest('.btn-delete');
+  if (doneBtn) {
+    applyRowEdit(doneBtn.dataset.originalModel);
+    return;
+  }
+  if (cancelBtn) {
+    cancelRowEdit();
+    return;
+  }
+  if (editBtn) {
+    beginRowEdit(editBtn.dataset.model);
+    return;
+  }
+  if (delBtn) {
+    deletePricing(delBtn.dataset.model);
   }
 });
 
@@ -566,5 +906,35 @@ function initPricingCollapsibles() {
 
 initPricingCollapsibles();
 
+/** 显示短暂 toast（价格页「已复制」等） */
+function showPricingToast(message) {
+  const el = document.getElementById('pricing-toast');
+  if (!el) return;
+  el.textContent = message;
+  el.hidden = false;
+  el.classList.add('pricing-toast--visible');
+  clearTimeout(showPricingToast._tid);
+  showPricingToast._tid = setTimeout(() => {
+    el.classList.remove('pricing-toast--visible');
+    el.hidden = true;
+  }, 2200);
+}
+
+document.getElementById('pricing-help-copy-btn')?.addEventListener('click', async (e) => {
+  e.stopPropagation();
+  const source = document.getElementById('pricing-help-copy-content');
+  const text = source?.innerText?.trim() ?? '';
+  if (!text) {
+    showPricingToast('没有可复制的内容');
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    showPricingToast('已复制');
+  } catch {
+    showPricingToast('复制失败，请手动选择说明文字');
+  }
+});
+
 // 初始化
-loadData();
+loadData().then(() => syncNewMatchTypeUI());

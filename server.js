@@ -5,6 +5,7 @@ import {
   loadPricingConfig,
   savePricingConfig,
   validatePricingConfig,
+  findMatchingPricing,
 } from './pricing.js';
 import { listOpenClawPricedModels, listUnpricedModels } from './openclaw-config.js';
 
@@ -110,7 +111,7 @@ app.get('/api/openclaw/models', async (req, res) => {
     const customMap = pricingConfig.pricing || {};
     const rows = priced.map((row) => {
       const key = `${row.provider}/${row.model}`;
-      const rule = customMap[key];
+      const rule = findMatchingPricing(key, customMap);
       let custom = null;
       if (rule) {
         custom = {

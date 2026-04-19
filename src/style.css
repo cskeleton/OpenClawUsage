@@ -848,21 +848,229 @@ html.theme-dark .date-input {
 
 #pricing-table th,
 #pricing-table td {
-  padding: 16px;
+  padding: 10px 12px;
   text-align: left;
   border-bottom: 1px solid var(--border-color);
+}
+
+#pricing-table thead th {
+  vertical-align: middle;
 }
 
 #pricing-table th {
   color: var(--text-secondary);
   font-weight: 500;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
+#pricing-table .col-center {
+  text-align: center;
+  vertical-align: middle;
+}
+
+#pricing-table .col-numeric {
+  text-align: right;
+  vertical-align: middle;
+}
+
+#pricing-table th.col-numeric {
+  text-align: right;
+}
+
+#pricing-table .col-model-key {
+  vertical-align: middle;
+  word-break: break-word;
+}
+
+#pricing-table .pricing-input {
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  font-size: 0.88rem;
+}
+
+#pricing-table .badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  line-height: 1.25;
+  vertical-align: middle;
+}
+
+.pricing-col-enable {
+  width: 72px;
+  min-width: 68px;
+}
+
+.pricing-col-model {
+  min-width: 160px;
+}
+
+.pricing-col-match {
+  width: 120px;
+  min-width: 108px;
+}
+
+.pricing-col-num {
+  width: 118px;
+  min-width: 96px;
+}
+
+.pricing-col-cache {
+  min-width: 120px;
+}
+
+.pricing-col-action {
+  width: 132px;
+  min-width: 120px;
+}
+
+#pricing-table .pricing-actions-cell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+  align-items: center;
+}
+
+#pricing-table .btn-row-edit,
+#pricing-table .btn-row-done,
+#pricing-table .btn-row-cancel {
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+#pricing-table .btn-row-done {
+  box-shadow: none;
+}
+
+#pricing-table .pricing-key-input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 0.88rem;
+}
+
+#pricing-table .pricing-key-input:focus {
+  outline: none;
+  border-color: var(--accent-orange);
+  box-shadow: 0 0 0 2px rgba(234, 88, 12, 0.2);
+}
+
+#pricing-table .pricing-cell-readonly {
+  display: inline-block;
+  max-width: 100%;
+}
+
+#pricing-table .pricing-cell-num {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.92rem;
+}
+
 #pricing-table tr:hover {
   background: var(--bg-card-hover);
+}
+
+/* 价格页：隐藏 number 步进箭头 */
+.pricing-page input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.pricing-page input[type='number']::-webkit-outer-spin-button,
+.pricing-page input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* 行内启用：开关样式 */
+.toggle-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 22px;
+  vertical-align: middle;
+  cursor: pointer;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: var(--border-color);
+  border-radius: 999px;
+  transition: background 0.2s;
+  pointer-events: none;
+}
+
+.toggle-slider::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background: var(--accent-orange);
+}
+
+.toggle-switch input:focus-visible + .toggle-slider {
+  box-shadow: 0 0 0 2px rgba(234, 88, 12, 0.35);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(14px);
+}
+
+.theme-dark .toggle-slider::before {
+  background: var(--bg-secondary);
+}
+
+/* 行内匹配类型下拉，与输入框风格统一 */
+#pricing-table .pricing-match-select {
+  width: 100%;
+  max-width: 7.5rem;
+  margin: 0 auto;
+  display: block;
+  padding: 8px 2rem 8px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  font-family: var(--font);
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+#pricing-table .pricing-match-select:focus {
+  outline: none;
+  border-color: var(--accent-orange);
+  box-shadow: 0 0 0 2px rgba(234, 88, 12, 0.2);
 }
 
 #openclaw-ref-table,
@@ -875,7 +1083,7 @@ html.theme-dark .date-input {
 #openclaw-ref-table td,
 #unpriced-models-table th,
 #unpriced-models-table td {
-  padding: 16px;
+  padding: 10px 12px;
   text-align: left;
   border-bottom: 1px solid var(--border-color);
 }
@@ -884,7 +1092,7 @@ html.theme-dark .date-input {
 #unpriced-models-table th {
   color: var(--text-secondary);
   font-weight: 500;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -983,12 +1191,12 @@ html.theme-dark .date-input {
 .pricing-add-row {
   display: flex;
   gap: 10px;
-  align-items: center;
+  align-items: flex-start;
   flex-wrap: wrap;
 }
 
 .pricing-add-row select,
-.pricing-add-row input {
+.pricing-add-row input:not(.pricing-add-combobox) {
   flex: 1;
   min-width: 150px;
   background: var(--bg-input);
@@ -1001,6 +1209,87 @@ html.theme-dark .date-input {
   transition: all 0.2s;
 }
 
+/* 模型 combobox + 右侧清空：flex 在包裹层，避免与绝对定位的 × 抢布局 */
+.pricing-add-combobox-wrap {
+  flex: 2 1 220px;
+  min-width: 200px;
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+
+.pricing-add-combobox {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  padding: 10px 2.5rem 10px 14px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.pricing-input-clear {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.pricing-input-clear:hover {
+  color: var(--text-primary);
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.theme-dark .pricing-input-clear:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.pricing-add-row #new-match-type {
+  flex: 0 0 130px;
+  min-width: 120px;
+  max-width: 150px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 10px 2rem 10px 14px;
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.pricing-add-row #add-pricing-btn {
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+.pricing-add-hint-full {
+  flex: 1 1 100%;
+  order: 99;
+  margin: 0;
+  padding-top: 2px;
+}
+
 .pricing-add-row select:focus,
 .pricing-add-row input:focus {
   outline: none;
@@ -1010,12 +1299,35 @@ html.theme-dark .date-input {
 
 .pricing-add-row select {
   cursor: pointer;
+  padding-right: 2rem;
 }
 
 .pricing-add-row option {
   background: var(--bg-secondary);
   color: var(--text-primary);
 }
+
+.pricing-pattern-hint {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
+.pricing-pattern-hint code {
+  font-size: 0.72rem;
+}
+
+.pricing-pattern-error {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #dc2626;
+}
+
+.theme-dark .pricing-pattern-error {
+  color: #f87171;
+}
+
 
 .btn-primary {
   background: var(--gradient-primary);
@@ -1150,6 +1462,12 @@ html.theme-dark .date-input {
     min-width: unset;
   }
 
+  .pricing-add-combobox-wrap,
+  .pricing-add-row #new-match-type {
+    max-width: none;
+    flex: 1 1 auto;
+  }
+
   #pricing-table th,
   #pricing-table td,
   #openclaw-ref-table th,
@@ -1219,9 +1537,14 @@ tr.pricing-row-highlight {
   color: var(--text-secondary);
   font-size: 0.9rem;
   font-weight: 600;
-  cursor: help;
+  font-family: var(--font);
+  cursor: pointer;
   transition: all 0.2s;
   box-shadow: var(--shadow-card);
+  padding: 0;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 .help-icon:hover {
@@ -1276,6 +1599,34 @@ tr.pricing-row-highlight {
 .tooltip-popup code {
   -webkit-text-fill-color: currentColor;
   color: var(--accent-orange);
+}
+
+/* 价格说明复制成功提示 */
+.pricing-toast {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  z-index: 10050;
+  max-width: min(90vw, 360px);
+  padding: 10px 18px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-card);
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translate(-50%, 10px);
+  transition: opacity 0.22s ease, transform 0.22s ease, visibility 0.22s;
+}
+
+.pricing-toast.pricing-toast--visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, 0);
 }
 
 /* ---- 价格配置页布局 ---- */
@@ -1362,10 +1713,20 @@ tr.pricing-row-highlight {
   margin-bottom: 30px;
 }
 
-.pricing-header h1 {
+/* 标题行：主标题渐变字 + 旁路「启用」开关（不占整行） */
+.pricing-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin: 0;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.pricing-title-text {
   font-size: 2rem;
   color: var(--text-primary);
-  font-weight: 800;
   background: var(--gradient-primary);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -1377,6 +1738,116 @@ tr.pricing-row-highlight {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+/* 标题旁：一体化「启用」按钮（文案在按钮左区，右侧为滑轨） */
+.pricing-enable-integrated {
+  display: inline-flex;
+  cursor: pointer;
+  vertical-align: middle;
+  margin: 0;
+}
+
+.pricing-enable-integrated-track {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+  background: var(--bg-input);
+  box-sizing: border-box;
+}
+
+.pricing-enable-integrated-track:has(.pricing-enable-integrated-input:checked) {
+  background: var(--accent-orange);
+  border-color: var(--accent-orange);
+}
+
+.pricing-enable-integrated-input {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.pricing-enable-integrated-track:focus-within {
+  box-shadow: 0 0 0 2px rgba(234, 88, 12, 0.35);
+}
+
+.pricing-enable-integrated-word {
+  display: flex;
+  align-items: center;
+  padding: 0 9px 0 11px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+  user-select: none;
+  pointer-events: none;
+  border-radius: 0;
+}
+
+.pricing-enable-integrated-track:has(.pricing-enable-integrated-input:checked) .pricing-enable-integrated-word {
+  color: #fff;
+}
+
+.pricing-enable-integrated-rail {
+  position: relative;
+  width: 34px;
+  flex-shrink: 0;
+  align-self: stretch;
+  background: rgba(0, 0, 0, 0.08);
+  pointer-events: none;
+}
+
+.theme-dark .pricing-enable-integrated-rail {
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.pricing-enable-integrated-track:has(.pricing-enable-integrated-input:checked) .pricing-enable-integrated-rail {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.pricing-enable-integrated-knob {
+  position: absolute;
+  top: 4px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: transform 0.2s ease;
+}
+
+.theme-dark .pricing-enable-integrated-knob {
+  background: var(--bg-secondary);
+}
+
+.pricing-enable-integrated-input:checked ~ .pricing-enable-integrated-rail .pricing-enable-integrated-knob {
+  transform: translateX(8px);
+}
+
+/* 自定义单价表格及以下区块：关闭「启用」时整体变灰强调（仍可点击编辑） */
+.pricing-config-stack {
+  margin-top: 0;
+}
+
+.pricing-config-stack--custom-disabled {
+  opacity: 0.5;
+  filter: saturate(0.65);
+  transition: opacity 0.22s ease, filter 0.22s ease;
+}
+
+.theme-dark .pricing-config-stack--custom-disabled {
+  opacity: 0.48;
+  filter: saturate(0.5);
 }
 
 .back-link {
@@ -1394,19 +1865,3 @@ tr.pricing-row-highlight {
   color: var(--accent-orange);
 }
 
-.pricing-header .switch-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-secondary);
-  font-size: 0.95rem;
-  cursor: pointer;
-  user-select: none;
-}
-
-.pricing-header .switch-label input {
-  width: 18px;
-  height: 18px;
-  cursor: pointer;
-  accent-color: var(--accent-orange);
-}
