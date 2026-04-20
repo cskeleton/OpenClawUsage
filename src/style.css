@@ -168,6 +168,45 @@ body::after {
   box-shadow: var(--shadow-card);
 }
 
+.locale-switch {
+  display: inline-flex;
+  align-items: stretch;
+  padding: 4px;
+  gap: 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  backdrop-filter: blur(14px);
+  box-shadow: var(--shadow-card);
+}
+
+.locale-switch button[data-locale-control] {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font);
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1;
+  min-width: 44px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+}
+
+.locale-switch button[data-locale-control]:hover {
+  color: var(--accent-orange);
+  background: rgba(234, 88, 12, 0.08);
+}
+
+.locale-switch button[data-locale-control].locale-control-active {
+  color: var(--text-primary);
+  background: linear-gradient(180deg, rgba(251, 146, 60, 0.22) 0%, rgba(234, 88, 12, 0.12) 100%);
+  box-shadow: inset 0 0 0 1px var(--border-glow);
+}
+
 .theme-switch button[data-theme-control] {
   appearance: none;
   border: none;

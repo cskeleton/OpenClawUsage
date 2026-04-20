@@ -1,4 +1,5 @@
 import { escapeHtml, escapeAttr, showToast } from './util.js';
+import { initLocaleControls, t } from './i18n.js';
 
 // 保留原有 showPricingToast 名称以减少改动；内部委托给统一 toast 实现
 const showPricingToast = (msg, opts) => showToast(msg, opts);
@@ -62,7 +63,7 @@ async function persistPricingConfigToServer() {
       pricingConfig.updated = res.updated;
     }
   } catch (err) {
-    showToast('同步失败: ' + err.message, { variant: 'error' });
+    showToast(t('pricing.syncFailed', { message: err.message }), { variant: 'error' });
     await loadData();
     throw err;
   }
@@ -589,7 +590,7 @@ async function loadData() {
     renderUnpricedModels(openclawData.unpricedModels || [], { resetPage: true });
     syncNewModelClearVisibility();
   } catch (error) {
-    showToast('加载价格配置失败: ' + error.message, { variant: 'error' });
+    showToast(t('pricing.loadFailed', { message: error.message }), { variant: 'error' });
   } finally {
     syncCustomPricingDisabledUI();
   }
@@ -597,16 +598,16 @@ async function loadData() {
 
 // 重置配置
 async function resetConfig() {
-  if (!confirm('确定要重置价格配置吗？将恢复使用 OpenClaw 内置价格。')) {
+  if (!confirm(t('pricing.resetConfirm'))) {
     return;
   }
 
   try {
     await resetPricingConfig();
-    showToast('价格配置已重置', { variant: 'success' });
+    showToast(t('pricing.resetSuccess'), { variant: 'success' });
     await loadData();
   } catch (error) {
-    showToast('重置失败: ' + error.message, { variant: 'error' });
+    showToast(t('pricing.resetFailed', { message: error.message }), { variant: 'error' });
   }
 }
 
@@ -941,16 +942,17 @@ document.getElementById('pricing-help-copy-btn')?.addEventListener('click', asyn
   const source = document.getElementById('pricing-help-copy-content');
   const text = source?.innerText?.trim() ?? '';
   if (!text) {
-    showPricingToast('没有可复制的内容');
+    showPricingToast(t('pricing.noCopyContent'));
     return;
   }
   try {
     await navigator.clipboard.writeText(text);
-    showPricingToast('已复制');
+    showPricingToast(t('pricing.copyDone'));
   } catch {
-    showPricingToast('复制失败，请手动选择说明文字');
+    showPricingToast(t('pricing.copyFailed'));
   }
 });
 
 // 初始化
+initLocaleControls();
 loadData().then(() => syncNewMatchTypeUI());

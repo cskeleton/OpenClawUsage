@@ -1,6 +1,6 @@
 # OpenClaw Token 用量统计工具
 
-> ⚠️ 本文档为中文版。英文版详见 [README_EN.md](README_EN.md)。
+> ⚠️ This document is the Chinese version. For English, see [README_EN.md](README_EN.md).
 
 ---
 

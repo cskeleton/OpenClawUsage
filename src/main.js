@@ -1,5 +1,6 @@
 import { renderCharts, destroyCharts } from './charts.js';
 import { escapeHtml, escapeAttr } from './util.js';
+import { initLocaleControls, getLocale, t } from './i18n.js';
 
 // ---- Utility functions ----
 
@@ -31,9 +32,9 @@ function formatDate(timestamp) {
 
 function statusBadge(status) {
   const map = {
-    active: { icon: '🟢', label: 'Active', cls: 'status-active' },
-    reset: { icon: '🔄', label: 'Reset', cls: 'status-reset' },
-    deleted: { icon: '🗑️', label: 'Deleted', cls: 'status-deleted' },
+    active: { icon: '🟢', label: t('dashboard.statusActive'), cls: 'status-active' },
+    reset: { icon: '🔄', label: t('dashboard.statusReset'), cls: 'status-reset' },
+    deleted: { icon: '🗑️', label: t('dashboard.statusDeleted'), cls: 'status-deleted' },
   };
   const s = map[status] || map.active;
   return `<span class="status-badge ${s.cls}">${s.icon} ${s.label}</span>`;
@@ -222,39 +223,39 @@ function renderSummaryCards(summary) {
 
   const cards = [
     {
-      icon: '⚡', label: 'Total Tokens',
+      icon: '⚡', label: t('dashboard.summaryTotalTokens'),
       value: formatNumber(summary.totalTokens),
-      sub: `${summary.totalRequests.toLocaleString()} 次请求`,
+      sub: t('dashboard.summaryRequests', { count: summary.totalRequests.toLocaleString() }),
       valueClass: 'gradient-indigo',
     },
     {
-      icon: '📥', label: 'Input Tokens',
+      icon: '📥', label: t('dashboard.summaryInputTokens'),
       value: formatNumber(summary.totalInput),
-      sub: `占 ${summary.totalTokens > 0 ? ((summary.totalInput / summary.totalTokens) * 100).toFixed(1) : 0}%`,
+      sub: t('dashboard.summaryInputRatio', { ratio: summary.totalTokens > 0 ? ((summary.totalInput / summary.totalTokens) * 100).toFixed(1) : 0 }),
       valueClass: 'gradient-cyan',
     },
     {
-      icon: '📤', label: 'Output Tokens',
+      icon: '📤', label: t('dashboard.summaryOutputTokens'),
       value: formatNumber(summary.totalOutput),
-      sub: `占 ${summary.totalTokens > 0 ? ((summary.totalOutput / summary.totalTokens) * 100).toFixed(1) : 0}%`,
+      sub: t('dashboard.summaryOutputRatio', { ratio: summary.totalTokens > 0 ? ((summary.totalOutput / summary.totalTokens) * 100).toFixed(1) : 0 }),
       valueClass: 'gradient-emerald',
     },
     {
-      icon: '💾', label: 'Cache Write',
+      icon: '💾', label: t('dashboard.summaryCacheWrite'),
       value: formatNumber(summary.totalCacheWrite),
-      sub: `Read: ${formatNumber(summary.totalCacheRead)}`,
+      sub: t('dashboard.summaryCacheRead', { count: formatNumber(summary.totalCacheRead) }),
       valueClass: 'gradient-rose',
     },
     {
-      icon: '📊', label: 'Sessions',
+      icon: '📊', label: t('dashboard.summarySessions'),
       value: summary.totalSessions.toLocaleString(),
-      sub: `均 ${formatNumber(avgPerRequest)} tokens/请求`,
+      sub: t('dashboard.summaryAvgTokens', { count: formatNumber(avgPerRequest) }),
       valueClass: 'gradient-violet',
     },
     {
-      icon: '💰', label: '总费用',
+      icon: '💰', label: t('dashboard.summaryTotalCost'),
       value: formatCost(summary.totalCost),
-      sub: `均 ${formatCost(summary.totalRequests > 0 ? summary.totalCost / summary.totalRequests : 0)}/请求`,
+      sub: t('dashboard.summaryAvgCost', { cost: formatCost(summary.totalRequests > 0 ? summary.totalCost / summary.totalRequests : 0) }),
       valueClass: 'gradient-amber',
     },
   ];
@@ -329,7 +330,7 @@ function renderSessionsTable(sessions) {
     tbody.innerHTML = `
       <tr>
         <td colspan="10" style="text-align: center; color: var(--text-secondary); padding: 40px;">
-          当前筛选下暂无 Session
+          ${escapeHtml(t('dashboard.noSessionInFilter'))}
         </td>
       </tr>
     `;
@@ -352,9 +353,9 @@ function renderSessionsTable(sessions) {
 
   const info = document.getElementById('pagination-info');
   if (totalItems === 0) {
-    info.textContent = '无数据';
+    info.textContent = t('dashboard.noData');
   } else {
-    info.textContent = `显示 ${startIdx + 1}–${endIdx}，共 ${totalItems} 条`;
+    info.textContent = t('dashboard.paginationInfo', { start: startIdx + 1, end: endIdx, total: totalItems });
   }
 
   renderPageButtons(totalPages);
@@ -459,7 +460,7 @@ async function init() {
 
     if (fullData.generatedAt) {
       const d = new Date(fullData.generatedAt);
-      generatedAt.textContent = `更新于 ${d.toLocaleTimeString('zh-CN')}`;
+      generatedAt.textContent = t('common.updatedAt', { time: d.toLocaleTimeString(getLocale()) });
     }
 
     applyDateRange('today');
@@ -545,8 +546,8 @@ async function init() {
     loading.innerHTML = `
       <div style="color: var(--accent-rose); text-align: center;">
         <p style="font-size: 2rem; margin-bottom: 12px;">❌</p>
-        <p>加载失败：${escapeHtml(err.message)}</p>
-        <p style="color: var(--text-muted); margin-top: 8px;">请确认后端服务正在运行</p>
+        <p>${escapeHtml(t('dashboard.loadFailed', { message: err.message }))}</p>
+        <p style="color: var(--text-muted); margin-top: 8px;">${escapeHtml(t('dashboard.ensureBackendRunning'))}</p>
       </div>
     `;
   }
@@ -572,4 +573,20 @@ document.getElementById('refresh-btn').addEventListener('click', async () => {
   }
 });
 
+window.addEventListener('openclaw-localechange', () => {
+  if (!fullData) return;
+  const generatedAt = document.getElementById('generated-at');
+  if (fullData.generatedAt && generatedAt) {
+    const d = new Date(fullData.generatedAt);
+    generatedAt.textContent = t('common.updatedAt', { time: d.toLocaleTimeString(getLocale()) });
+  }
+  refreshTable();
+  renderSummaryCards(filterDataByDateRange(
+    fullData,
+    document.getElementById('date-from')?.value || null,
+    document.getElementById('date-to')?.value || null
+  ).summary);
+});
+
+initLocaleControls();
 init();

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -vE '\\\\.\\(jsonl|json\\)$')",
+      "Bash(timeout 3 node /Users/gc/Dev/MyProject/OpenClawUsage/mcp-server.js)",
+      "Bash(timeout 5 node /Users/gc/Dev/MyProject/OpenClawUsage/mcp-server.js)"
+    ]
+  }
+}

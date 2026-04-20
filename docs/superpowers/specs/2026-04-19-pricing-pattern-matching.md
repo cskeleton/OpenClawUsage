@@ -44,3 +44,5 @@
 ## 与参考表的关系
 
 OpenClaw 参考表仍以 `models.json` 的 `provider/model` 为键；模式规则不会出现在「未配置」候选下拉中，需用户手动输入模式后保存。
+
+**内置价格 / 缺少价格** 两张参考表中，「是否已覆盖」对每一行同样用 **`findMatchingPricing`** 判断，因此通配符或正则命中时也会显示为已覆盖（与 `GET /api/openclaw/models` 返回的 `custom` 一致）。可选模型与 `models.json` 全量条目的关系见 **builtin-pricing-reference-design** 规格中的 **`agents.defaults.models`** 说明。

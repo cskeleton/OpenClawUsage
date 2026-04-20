@@ -41,3 +41,8 @@
 - ✅ 确保 `localStorage` 正常记录用户的偏好。
 - ✅ 确保图表（Chart.js）的颜色能够跟随主题切换（Chart.js 的文字和网格线需要动态更新或使用 CSS 变量）。
 - ✅ 保持现有功能（价格配置逻辑、数据刷新等）完整可用。
+
+## 相关规格链接
+
+- 前端中英文国际化与语言切换（Phase 1）：
+  `docs/superpowers/specs/2026-04-20-frontend-i18n-language-switch.md`

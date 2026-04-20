@@ -24,28 +24,32 @@
   </script>
   <script src="/src/theme.js"></script>
 </head>
-<body>
+<body data-i18n-title-key="common.appName">
   <div id="app">
     <!-- Header -->
     <header class="header">
       <div class="header-left">
         <div class="logo">🦞</div>
         <div>
-          <h1>OpenClaw Token Stats</h1>
-          <p class="subtitle">Gateway LLM 用量统计仪表盘</p>
+          <h1 data-i18n="common.appName">OpenClaw Token Stats</h1>
+          <p class="subtitle" data-i18n="dashboard.subtitle">Gateway LLM 用量统计仪表盘</p>
         </div>
       </div>
       <div class="header-right">
+        <div class="locale-switch" role="group" aria-label="语言" data-i18n-attr="aria-label:common.languageGroup">
+          <button type="button" data-locale-control="zh-CN" title="中文" aria-label="中文">中</button>
+          <button type="button" data-locale-control="en-US" title="English" aria-label="English">EN</button>
+        </div>
         <div class="theme-switch" role="group" aria-label="主题">
           <button type="button" data-theme-control="light" title="浅色">🌞</button>
           <button type="button" data-theme-control="dark" title="深色">🌙</button>
           <button type="button" data-theme-control="system" title="跟随系统">💻</button>
         </div>
-        <a href="/pricing.html" class="btn-pricing" title="配置价格">
+        <a href="/pricing.html" class="btn-pricing" title="配置价格" data-i18n-attr="title:common.pricingConfig">
           💰 价格配置
         </a>
         <span id="generated-at" class="generated-at"></span>
-        <button id="refresh-btn" class="btn-refresh" title="刷新数据">
+        <button id="refresh-btn" class="btn-refresh" title="刷新数据" data-i18n-attr="title:common.refreshData">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="23 4 23 10 17 10"></polyline>
             <polyline points="1 20 1 14 7 14"></polyline>
@@ -58,7 +62,7 @@
     <!-- Loading -->
     <div id="loading" class="loading">
       <div class="spinner"></div>
-      <p>正在扫描 Session 文件...</p>
+      <p data-i18n="common.loadingSessions">正在扫描 Session 文件...</p>
     </div>
 
     <!-- Main Content -->
@@ -67,13 +71,13 @@
       <!-- Time Filter Bar -->
       <section class="time-filter-bar glass-card" id="time-filter-bar">
         <div class="time-presets">
-          <button class="time-btn active" data-range="today">今天</button>
-          <button class="time-btn" data-range="yesterday">昨天</button>
-          <button class="time-btn" data-range="7d">最近 7 天</button>
-          <button class="time-btn" data-range="30d">最近 30 天</button>
-          <button class="time-btn" data-range="this-month">本月</button>
-          <button class="time-btn" data-range="last-month">上月</button>
-          <button class="time-btn" data-range="all">全部</button>
+          <button class="time-btn active" data-range="today" data-i18n="dashboard.rangeToday">今天</button>
+          <button class="time-btn" data-range="yesterday" data-i18n="dashboard.rangeYesterday">昨天</button>
+          <button class="time-btn" data-range="7d" data-i18n="dashboard.range7d">最近 7 天</button>
+          <button class="time-btn" data-range="30d" data-i18n="dashboard.range30d">最近 30 天</button>
+          <button class="time-btn" data-range="this-month" data-i18n="dashboard.rangeThisMonth">本月</button>
+          <button class="time-btn" data-range="last-month" data-i18n="dashboard.rangeLastMonth">上月</button>
+          <button class="time-btn" data-range="all" data-i18n="dashboard.rangeAll">全部</button>
         </div>
         <div class="time-custom">
           <input type="date" id="date-from" class="date-input" />
@@ -88,11 +92,11 @@
       <!-- Charts Row -->
       <section class="charts-section">
         <div class="chart-container glass-card">
-          <h3>📈 Token 用量趋势（按日）</h3>
+          <h3 data-i18n="dashboard.chartTimeline">📈 Token 用量趋势（按日）</h3>
           <canvas id="chart-timeline"></canvas>
         </div>
         <div class="chart-container glass-card">
-          <h3>🧩 Provider 费用分布</h3>
+          <h3 data-i18n="dashboard.chartProvider">🧩 Provider 费用分布</h3>
           <canvas id="chart-provider"></canvas>
         </div>
       </section>
@@ -101,10 +105,10 @@
       <section class="charts-section">
         <div class="chart-container chart-wide glass-card">
           <div class="chart-title-row">
-            <h3>🤖 Model 用量对比</h3>
+            <h3 data-i18n="dashboard.chartModel">🤖 Model 用量对比</h3>
             <label class="log-toggle">
               <input type="checkbox" id="model-log-scale" />
-              <span>对数坐标</span>
+              <span data-i18n="dashboard.logScale">对数坐标</span>
             </label>
           </div>
           <canvas id="chart-model"></canvas>
@@ -114,31 +118,31 @@
       <!-- Sessions Table -->
       <section class="table-section glass-card">
         <div class="table-header">
-          <h3>📋 Session 明细</h3>
+          <h3 data-i18n="dashboard.sessionDetails">📋 Session 明细</h3>
           <div class="table-controls">
             <select id="status-filter" class="select-filter">
-              <option value="all">全部状态</option>
+              <option value="all" data-i18n="dashboard.allStatus">全部状态</option>
               <option value="active">🟢 Active</option>
               <option value="reset">🔄 Reset</option>
               <option value="deleted">🗑️ Deleted</option>
             </select>
-            <input type="text" id="search-input" class="search-input" placeholder="搜索 Session ID / Provider / Model..." />
+            <input type="text" id="search-input" class="search-input" placeholder="搜索 Session ID / Provider / Model..." data-i18n-attr="placeholder:dashboard.searchPlaceholder" />
           </div>
         </div>
         <div class="table-wrapper">
           <table id="sessions-table">
             <thead>
               <tr>
-                <th data-sort="status">状态</th>
-                <th data-sort="id">Session ID</th>
-                <th data-sort="providers">Provider</th>
-                <th data-sort="models">Model</th>
-                <th data-sort="totalTokens">Total Tokens</th>
-                <th data-sort="totalInput">Input</th>
-                <th data-sort="totalOutput">Output</th>
-                <th data-sort="totalCost">费用 ($)</th>
-                <th data-sort="requestCount">请求数</th>
-                <th data-sort="lastTimestamp">最后活跃</th>
+                <th data-sort="status" data-i18n="dashboard.tableStatus">状态</th>
+                <th data-sort="id" data-i18n="dashboard.tableSessionId">Session ID</th>
+                <th data-sort="providers" data-i18n="dashboard.tableProvider">Provider</th>
+                <th data-sort="models" data-i18n="dashboard.tableModel">Model</th>
+                <th data-sort="totalTokens" data-i18n="dashboard.tableTotalTokens">Total Tokens</th>
+                <th data-sort="totalInput" data-i18n="dashboard.tableInput">Input</th>
+                <th data-sort="totalOutput" data-i18n="dashboard.tableOutput">Output</th>
+                <th data-sort="totalCost" data-i18n="dashboard.tableCost">费用 ($)</th>
+                <th data-sort="requestCount" data-i18n="dashboard.tableRequests">请求数</th>
+                <th data-sort="lastTimestamp" data-i18n="dashboard.tableLastActive">最后活跃</th>
               </tr>
             </thead>
             <tbody id="sessions-tbody"></tbody>
@@ -149,13 +153,13 @@
           <div class="pagination-info" id="pagination-info"></div>
           <div class="pagination-controls">
             <div class="page-size-selector">
-              <span>每页</span>
+              <span data-i18n="dashboard.perPage">每页</span>
               <select id="page-size" class="select-filter">
                 <option value="10" selected>10</option>
                 <option value="50">50</option>
                 <option value="100">100</option>
               </select>
-              <span>条</span>
+              <span data-i18n="dashboard.rows">条</span>
             </div>
             <div class="page-buttons" id="page-buttons"></div>
           </div>

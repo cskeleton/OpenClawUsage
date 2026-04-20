@@ -23,14 +23,14 @@
   </script>
   <script src="/src/theme.js"></script>
 </head>
-<body>
+<body data-i18n-title-key="pricing.pageTitle">
   <div class="pricing-page">
     <!-- 返回链接 -->
     <a href="/" class="back-link">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M19 12H5M12 19l-7-7 7-7"/>
       </svg>
-      返回仪表盘
+      <span data-i18n="pricing.backToDashboard">返回仪表盘</span>
     </a>
 
     <!-- 页面头部 -->
@@ -84,12 +84,16 @@
         </h1>
       </div>
       <div class="actions">
+        <div class="locale-switch" role="group" aria-label="语言" data-i18n-attr="aria-label:common.languageGroup">
+          <button type="button" data-locale-control="zh-CN" title="中文" aria-label="中文">中</button>
+          <button type="button" data-locale-control="en-US" title="English" aria-label="English">EN</button>
+        </div>
         <div class="theme-switch" role="group" aria-label="主题">
           <button type="button" data-theme-control="light" title="浅色">🌞</button>
           <button type="button" data-theme-control="dark" title="深色">🌙</button>
           <button type="button" data-theme-control="system" title="跟随系统">💻</button>
         </div>
-        <button id="reset-pricing-btn" class="btn-secondary">重置</button>
+        <button id="reset-pricing-btn" class="btn-secondary" data-i18n="pricing.reset">重置</button>
       </div>
     </div>
 
