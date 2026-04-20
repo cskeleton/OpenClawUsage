@@ -1,0 +1,25 @@
+{
+  "version": "1.0",
+  "enabled": true,
+  "updated": "2026-04-20T00:00:00.000Z",
+  "pricing": {
+    "openai/gpt-4o": { "input": 2.5, "output": 10, "cacheRead": null, "cacheWrite": null },
+    "anthropic/claude-*": {
+      "matchType": "wildcard",
+      "input": 3,
+      "output": 15,
+      "cacheRead": 0.3,
+      "cacheWrite": 3.75
+    },
+    "/^minimax\\/.*$/": {
+      "matchType": "regex",
+      "input": 1,
+      "output": 1
+    },
+    "disabled/one": {
+      "enabled": false,
+      "input": 99,
+      "output": 99
+    }
+  }
+}

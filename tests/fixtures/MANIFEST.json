@@ -1,0 +1,40 @@
+{
+  "extractedAt": "2026-04-20T10:09:57.143Z",
+  "sessions": [
+    {
+      "name": "6ab08280-092f-4667-803f-319ae4ab75af.jsonl",
+      "bytes": 145610,
+      "lineCount": 570
+    },
+    {
+      "name": "77e32406-f4f0-4240-99e4-abee7a005c46.jsonl",
+      "bytes": 11819,
+      "lineCount": 48
+    },
+    {
+      "name": "047a6658-dedb-4ded-8b03-4c0027422404.jsonl.reset.2026-04-19T18-08-36.871Z",
+      "bytes": 41887,
+      "lineCount": 166
+    },
+    {
+      "name": "0631f771-085f-4689-bc25-65cf2545f658.jsonl.reset.2026-04-15T13-05-48.786Z",
+      "bytes": 6204,
+      "lineCount": 27
+    },
+    {
+      "name": "5e87b1b7-7b40-48bf-bc2b-3adad7abd692.checkpoint.b0ede0ab-913f-4293-a041-9f74786a9d0f.jsonl",
+      "bytes": 35471,
+      "lineCount": 143
+    }
+  ],
+  "modelsJson": {
+    "source": "~/.openclaw/agents/main/agent/models.json",
+    "redactedKeys": [
+      "apiKey",
+      "apiSecret",
+      "token",
+      "authorization",
+      "headers"
+    ]
+  }
+}
