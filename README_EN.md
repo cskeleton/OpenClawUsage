@@ -12,7 +12,10 @@ A standalone token usage statistics and visualization tool for OpenClaw. It pars
   
 - **MCP Server (Model Context Protocol)**:
   - Enables OpenClaw Agents to query their own token consumption directly.
-  - Provides 5 tools: `get_total_usage`, `get_usage_by_provider`, `get_usage_by_model`, `list_recent_sessions`, `get_session_stats`.
+  - Provides 8 tools:
+    - Usage queries: `get_total_usage`, `get_usage_by_provider`, `get_usage_by_model`, `list_recent_sessions`, `get_session_stats`
+    - Management tools: `get_pricing_config`, `update_pricing_config`, `refresh_stats_cache`
+  - MCP tool descriptions are bilingual (Chinese/English); tool names and input field names stay in stable English identifiers.
 
 - **Custom Pricing Configuration**:
   - Configure custom prices per Provider/Model combination (unit **$/M**, per million tokens).
@@ -82,6 +85,32 @@ Add the following to your OpenClaw or Claude Desktop MCP config:
     "openclaw-usage": {
       "command": "node",
       "args": ["/Users/gc/Dev/MyProject/OpenClawUsage/mcp-server.js"]
+    }
+  }
+}
+```
+
+### MCP Management Tool Examples
+
+> ⚠️ `update_pricing_config` writes to the pricing configuration file. Verify the payload before running it.
+
+- `get_pricing_config`: Read the current pricing config (read-only).
+- `update_pricing_config`: Update pricing config (write operation).
+- `refresh_stats_cache`: Force refresh aggregated stats cache (does not alter business data).
+
+Example `config` payload for `update_pricing_config` (full config object):
+
+```json
+{
+  "version": "1.0",
+  "enabled": true,
+  "updated": "2026-04-20T00:00:00.000Z",
+  "pricing": {
+    "openai/gpt-4": {
+      "input": 30,
+      "output": 60,
+      "cacheRead": 3,
+      "cacheWrite": 6
     }
   }
 }

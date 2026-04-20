@@ -16,7 +16,10 @@
   
 - **MCP 服务端 (Model Context Protocol)**：
   - 使 OpenClaw Agent 能够直接调用工具查询自己的 Token 消耗。
-  - 提供 5 个工具：`get_total_usage`、`get_usage_by_provider`、`get_usage_by_model`、`list_recent_sessions`、`get_session_stats`。
+  - 提供 8 个工具：
+    - 统计查询：`get_total_usage`、`get_usage_by_provider`、`get_usage_by_model`、`list_recent_sessions`、`get_session_stats`
+    - 管理能力：`get_pricing_config`、`update_pricing_config`、`refresh_stats_cache`
+  - MCP 工具描述（description）采用中英双语；工具名与输入字段名保持英文稳定标识。
 
 - **自定义价格配置**：
   - 支持按 Provider/Model 组合配置自定义价格（单位 **$/M**，每百万 tokens）。
@@ -132,6 +135,32 @@ npm run mcp
 }
 ```
 
+### MCP 工具（管理能力）示例
+
+> ⚠️ `update_pricing_config` 会写入价格配置文件，请确认参数后再执行。
+
+- `get_pricing_config`：读取当前价格配置（只读）。
+- `update_pricing_config`：更新价格配置（写入）。
+- `refresh_stats_cache`：强制刷新统计缓存（不改业务数据，仅刷新聚合结果）。
+
+`update_pricing_config` 的 `config` 参数示例（完整配置对象）：
+
+```json
+{
+  "version": "1.0",
+  "enabled": true,
+  "updated": "2026-04-20T00:00:00.000Z",
+  "pricing": {
+    "openai/gpt-4": {
+      "input": 30,
+      "output": 60,
+      "cacheRead": 3,
+      "cacheWrite": 6
+    }
+  }
+}
+```
+
 ## 💰 自定义价格配置
 
 ### 配置方式
@@ -194,6 +223,7 @@ npm run mcp
 
 - `server.js`: Web API 服务端入口（Express）。提供 `/api/stats`、`/api/pricing`、`/api/openclaw/models` 等端点；缓存以 `pricing.updated` 为失效键。
 - `mcp-server.js`: MCP 服务端入口（@modelcontextprotocol/sdk）；复用同一缓存策略。
+- `stats-service.js`: 统计缓存与价格配置管理的共享服务层，被 Web API 与 MCP 共用。
 - `aggregator.js`: 共享数据处理引擎；解析 `$OPENCLAW_CONFIG_DIR/agents/main/sessions/` 下的 JSONL（跳过 checkpoint 变体），输出 `byDate`、`byDateProvider`、`byDateModel` 等交叉聚合。
 - `pricing.js`: 价格配置加载与保存，支持动态路径检测与成本计算；`findMatchingPricing` 负责 exact/wildcard/regex 优先级匹配。
 - `openclaw-config.js`: 读取 `agents/main/agent/models.json`（`OPENCLAW_CONFIG_DIR` 或默认 `~/.openclaw`），划分有/无有效单价模型（供参考 API 使用）。

@@ -1,8 +1,12 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { aggregateStats } from "./aggregator.js";
-import { loadPricingConfig } from "./pricing.js";
+import {
+  getStats,
+  getPricingConfig,
+  updatePricingConfig,
+  refreshStatsCache,
+} from "./stats-service.js";
 
 // Server instance
 const server = new Server(
@@ -17,27 +21,8 @@ const server = new Server(
   }
 );
 
-/**
- * Cache for aggregated data to avoid repeated high-intensity IO
- */
-let cachedData = null;
-let lastFetchTime = 0;
-const CACHE_TTL = 30_000; // 30 seconds
-
 async function getData() {
-  const now = Date.now();
-  const pricingConfig = await loadPricingConfig();
-  // 以 updated 时间戳为失效键：任意保存（含开关、单价）都会更新 updated
-  const currentUpdated = pricingConfig.updated || '';
-  const cachedUpdated = cachedData?.pricingUpdated || '';
-
-  if (!cachedData || now - lastFetchTime > CACHE_TTL || currentUpdated !== cachedUpdated) {
-    cachedData = await aggregateStats(pricingConfig);
-    cachedData.pricingUpdated = currentUpdated;
-    cachedData.pricingVersion = pricingConfig.version;
-    lastFetchTime = now;
-  }
-  return cachedData;
+  return getStats();
 }
 
 // 1. List available tools
@@ -46,7 +31,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: "get_total_usage",
-        description: "Get the overall token usage and cost summary for OpenClaw.",
+        description: "获取 OpenClaw 总体 Token 用量与费用汇总 / Get overall OpenClaw token usage and cost summary.",
         inputSchema: {
           type: "object",
           properties: {},
@@ -54,7 +39,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "get_usage_by_provider",
-        description: "Get token usage and cost breakdown by LLM provider (e.g., openai, anthropic, minimax).",
+        description: "按 LLM 提供商查看用量与费用明细 / Get usage and cost breakdown by LLM provider (e.g. openai, anthropic, minimax).",
         inputSchema: {
           type: "object",
           properties: {},
@@ -62,7 +47,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "get_usage_by_model",
-        description: "Get token usage and cost breakdown by specific models.",
+        description: "按具体模型查看用量与费用明细 / Get usage and cost breakdown by specific models.",
         inputSchema: {
           type: "object",
           properties: {},
@@ -70,7 +55,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "list_recent_sessions",
-        description: "List the most recent conversation sessions with their usage stats.",
+        description: "列出最近会话及其用量统计 / List the most recent sessions with usage statistics.",
         inputSchema: {
           type: "object",
           properties: {
@@ -80,13 +65,43 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "get_session_stats",
-        description: "Get detailed usage stats for a specific session ID. The ID is usually a UUID.",
+        description: "获取指定会话 ID 的详细用量统计 / Get detailed usage statistics for a specific session ID (usually UUID).",
         inputSchema: {
           type: "object",
           properties: {
             sessionId: { type: "string", description: "The UUID of the session" },
           },
           required: ["sessionId"],
+        },
+      },
+      {
+        name: "get_pricing_config",
+        description: "读取当前价格配置 / Get current pricing configuration.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "update_pricing_config",
+        description: "更新价格配置并失效缓存 / Update pricing configuration and invalidate cached stats.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            config: {
+              type: "object",
+              description: "完整价格配置对象 / Full pricing configuration object",
+            },
+          },
+          required: ["config"],
+        },
+      },
+      {
+        name: "refresh_stats_cache",
+        description: "主动刷新统计缓存 / Force refresh aggregated stats cache.",
+        inputSchema: {
+          type: "object",
+          properties: {},
         },
       },
     ],
@@ -170,6 +185,39 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             {
               type: "text",
               text: JSON.stringify(session, null, 2),
+            },
+          ],
+        };
+      }
+      case "get_pricing_config": {
+        const config = await getPricingConfig();
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(config, null, 2),
+            },
+          ],
+        };
+      }
+      case "update_pricing_config": {
+        const result = await updatePricingConfig(args.config);
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+      case "refresh_stats_cache": {
+        const result = await refreshStatsCache();
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
             },
           ],
         };

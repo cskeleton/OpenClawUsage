@@ -1,13 +1,16 @@
 import express from 'express';
 import cors from 'cors';
-import { aggregateStats, getSessionDir } from './aggregator.js';
+import { getSessionDir } from './aggregator.js';
 import {
-  loadPricingConfig,
-  savePricingConfig,
-  validatePricingConfig,
   findMatchingPricing,
 } from './pricing.js';
 import { listOpenClawPricedModels, listUnpricedModels } from './openclaw-config.js';
+import {
+  getStats,
+  getPricingConfig,
+  updatePricingConfig,
+  refreshStatsCache,
+} from './stats-service.js';
 
 const app = express();
 const PORT = 3001;
@@ -15,43 +18,9 @@ const PORT = 3001;
 app.use(cors());
 app.use(express.json());
 
-// 聚合缓存：30 秒 TTL + pricing.updated 失效键（与 MCP 侧一致）
-let cachedStats = null;
-let cacheTime = 0;
-let cachedPricingUpdated = '';
-const CACHE_TTL = 30_000;
-
-/**
- * 获取（必要时重算）聚合统计。pricing.updated 变化或超时都会触发重算。
- * @param {{ forceFresh?: boolean }} [options]
- */
-async function getCachedStats({ forceFresh = false } = {}) {
-  const now = Date.now();
-  const pricingConfig = await loadPricingConfig();
-  const currentUpdated = pricingConfig.updated || '';
-
-  const expired = now - cacheTime > CACHE_TTL;
-  const pricingChanged = currentUpdated !== cachedPricingUpdated;
-
-  if (forceFresh || !cachedStats || expired || pricingChanged) {
-    cachedStats = await aggregateStats(pricingConfig);
-    cachedStats.pricingUpdated = currentUpdated;
-    cachedStats.pricingVersion = pricingConfig.version;
-    cacheTime = now;
-    cachedPricingUpdated = currentUpdated;
-  }
-  return cachedStats;
-}
-
-function invalidateCache() {
-  cachedStats = null;
-  cacheTime = 0;
-  cachedPricingUpdated = '';
-}
-
 app.get('/api/stats', async (req, res) => {
   try {
-    const data = await getCachedStats();
+    const data = await getStats();
     res.json(data);
   } catch (err) {
     console.error('Error aggregating stats:', err);
@@ -61,12 +30,8 @@ app.get('/api/stats', async (req, res) => {
 
 app.get('/api/refresh', async (req, res) => {
   try {
-    const data = await getCachedStats({ forceFresh: true });
-    res.json({
-      ok: true,
-      generatedAt: data.generatedAt,
-      pricingVersion: data.pricingVersion,
-    });
+    const result = await refreshStatsCache();
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -75,7 +40,7 @@ app.get('/api/refresh', async (req, res) => {
 // GET /api/pricing - 获取当前价格配置
 app.get('/api/pricing', async (req, res) => {
   try {
-    const config = await loadPricingConfig();
+    const config = await getPricingConfig();
     res.json(config);
   } catch (err) {
     console.error('Error loading pricing config:', err);
@@ -86,11 +51,8 @@ app.get('/api/pricing', async (req, res) => {
 // PUT /api/pricing - 更新价格配置
 app.put('/api/pricing', async (req, res) => {
   try {
-    const config = req.body;
-    validatePricingConfig(config);
-    await savePricingConfig(config);
-    invalidateCache();
-    res.json({ ok: true, updated: config.updated });
+    const result = await updatePricingConfig(req.body);
+    res.json(result);
   } catch (err) {
     console.error('Error updating pricing config:', err);
     res.status(400).json({ error: err.message });
@@ -106,9 +68,8 @@ app.post('/api/pricing/reset', async (req, res) => {
       updated: new Date().toISOString(),
       pricing: {}
     };
-    await savePricingConfig(defaultConfig);
-    invalidateCache();
-    res.json({ ok: true, updated: defaultConfig.updated });
+    const result = await updatePricingConfig(defaultConfig);
+    res.json(result);
   } catch (err) {
     console.error('Error resetting pricing config:', err);
     res.status(500).json({ error: err.message });
@@ -147,7 +108,7 @@ app.get('/api/openclaw/models', async (req, res) => {
   try {
     const [priced, pricingConfig, unpriced] = await Promise.all([
       listOpenClawPricedModels(),
-      loadPricingConfig(),
+      getPricingConfig(),
       listUnpricedModels(),
     ]);
     const customMap = pricingConfig.pricing || {};
@@ -163,7 +124,7 @@ app.get('/api/openclaw/models', async (req, res) => {
 // GET /api/pricing/models - 列出所有可用的 Provider/Model 组合（走缓存）
 app.get('/api/pricing/models', async (req, res) => {
   try {
-    const data = await getCachedStats();
+    const data = await getStats();
     const models = Object.keys(data.byModel);
     res.json({ models });
   } catch (err) {
