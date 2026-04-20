@@ -1,4 +1,5 @@
 import { renderCharts, destroyCharts } from './charts.js';
+import { escapeHtml, escapeAttr } from './util.js';
 
 // ---- Utility functions ----
 
@@ -41,7 +42,6 @@ function statusBadge(status) {
 // ---- Time range helpers ----
 
 function getLocalDateStr(date) {
-  // Returns YYYY-MM-DD in local timezone
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, '0');
   const d = String(date.getDate()).padStart(2, '0');
@@ -53,9 +53,8 @@ function getDateRange(rangeKey) {
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
   switch (rangeKey) {
-    case 'today': {
+    case 'today':
       return { from: getLocalDateStr(today), to: getLocalDateStr(today) };
-    }
     case 'yesterday': {
       const yd = new Date(today);
       yd.setDate(yd.getDate() - 1);
@@ -86,38 +85,61 @@ function getDateRange(rangeKey) {
   }
 }
 
+// ---- Aggregation helpers ----
+
+function emptyBucket() {
+  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, totalCost: 0, requests: 0 };
+}
+
+function mergeInto(dst, src) {
+  dst.input += src.input || 0;
+  dst.output += src.output || 0;
+  dst.cacheRead += src.cacheRead || 0;
+  dst.cacheWrite += src.cacheWrite || 0;
+  dst.totalTokens += src.totalTokens || 0;
+  dst.totalCost += src.totalCost || 0;
+  dst.requests += src.requests || 0;
+}
+
 /**
- * Filter the full dataset by date range, returning a new structure
- * with recalculated summary, byProvider, byModel, byDate, and sessions.
+ * 将 byDateXxx 交叉表按日期区间切片后汇总为 byXxx。
+ * @param {Record<string, Record<string, object>>} crossTable
+ * @param {string|null} from
+ * @param {string|null} to
+ */
+function collapseCrossTable(crossTable, from, to) {
+  const result = {};
+  for (const [date, keyMap] of Object.entries(crossTable)) {
+    if (from && date < from) continue;
+    if (to && date > to) continue;
+    for (const [key, stats] of Object.entries(keyMap)) {
+      if (!result[key]) result[key] = emptyBucket();
+      mergeInto(result[key], stats);
+    }
+  }
+  return result;
+}
+
+/**
+ * 基于交叉聚合表对数据做日期筛选，返回精确的 summary / byProvider / byModel / byDate / sessions。
+ * @param {Object} fullData
+ * @param {string|null} from YYYY-MM-DD
+ * @param {string|null} to YYYY-MM-DD
  */
 function filterDataByDateRange(fullData, from, to) {
   if (!from && !to) return fullData;
 
-  // We need the raw records to re-aggregate. But we only have aggregated data.
-  // Instead, filter sessions by their timestamp range and re-aggregate from sessions + byDate.
-  // Actually we need a different approach: send all raw records from server, or filter byDate and sessions.
-
-  // For sessions: filter by overlap with [from, to]
-  const fromDate = from ? from + 'T00:00:00.000Z' : null;
-  // To is inclusive, so we use end of day
-  const toDate = to ? to + 'T23:59:59.999Z' : null;
-
-  // Filter byDate
   const filteredByDate = {};
-  for (const [date, stats] of Object.entries(fullData.byDate)) {
-    if (fromDate && date < from) continue;
-    if (toDate && date > to) continue;
+  for (const [date, stats] of Object.entries(fullData.byDate || {})) {
+    if (from && date < from) continue;
+    if (to && date > to) continue;
     filteredByDate[date] = stats;
   }
 
-  // Recalculate summary from byDate
   const summary = {
-    totalInput: 0, totalOutput: 0,
-    totalCacheRead: 0, totalCacheWrite: 0,
-    totalTokens: 0, totalCost: 0,
-    totalRequests: 0, totalSessions: 0,
+    totalInput: 0, totalOutput: 0, totalCacheRead: 0, totalCacheWrite: 0,
+    totalTokens: 0, totalCost: 0, totalRequests: 0, totalSessions: 0,
   };
-
   for (const stats of Object.values(filteredByDate)) {
     summary.totalInput += stats.input;
     summary.totalOutput += stats.output;
@@ -128,82 +150,63 @@ function filterDataByDateRange(fullData, from, to) {
     summary.totalRequests += stats.requests;
   }
 
-  // Filter sessions - include session if any activity falls in range
-  const filteredSessions = fullData.sessions.filter((s) => {
-    if (!s.lastTimestamp && !s.firstTimestamp) return false;
-    const first = s.firstTimestamp || s.lastTimestamp;
-    const last = s.lastTimestamp || s.firstTimestamp;
-    // Session overlaps with range
-    if (fromDate && last < fromDate) return false;
-    if (toDate && first > toDate) return false;
-    return true;
-  });
+  const byProvider = collapseCrossTable(fullData.byDateProvider || {}, from, to);
+  const byModelRaw = collapseCrossTable(fullData.byDateModel || {}, from, to);
+
+  // byModel 需要额外带上 provider/model 便于图表展示
+  const byModel = {};
+  for (const [key, stats] of Object.entries(byModelRaw)) {
+    const slashIdx = key.indexOf('/');
+    const provider = slashIdx > 0 ? key.slice(0, slashIdx) : key;
+    const model = slashIdx > 0 ? key.slice(slashIdx + 1) : '';
+    byModel[key] = { provider, model, ...stats };
+  }
+
+  // 会话明细：只保留 byDate 交集内的聚合（非整期）
+  const filteredSessions = [];
+  for (const s of fullData.sessions || []) {
+    if (!s.byDate) {
+      // 兼容后端未提供 byDate 的情形：按 overlap 保留整期数据
+      if (!s.lastTimestamp && !s.firstTimestamp) continue;
+      const first = (s.firstTimestamp || s.lastTimestamp).slice(0, 10);
+      const last = (s.lastTimestamp || s.firstTimestamp).slice(0, 10);
+      if (from && last < from) continue;
+      if (to && first > to) continue;
+      filteredSessions.push(s);
+      continue;
+    }
+
+    const bucket = emptyBucket();
+    let hit = false;
+    for (const [date, stats] of Object.entries(s.byDate)) {
+      if (from && date < from) continue;
+      if (to && date > to) continue;
+      mergeInto(bucket, stats);
+      hit = true;
+    }
+    if (!hit) continue;
+
+    filteredSessions.push({
+      ...s,
+      totalInput: bucket.input,
+      totalOutput: bucket.output,
+      totalCacheRead: bucket.cacheRead,
+      totalCacheWrite: bucket.cacheWrite,
+      totalTokens: bucket.totalTokens,
+      totalCost: bucket.totalCost,
+      requestCount: bucket.requests,
+    });
+  }
 
   summary.totalSessions = filteredSessions.length;
-
-  // Recalculate byProvider and byModel from byDate (we can't do per-provider-per-date
-  // from the current data structure). Use the full data's byProvider/byModel but
-  // note this is approximate for filtered ranges. For accurate per-range provider/model
-  // breakdown we'd need the server to return per-record data.
-  // Actually, let's use a different approach: have the server return records grouped
-  // by date AND provider/model. But for now, let's use sessions data instead.
-
-  const byProvider = {};
-  const byModel = {};
-
-  for (const s of filteredSessions) {
-    for (const p of s.providers) {
-      if (!byProvider[p]) {
-        byProvider[p] = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, totalCost: 0, requests: 0 };
-      }
-    }
-    for (const m of s.models) {
-      const key = `${s.providers[0] || 'unknown'}/${m}`;
-      if (!byModel[key]) {
-        byModel[key] = { provider: s.providers[0] || 'unknown', model: m, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, totalCost: 0, requests: 0 };
-      }
-    }
-  }
-
-  // For provider/model breakdown, if filtering "all" use original data, else estimate from sessions
-  if (!from && !to) {
-    return fullData;
-  }
-
-  // Use sessions to aggregate provider/model stats (approximate but good enough per-range)
-  for (const s of filteredSessions) {
-    const mainProvider = s.providers[0] || 'unknown';
-    const mainModel = s.models[0] || 'unknown';
-
-    if (!byProvider[mainProvider]) {
-      byProvider[mainProvider] = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, totalCost: 0, requests: 0 };
-    }
-    byProvider[mainProvider].input += s.totalInput;
-    byProvider[mainProvider].output += s.totalOutput;
-    byProvider[mainProvider].cacheRead += s.totalCacheRead;
-    byProvider[mainProvider].cacheWrite += s.totalCacheWrite;
-    byProvider[mainProvider].totalTokens += s.totalTokens;
-    byProvider[mainProvider].totalCost += s.totalCost;
-    byProvider[mainProvider].requests += s.requestCount;
-
-    const modelKey = `${mainProvider}/${mainModel}`;
-    if (!byModel[modelKey]) {
-      byModel[modelKey] = { provider: mainProvider, model: mainModel, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, totalCost: 0, requests: 0 };
-    }
-    byModel[modelKey].input += s.totalInput;
-    byModel[modelKey].output += s.totalOutput;
-    byModel[modelKey].cacheRead += s.totalCacheRead;
-    byModel[modelKey].cacheWrite += s.totalCacheWrite;
-    byModel[modelKey].totalTokens += s.totalTokens;
-    byModel[modelKey].totalCost += s.totalCost;
-    byModel[modelKey].requests += s.requestCount;
-  }
 
   return {
     summary,
     byProvider,
     byModel,
     byDate: filteredByDate,
+    byDateProvider: fullData.byDateProvider,
+    byDateModel: fullData.byDateModel,
     sessions: filteredSessions,
     generatedAt: fullData.generatedAt,
   };
@@ -259,9 +262,9 @@ function renderSummaryCards(summary) {
   container.innerHTML = cards.map((c) => `
     <div class="stat-card glass-card">
       <div class="stat-icon">${c.icon}</div>
-      <div class="stat-label">${c.label}</div>
-      <div class="stat-value ${c.valueClass}">${c.value}</div>
-      <div class="stat-sub">${c.sub}</div>
+      <div class="stat-label">${escapeHtml(c.label)}</div>
+      <div class="stat-value ${c.valueClass}">${escapeHtml(c.value)}</div>
+      <div class="stat-sub">${escapeHtml(c.sub)}</div>
     </div>
   `).join('');
 }
@@ -293,7 +296,6 @@ function getFilteredSessions(sessions) {
     );
   }
 
-  // Sort
   filtered.sort((a, b) => {
     let aVal = a[sortField];
     let bVal = b[sortField];
@@ -323,22 +325,31 @@ function renderSessionsTable(sessions) {
   const endIdx = Math.min(startIdx + pageSize, totalItems);
   const pageItems = filtered.slice(startIdx, endIdx);
 
-  tbody.innerHTML = pageItems.map((s) => `
-    <tr>
-      <td>${statusBadge(s.status)}</td>
-      <td><span class="session-id" title="${s.id}">${s.id.substring(0, 8)}…</span></td>
-      <td>${s.providers.join(', ')}</td>
-      <td>${s.models.join(', ')}</td>
-      <td><span class="token-value">${formatNumber(s.totalTokens)}</span></td>
-      <td>${formatNumber(s.totalInput)}</td>
-      <td>${formatNumber(s.totalOutput)}</td>
-      <td><span class="cost-value">${formatCost(s.totalCost)}</span></td>
-      <td>${s.requestCount}</td>
-      <td>${formatDate(s.lastTimestamp)}</td>
-    </tr>
-  `).join('');
+  if (totalItems === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="10" style="text-align: center; color: var(--text-secondary); padding: 40px;">
+          当前筛选下暂无 Session
+        </td>
+      </tr>
+    `;
+  } else {
+    tbody.innerHTML = pageItems.map((s) => `
+      <tr>
+        <td>${statusBadge(s.status)}</td>
+        <td><span class="session-id" title="${escapeAttr(s.id)}">${escapeHtml(s.id.substring(0, 8))}…</span></td>
+        <td>${escapeHtml(s.providers.join(', '))}</td>
+        <td>${escapeHtml(s.models.join(', '))}</td>
+        <td><span class="token-value">${formatNumber(s.totalTokens)}</span></td>
+        <td>${formatNumber(s.totalInput)}</td>
+        <td>${formatNumber(s.totalOutput)}</td>
+        <td><span class="cost-value">${formatCost(s.totalCost)}</span></td>
+        <td>${s.requestCount}</td>
+        <td>${formatDate(s.lastTimestamp)}</td>
+      </tr>
+    `).join('');
+  }
 
-  // Render pagination info
   const info = document.getElementById('pagination-info');
   if (totalItems === 0) {
     info.textContent = '无数据';
@@ -346,7 +357,6 @@ function renderSessionsTable(sessions) {
     info.textContent = `显示 ${startIdx + 1}–${endIdx}，共 ${totalItems} 条`;
   }
 
-  // Render page buttons
   renderPageButtons(totalPages);
 }
 
@@ -358,11 +368,8 @@ function renderPageButtons(totalPages) {
   }
 
   let buttons = '';
-
-  // Prev button
   buttons += `<button class="page-btn ${currentPage === 1 ? 'disabled' : ''}" data-page="${currentPage - 1}" ${currentPage === 1 ? 'disabled' : ''}>‹</button>`;
 
-  // Page numbers - show max 7 buttons with ellipsis
   const maxVisible = 7;
   let pages = [];
 
@@ -373,12 +380,8 @@ function renderPageButtons(totalPages) {
     let start = Math.max(2, currentPage - 2);
     let end = Math.min(totalPages - 1, currentPage + 2);
 
-    if (currentPage <= 3) {
-      end = Math.min(5, totalPages - 1);
-    }
-    if (currentPage >= totalPages - 2) {
-      start = Math.max(2, totalPages - 4);
-    }
+    if (currentPage <= 3) end = Math.min(5, totalPages - 1);
+    if (currentPage >= totalPages - 2) start = Math.max(2, totalPages - 4);
 
     if (start > 2) pages.push('...');
     for (let i = start; i <= end; i++) pages.push(i);
@@ -394,9 +397,7 @@ function renderPageButtons(totalPages) {
     }
   }
 
-  // Next
   buttons += `<button class="page-btn ${currentPage === totalPages ? 'disabled' : ''}" data-page="${currentPage + 1}" ${currentPage === totalPages ? 'disabled' : ''}>›</button>`;
-
   container.innerHTML = buttons;
 }
 
@@ -406,8 +407,8 @@ function refreshTable() {
 
 // ---- Main ----
 
-let fullData = null; // Cached full dataset
-let activeRange = 'today'; // Default range
+let fullData = null;
+let activeRange = 'today';
 
 async function fetchStats() {
   const res = await fetch('/api/stats');
@@ -421,11 +422,9 @@ function applyDateRange(rangeKey) {
   activeRange = rangeKey;
   const { from, to } = getDateRange(rangeKey);
 
-  // Update date inputs
   document.getElementById('date-from').value = from || '';
   document.getElementById('date-to').value = to || '';
 
-  // Update active button
   document.querySelectorAll('.time-btn').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.range === rangeKey);
   });
@@ -438,7 +437,6 @@ function applyFilter(from, to) {
 
   const filteredData = filterDataByDateRange(fullData, from, to);
 
-  // Render everything with filtered data
   renderSummaryCards(filteredData.summary);
   destroyCharts();
   renderCharts(filteredData);
@@ -456,31 +454,25 @@ async function init() {
   try {
     fullData = await fetchStats();
 
-    // Hide loading, show content
     loading.style.display = 'none';
     mainContent.style.display = 'block';
 
-    // Update header
     if (fullData.generatedAt) {
       const d = new Date(fullData.generatedAt);
       generatedAt.textContent = `更新于 ${d.toLocaleTimeString('zh-CN')}`;
     }
 
-    // Apply default range (today)
     applyDateRange('today');
 
     // --- Event Listeners ---
 
-    // Time preset buttons
     document.querySelectorAll('.time-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
         applyDateRange(btn.dataset.range);
       });
     });
 
-    // Custom date inputs
     document.getElementById('date-from').addEventListener('change', () => {
-      // Deactivate preset buttons
       document.querySelectorAll('.time-btn').forEach((b) => b.classList.remove('active'));
       const from = document.getElementById('date-from').value || null;
       const to = document.getElementById('date-to').value || null;
@@ -493,7 +485,6 @@ async function init() {
       applyFilter(from, to);
     });
 
-    // Table sort
     document.querySelectorAll('thead th[data-sort]').forEach((th) => {
       th.addEventListener('click', () => {
         const field = th.dataset.sort;
@@ -508,13 +499,11 @@ async function init() {
       });
     });
 
-    // Status filter
     document.getElementById('status-filter').addEventListener('change', () => {
       currentPage = 1;
       refreshTable();
     });
 
-    // Search
     let searchTimeout;
     document.getElementById('search-input').addEventListener('input', () => {
       clearTimeout(searchTimeout);
@@ -524,14 +513,12 @@ async function init() {
       }, 200);
     });
 
-    // Page size
     document.getElementById('page-size').addEventListener('change', (e) => {
       pageSize = parseInt(e.target.value, 10);
       currentPage = 1;
       refreshTable();
     });
 
-    // Page navigation (event delegation)
     document.getElementById('page-buttons').addEventListener('click', (e) => {
       const btn = e.target.closest('.page-btn');
       if (!btn || btn.disabled) return;
@@ -541,9 +528,7 @@ async function init() {
       refreshTable();
     });
 
-    // Model log scale toggle
     document.getElementById('model-log-scale').addEventListener('change', () => {
-      // Re-render only model chart - need to use current filtered data
       const { from, to } = activeRange === 'all'
         ? { from: null, to: null }
         : (() => {
@@ -560,14 +545,13 @@ async function init() {
     loading.innerHTML = `
       <div style="color: var(--accent-rose); text-align: center;">
         <p style="font-size: 2rem; margin-bottom: 12px;">❌</p>
-        <p>加载失败：${err.message}</p>
+        <p>加载失败：${escapeHtml(err.message)}</p>
         <p style="color: var(--text-muted); margin-top: 8px;">请确认后端服务正在运行</p>
       </div>
     `;
   }
 }
 
-// 主题切换后刷新图表配色（Chart.js 默认值与 tooltip 随 CSS 变量更新）
 window.addEventListener('openclaw-themechange', () => {
   if (!fullData) return;
   const from = document.getElementById('date-from')?.value || null;
@@ -575,7 +559,6 @@ window.addEventListener('openclaw-themechange', () => {
   applyFilter(from, to);
 });
 
-// Refresh button
 document.getElementById('refresh-btn').addEventListener('click', async () => {
   const btn = document.getElementById('refresh-btn');
   btn.classList.add('spinning');

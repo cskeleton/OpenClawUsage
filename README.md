@@ -11,17 +11,17 @@
 - **可视化仪表盘 (Web UI)**：基于 Vite + Chart.js 构建的暗黑风格界面。
   - **全量统计**：支持活跃（Active）、重置（Reset）和已删除（Deleted）的所有会话统计。
   - **时间筛选**：支持预设时间段（今天、最近 7 天、本月等）及自定义日期范围。
-  - **度量指标**：统计 Input/Output Tokens、费用趋势、Provider 分布以及缓存命中（ Cache Read/Write）。
+  - **度量指标**：统计 Input/Output Tokens、费用趋势、Provider 分布以及缓存命中（ Cache Read/Write）；首页汇总卡片中 **「总费用」置于最后一格**（前几张为 Tokens / Cache / Sessions 等）。
   - **交互体验**：Model 对比支持对数坐标（Log Scale），解决小数据量不可见问题；Session 明细支持分页、搜索与排序。
   
 - **MCP 服务端 (Model Context Protocol)**：
   - 使 OpenClaw Agent 能够直接调用工具查询自己的 Token 消耗。
-  - 提供 `get_total_usage`, `get_usage_by_model`, `get_session_stats` 等 5 个核心工具。
+  - 提供 5 个工具：`get_total_usage`、`get_usage_by_provider`、`get_usage_by_model`、`list_recent_sessions`、`get_session_stats`。
 
 - **自定义价格配置**：
   - 支持按 Provider/Model 组合配置自定义价格（单位 **$/M**，每百万 tokens）。
   - **两级开关**：可关闭「启用自定义价格」（全局），或对单条规则关闭「启用」，以便在**自定义单价重算的理论成本**与**会话中 OpenClaw 写入的账面成本**之间切换。
-  - 价格配置页提供 **OpenClaw 内置价格（参考）** 与 **缺少价格的模型（参考）**：数据来自 `OPENCLAW_CONFIG_DIR`（默认 `~/.openclaw`）下的 `agents/main/agent/models.json`，两表在同一文件内按「有/无有效单价」划分。
+  - 价格配置页提供 **OpenClaw 内置价格（参考）** 与 **缺少价格的模型（参考）**：数据来自 `OPENCLAW_CONFIG_DIR`（默认 `~/.openclaw`）下的 `agents/main/agent/models.json`，两表在同一文件内按「有/无有效单价」划分；每张表可查看是否已被自定义规则覆盖（含通配符/正则），并对未覆盖项支持一键填入「添加新价格」。**实际在 OpenClaw 里可选的模型**由 `openclaw.json` 的 **`agents.defaults.models`** 决定，与参考表列出的条目并非一一对应。
   - 支持 Input、Output、Cache Read、Cache Write 四种价格类型。
   - Cache 价格可选；留空时不设单独缓存价，**按 Input / Output 原价计算**（读用 Input、写用 Output）。
   - 独立的价格配置页面，支持添加、编辑、删除和重置价格配置。
@@ -37,6 +37,8 @@
 | 1️⃣ | `OPENCLAW_DIR` 环境变量 | `OPENCLAW_DIR=/自定义/path` |
 | 2️⃣ | `openclaw.json` 中的 `agents.defaults.workspace` 配置 | `/Users/gc/gcDora` → 存到 `gcDora` 目录 |
 | 3️⃣ | 回退 `~/.openclaw/` | 默认 fallback |
+
+> ⚠️ 上表只决定**定价配置文件**的位置；**sessions 与 models.json** 始终读取 `$OPENCLAW_CONFIG_DIR`（默认 `~/.openclaw`），**不跟随 workspace**。
 
 ### 模型目录（models.json，用于价格参考 API）
 
@@ -70,15 +72,16 @@
 
 本工具通过监听和解析 OpenClaw 本地持久化目录实现统计：
 
-- **目标路径**：`~/.openclaw/agents/main/sessions/`
-- **覆盖文件**：
+- **目标路径**：`$OPENCLAW_CONFIG_DIR/agents/main/sessions/`（未设置环境变量时默认为 `~/.openclaw/agents/main/sessions/`）；与 `agents/main/agent/models.json` 同一配置根。**该路径不受 `agents.defaults.workspace` 影响**——workspace 只决定定价配置文件位置（见下文）。
+- **覆盖文件**（目录**不递归**，仅扫描一层）：
   - `*.jsonl`: 当前活跃的 Session 记录。
   - `*.jsonl.reset.*`: 执行 `/reset` 命令后归档的旧 Session。
   - `*.jsonl.deleted.*`: 已删除 Session 的归档。
-  - `sessions.json`: Session 索引及其快照统计信息。
+  - `*.checkpoint.*.jsonl`: **自动跳过**。checkpoint 中的消息与主文件/reset 副本重复，计入统计会双重记账。
+  - `sessions.json`: Session 索引及其快照统计信息（不计入用量）。
 
 - **数据采集点**：
-  本工具会递归读取 JSONL 文件中基于 LLM API 返回的 `usage` 字段，示例如下：
+  本工具逐行读取 JSONL 文件中基于 LLM API 返回的 `usage` 字段，示例如下：
   ```json
   {
     "usage": {
@@ -160,7 +163,7 @@ npm run mcp
        }
      }'
 
-   # 列出 models.json 中有单价 / 缺少价格的模型（与当前自定义价对照）
+   # 列出 models.json 中有单价 / 缺少价格的模型（与当前自定义价对照，含 findMatchingPricing）
    curl http://localhost:3001/api/openclaw/models
 
    # 重置为默认配置（使用 OpenClaw 内置价格）
@@ -189,13 +192,13 @@ npm run mcp
 
 ## 📂 项目结构
 
-- `server.js`: Web API 服务端入口（Express）。
-- `mcp-server.js`: MCP 服务端入口（@modelcontextprotocol/sdk）。
-- `aggregator.js`: 共享的数据处理引擎，负责解析 `~/.openclaw` 下的 JSONL 文件。
-- `pricing.js`: 价格配置加载与保存，支持动态路径检测与成本计算。
+- `server.js`: Web API 服务端入口（Express）。提供 `/api/stats`、`/api/pricing`、`/api/openclaw/models` 等端点；缓存以 `pricing.updated` 为失效键。
+- `mcp-server.js`: MCP 服务端入口（@modelcontextprotocol/sdk）；复用同一缓存策略。
+- `aggregator.js`: 共享数据处理引擎；解析 `$OPENCLAW_CONFIG_DIR/agents/main/sessions/` 下的 JSONL（跳过 checkpoint 变体），输出 `byDate`、`byDateProvider`、`byDateModel` 等交叉聚合。
+- `pricing.js`: 价格配置加载与保存，支持动态路径检测与成本计算；`findMatchingPricing` 负责 exact/wildcard/regex 优先级匹配。
 - `openclaw-config.js`: 读取 `agents/main/agent/models.json`（`OPENCLAW_CONFIG_DIR` 或默认 `~/.openclaw`），划分有/无有效单价模型（供参考 API 使用）。
 - `pricing.json.example`: 价格配置模板（git 跟踪）。
-- `index.html` & `src/`: 前端可视化界面代码。
+- `index.html` & `src/`: 前端可视化界面代码；`src/util.js` 内是共享的 HTML 转义与 toast 工具。
 
 ## 📜 开源协议
 
@@ -216,4 +219,4 @@ npm run mcp
 ```
 
 ## 📝 备注
-本工具通过扫描 `~/.openclaw/agents/main/sessions/` 目录下的文件实现统计，不侵入 OpenClaw 核心代码，安全可靠。
+本工具通过扫描 `$OPENCLAW_CONFIG_DIR/agents/main/sessions/` 目录下的文件实现统计，不侵入 OpenClaw 核心代码，安全可靠。

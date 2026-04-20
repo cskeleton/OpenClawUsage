@@ -1,3 +1,8 @@
+import { escapeHtml, escapeAttr, showToast } from './util.js';
+
+// 保留原有 showPricingToast 名称以减少改动；内部委托给统一 toast 实现
+const showPricingToast = (msg, opts) => showToast(msg, opts);
+
 // API 调用函数
 async function fetchPricingConfig() {
   const res = await fetch('/api/pricing');
@@ -57,7 +62,7 @@ async function persistPricingConfigToServer() {
       pricingConfig.updated = res.updated;
     }
   } catch (err) {
-    alert('同步失败: ' + err.message);
+    showToast('同步失败: ' + err.message, { variant: 'error' });
     await loadData();
     throw err;
   }
@@ -227,14 +232,23 @@ function renderUnpricedModels(rows, { resetPage = true } = {}) {
   }
 }
 
-function escapeHtml(s) {
-  const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
-}
-
-function escapeAttr(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+/**
+ * 重新拉取「可用模型」与「OpenClaw 参考表」并重绘，供新增/编辑/删除规则后共用。
+ */
+async function refreshSupplementaryTables() {
+  try {
+    const { models } = await fetchAvailableModels();
+    populateModelDatalist(models, pricingConfig?.pricing || {});
+  } catch (err) {
+    console.warn('刷新可用模型失败:', err);
+  }
+  try {
+    const oc = await fetchOpenClawModels();
+    renderOpenClawReference(oc.models || [], { resetPage: true });
+    renderUnpricedModels(oc.unpricedModels || [], { resetPage: true });
+  } catch (err) {
+    console.warn('刷新 OpenClaw 参考表失败:', err);
+  }
 }
 
 /**
@@ -444,7 +458,7 @@ function renderPricingTable(config) {
  */
 function beginRowEdit(model) {
   if (pricingTableEditingKey !== null && pricingTableEditingKey !== model) {
-    alert('请先完成或取消正在编辑的行');
+    showToast('请先完成或取消正在编辑的行', { variant: 'error' });
     return;
   }
   pricingTableEditingKey = model;
@@ -474,7 +488,7 @@ async function applyRowEdit(originalModel) {
 
   const newKey = (row.querySelector('[data-field="modelKey"]')?.value ?? '').trim();
   if (!newKey) {
-    alert('模型键不能为空');
+    showToast('模型键不能为空', { variant: 'error' });
     return;
   }
 
@@ -488,19 +502,19 @@ async function applyRowEdit(originalModel) {
   const enabled = enabledEl ? enabledEl.checked : true;
 
   if (isNaN(input) || isNaN(output) || input < 0 || output < 0) {
-    alert('Input 和 Output 价格必须为有效的非负数');
+    showToast('Input 和 Output 价格必须为有效的非负数', { variant: 'error' });
     return;
   }
 
   const patErr = matchType !== 'exact' ? validateClientPattern(matchType, newKey) : '';
   if (patErr) {
-    alert(`${newKey}：${patErr}`);
+    showToast(`${newKey}：${patErr}`, { variant: 'error' });
     return;
   }
 
   if (!pricingConfig.pricing) pricingConfig.pricing = {};
   if (newKey !== originalModel && pricingConfig.pricing[newKey]) {
-    alert('已存在相同键的规则，请使用其他键名');
+    showToast('已存在相同键的规则，请使用其他键名', { variant: 'error' });
     return;
   }
 
@@ -523,15 +537,7 @@ async function applyRowEdit(originalModel) {
   try {
     await persistPricingConfigToServer();
     renderPricingTable(pricingConfig);
-    fetchAvailableModels().then(({ models }) => {
-      populateModelDatalist(models, pricingConfig.pricing);
-    });
-    fetchOpenClawModels()
-      .then((oc) => {
-        renderOpenClawReference(oc.models || [], { resetPage: true });
-        renderUnpricedModels(oc.unpricedModels || [], { resetPage: true });
-      })
-      .catch(() => {});
+    await refreshSupplementaryTables();
   } catch {
     /* persistPricingConfigToServer 已 loadData */
   }
@@ -583,7 +589,7 @@ async function loadData() {
     renderUnpricedModels(openclawData.unpricedModels || [], { resetPage: true });
     syncNewModelClearVisibility();
   } catch (error) {
-    alert('加载价格配置失败: ' + error.message);
+    showToast('加载价格配置失败: ' + error.message, { variant: 'error' });
   } finally {
     syncCustomPricingDisabledUI();
   }
@@ -597,17 +603,17 @@ async function resetConfig() {
 
   try {
     await resetPricingConfig();
-    alert('价格配置已重置！');
+    showToast('价格配置已重置', { variant: 'success' });
     await loadData();
   } catch (error) {
-    alert('重置失败: ' + error.message);
+    showToast('重置失败: ' + error.message, { variant: 'error' });
   }
 }
 
 // 添加新价格
 async function addPricing() {
   if (pricingTableEditingKey !== null) {
-    alert('请先完成或取消表格中正在编辑的行');
+    showToast('请先完成或取消表格中正在编辑的行', { variant: 'error' });
     return;
   }
   const matchTypeEl = document.getElementById('new-match-type');
@@ -621,7 +627,7 @@ async function addPricing() {
   const matchType = matchTypeEl ? matchTypeEl.value : 'exact';
   const model = (modelInput?.value ?? '').trim();
   if (!model) {
-    alert('请填写或选择 provider/model（或通配符/正则模式）');
+    showToast('请填写或选择 provider/model（或通配符/正则模式）', { variant: 'error' });
     return;
   }
   if (matchType !== 'exact') {
@@ -640,7 +646,7 @@ async function addPricing() {
   const output = parseFloat(outputPrice.value);
 
   if (isNaN(input) || isNaN(output) || input < 0 || output < 0) {
-    alert('Input 和 Output 价格必须为有效的非负数');
+    showToast('Input 和 Output 价格必须为有效的非负数', { variant: 'error' });
     return;
   }
 
@@ -649,7 +655,7 @@ async function addPricing() {
 
   if (!pricingConfig.pricing) pricingConfig.pricing = {};
   if (pricingConfig.pricing[model]) {
-    alert('已存在相同键的规则，请删除后再添加或保存后编辑');
+    showToast('已存在相同键的规则，请删除后再添加或保存后编辑', { variant: 'error' });
     return;
   }
 
@@ -678,15 +684,7 @@ async function addPricing() {
   try {
     await persistPricingConfigToServer();
     renderPricingTable(pricingConfig);
-    const { models } = await fetchAvailableModels();
-    populateModelDatalist(models, pricingConfig.pricing);
-    try {
-      const oc = await fetchOpenClawModels();
-      renderOpenClawReference(oc.models || [], { resetPage: true });
-      renderUnpricedModels(oc.unpricedModels || [], { resetPage: true });
-    } catch (_) {
-      /* 忽略 */
-    }
+    await refreshSupplementaryTables();
   } catch {
     /* persistPricingConfigToServer 已 loadData */
   }
@@ -705,15 +703,7 @@ async function deletePricing(model) {
   try {
     await persistPricingConfigToServer();
     renderPricingTable(pricingConfig);
-    fetchAvailableModels().then(({ models }) => {
-      populateModelDatalist(models, pricingConfig.pricing);
-    });
-    fetchOpenClawModels()
-      .then((oc) => {
-        renderOpenClawReference(oc.models || [], { resetPage: true });
-        renderUnpricedModels(oc.unpricedModels || [], { resetPage: true });
-      })
-      .catch(() => {});
+    await refreshSupplementaryTables();
   } catch {
     /* persistPricingConfigToServer 已 loadData */
   }
@@ -769,7 +759,7 @@ function copyOpenClawToForm(key) {
   if (!row) return;
 
   if (pricingTableEditingKey !== null) {
-    alert('请先完成或取消表格中正在编辑的行');
+    showToast('请先完成或取消表格中正在编辑的行', { variant: 'error' });
     return;
   }
 
@@ -801,7 +791,7 @@ function copyUnpricedToForm(key) {
   if (!row) return;
 
   if (pricingTableEditingKey !== null) {
-    alert('请先完成或取消表格中正在编辑的行');
+    showToast('请先完成或取消表格中正在编辑的行', { variant: 'error' });
     return;
   }
 
@@ -830,7 +820,7 @@ function copyUnpricedToForm(key) {
 function locatePricingRow(key) {
   const row = document.querySelector(`#pricing-tbody tr[data-model="${CSS.escape(key)}"]`);
   if (!row) {
-    alert('未找到该规则，可能尚未保存到自定义表。');
+    showToast('未找到该规则，可能尚未保存到自定义表', { variant: 'error' });
     return;
   }
   row.classList.add('pricing-row-highlight');
@@ -945,20 +935,6 @@ function initPricingCollapsibles() {
 }
 
 initPricingCollapsibles();
-
-/** 显示短暂 toast（价格页「已复制」等） */
-function showPricingToast(message) {
-  const el = document.getElementById('pricing-toast');
-  if (!el) return;
-  el.textContent = message;
-  el.hidden = false;
-  el.classList.add('pricing-toast--visible');
-  clearTimeout(showPricingToast._tid);
-  showPricingToast._tid = setTimeout(() => {
-    el.classList.remove('pricing-toast--visible');
-    el.hidden = true;
-  }, 2200);
-}
 
 document.getElementById('pricing-help-copy-btn')?.addEventListener('click', async (e) => {
   e.stopPropagation();

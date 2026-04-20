@@ -75,6 +75,37 @@ function formatTickValue(v) {
   return v;
 }
 
+/**
+ * 在 canvas 容器里渲染「暂无数据」文案并清空画布。返回 true 表示已走空态分支。
+ * @param {HTMLCanvasElement|null} ctx
+ * @param {string} message
+ */
+function renderEmptyChart(ctx, message) {
+  if (!ctx) return true;
+  const parent = ctx.parentElement;
+  if (!parent) return true;
+  let placeholder = parent.querySelector('.chart-empty');
+  if (!placeholder) {
+    placeholder = document.createElement('div');
+    placeholder.className = 'chart-empty';
+    placeholder.style.cssText = 'display:flex;align-items:center;justify-content:center;min-height:160px;color:var(--text-secondary);font-size:0.9rem;';
+    parent.appendChild(placeholder);
+  }
+  placeholder.textContent = message;
+  placeholder.hidden = false;
+  ctx.style.display = 'none';
+  return true;
+}
+
+/** 清除空态占位，重新显示 canvas */
+function clearEmptyChart(ctx) {
+  if (!ctx) return;
+  const parent = ctx.parentElement;
+  const placeholder = parent?.querySelector('.chart-empty');
+  if (placeholder) placeholder.hidden = true;
+  ctx.style.display = '';
+}
+
 function getTooltipConfig() {
   const t = getChartThemeFromCss();
   return {
@@ -95,9 +126,10 @@ function renderTimelineChart(byDate) {
 
   const dates = Object.keys(byDate);
   if (dates.length === 0) {
-    ctx.parentElement.querySelector('h3').textContent = '📈 Token 用量趋势（按日）— 无数据';
+    renderEmptyChart(ctx, '所选区间暂无数据');
     return;
   }
+  clearEmptyChart(ctx);
 
   const inputData = dates.map((d) => byDate[d].input);
   const outputData = dates.map((d) => byDate[d].output);
@@ -166,7 +198,11 @@ function renderProviderChart(byProvider) {
   if (!ctx) return;
 
   const providers = Object.keys(byProvider);
-  if (providers.length === 0) return;
+  if (providers.length === 0) {
+    renderEmptyChart(ctx, '所选区间暂无 Provider 费用');
+    return;
+  }
+  clearEmptyChart(ctx);
 
   const costs = providers.map((p) => byProvider[p].totalCost);
 
@@ -207,7 +243,11 @@ function renderModelChart(byModel) {
   if (!ctx) return;
 
   const models = Object.keys(byModel);
-  if (models.length === 0) return;
+  if (models.length === 0) {
+    renderEmptyChart(ctx, '所选区间暂无 Model 用量');
+    return;
+  }
+  clearEmptyChart(ctx);
 
   const useLogScale = document.getElementById('model-log-scale')?.checked || false;
 

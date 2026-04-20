@@ -7,17 +7,17 @@ A standalone token usage statistics and visualization tool for OpenClaw. It pars
 - **Visual Dashboard (Web UI)**: Dark-themed interface built with Vite + Chart.js.
   - **Comprehensive Stats**: Covers all sessions include active (`.jsonl`), reset (`.jsonl.reset.*`), and archived deleted sessions.
   - **Time Filtering**: Built-in presets (Today, Last 7 Days, This Month, etc.) and custom date ranges.
-  - **Rich Metrics**: Tracks Input/Output Tokens, cost trends, Provider distribution, and Cache (Read/Write) performance.
+  - **Rich Metrics**: Tracks Input/Output Tokens, cost trends, Provider distribution, and Cache (Read/Write) performance. On the home summary row, **Total cost** is the **last** card (after token/cache/session summaries).
   - **UX Enhancements**: Logarithmic scale for Model comparison, and paginated/searchable session details table.
   
 - **MCP Server (Model Context Protocol)**:
   - Enables OpenClaw Agents to query their own token consumption directly.
-  - Provides 5 core tools: `get_total_usage`, `get_usage_by_model`, `list_recent_sessions`, etc.
+  - Provides 5 tools: `get_total_usage`, `get_usage_by_provider`, `get_usage_by_model`, `list_recent_sessions`, `get_session_stats`.
 
 - **Custom Pricing Configuration**:
   - Configure custom prices per Provider/Model combination (unit **$/M**, per million tokens).
   - **Two-level toggles**: Turn off **Enable custom pricing** globally, or disable a single rule, to switch between **recalculated costs from your custom $/M rates** and **per-message costs embedded in sessions** (`usage.cost`, as produced by OpenClaw).
-  - The pricing page includes **OpenClaw built-in prices (reference)** and **Models missing prices (reference)**: both are derived from `agents/main/agent/models.json` under `OPENCLAW_CONFIG_DIR` (default `~/.openclaw`), split by whether input/output rates are present.
+  - The pricing page includes **OpenClaw built-in prices (reference)** and **Models missing prices (reference)**: both are derived from `agents/main/agent/models.json` under `OPENCLAW_CONFIG_DIR` (default `~/.openclaw`), split by whether input/output rates are present. Each table shows whether a row is already covered by custom rules (including wildcard/regex matches) and lets you copy uncovered keys into “Add price”. **Models actually selectable in OpenClaw** are governed by **`agents.defaults.models`** in `openclaw.json`, which is not the same as the rows listed in these reference tables.
   - Supports 4 price types: Input, Output, Cache Read, Cache Write.
   - Cache prices are optional; when left empty, costs are computed **at the Input / Output list price** (read traffic at Input $/M, write traffic at Output $/M; no separate cache rate).
   - Dedicated pricing configuration page with add/edit/delete/reset functionality.
@@ -27,15 +27,16 @@ A standalone token usage statistics and visualization tool for OpenClaw. It pars
 
 The tool monitors and parses the local OpenClaw persistence directory:
 
-- **Target Path**: `~/.openclaw/agents/main/sessions/`
-- **Supported Files**:
+- **Target Path**: `$OPENCLAW_CONFIG_DIR/agents/main/sessions/` (defaults to `~/.openclaw/agents/main/sessions/` when the env var is unset); the same config root as `agents/main/agent/models.json`. **This path is NOT affected by `agents.defaults.workspace`** — workspace only controls where the pricing config file lives (see below).
+- **Supported Files** (directory scan is **not recursive** — only top-level files):
   - `*.jsonl`: Currently active session records.
   - `*.jsonl.reset.*`: Archived sessions after a `/reset` command.
   - `*.jsonl.deleted.*`: Archived deleted sessions.
-  - `sessions.json`: Session index and snapshot statistics.
+  - `*.checkpoint.*.jsonl`: **Skipped**. Checkpoint content is already captured in the main/reset file; counting both would double the totals.
+  - `sessions.json`: Session index and snapshot statistics (not counted toward usage).
 
 - **Data Capture**:
-  It recursively reads the `usage` field returned by LLM APIs in JSONL files:
+  The tool reads each JSONL file line-by-line, extracting the `usage` field returned by LLM APIs:
   ```json
   {
     "usage": {
@@ -100,6 +101,8 @@ The pricing config file (`openclaw-usage-pricing.json`) uses **dynamic path dete
 | 2️⃣ | `agents.defaults.workspace` in `openclaw.json` | `/Users/gc/gcDora` → stored under `gcDora` dir |
 | 3️⃣ | Fallback `~/.openclaw/` | Default fallback |
 
+> ⚠️ The table above applies **only to the pricing config file**. **Sessions and models.json** are always read from `$OPENCLAW_CONFIG_DIR` (default `~/.openclaw`) and do **not** follow the workspace.
+
 #### Model catalog (`models.json`, pricing reference API)
 
 | Variable | Meaning |
@@ -157,7 +160,7 @@ Instead of under `~/.openclaw/`. This keeps the pricing config bound to the Open
        }
      }'
 
-   # List models with / without prices from models.json (joined with current custom rules)
+   # List models with / without prices from models.json (joined via findMatchingPricing)
    curl http://localhost:3001/api/openclaw/models
 
    # Reset to default configuration (use OpenClaw built-in pricing)

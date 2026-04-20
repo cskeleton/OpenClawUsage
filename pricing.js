@@ -119,8 +119,10 @@ export function findMatchingPricing(modelKey, pricingMap) {
 }
 
 /**
- * 动态检测 OpenClaw 工作目录
- * 优先级：OPENCLAW_CONFIG_PATH env > ~/.openclaw/ > ~/openclaw/
+ * 动态检测 OpenClaw 工作目录（用于定位 openclaw-usage-pricing.json）。
+ * 优先级：OPENCLAW_DIR env > openclaw.json 里的 agents.defaults.workspace > ~/.openclaw
+ * 注意：这是 **定价配置文件** 的存储位置；sessions 与 models.json 走
+ * `openclaw-config.js` 的 `OPENCLAW_CONFIG_DIR`（通常默认 `~/.openclaw`）。
  * @returns {Promise<string>} OpenClaw 工作目录路径
  */
 export async function detectOpenClawDir() {
@@ -144,13 +146,10 @@ export async function detectOpenClawDir() {
     return join(homedir(), '.openclaw');
 }
 
-// 配置文件路径：动态检测 OpenClaw 工作目录
-let _pricingConfigPath = null;
+// 配置文件路径：每次动态检测，避免长期运行时缓存过期
 async function getPricingConfigPath() {
-    if (_pricingConfigPath) return _pricingConfigPath;
     const openclawDir = await detectOpenClawDir();
-    _pricingConfigPath = join(openclawDir, 'openclaw-usage-pricing.json');
-    return _pricingConfigPath;
+    return join(openclawDir, 'openclaw-usage-pricing.json');
 }
 
 // 旧路径兼容（用于首次迁移）
@@ -276,11 +275,17 @@ export function validatePricingConfig(config) {
       }
     }
     if (mt === 'wildcard') {
+      if (!modelKey.includes('*') && !modelKey.includes('?')) {
+        throw new Error(`模型 ${modelKey} 声明为 wildcard 但键不含 * 或 ?；请改为 exact 或使用通配符`);
+      }
       try {
         wildcardToRegex(modelKey);
       } catch (e) {
         throw new Error(`模型 ${modelKey} 的通配符模式无效: ${e.message}`);
       }
+    }
+    if (mt === 'exact' && !modelKey.includes('/')) {
+      throw new Error(`模型 ${modelKey} 的 exact 键应形如 provider/model（含 /）`);
     }
   }
 }

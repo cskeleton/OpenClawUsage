@@ -1,10 +1,26 @@
-import { readFileSync, readdirSync, statSync, createReadStream } from 'fs';
+import { readdirSync, statSync, createReadStream } from 'fs';
 import { join, basename } from 'path';
-import { homedir } from 'os';
 import { createInterface } from 'readline';
 import { loadPricingConfig, calculateCostFromUsage } from './pricing.js';
+import { getOpenClawConfigDir } from './openclaw-config.js';
 
-export const SESSION_DIR = join(homedir(), '.openclaw', 'agents', 'main', 'sessions');
+/**
+ * 解析 sessions 目录（跟随 OPENCLAW_CONFIG_DIR，与 models.json 同源）。
+ * @returns {string}
+ */
+export function getSessionDir() {
+  return join(getOpenClawConfigDir(), 'agents', 'main', 'sessions');
+}
+
+/**
+ * 把文件名中压缩过的时间戳（冒号被替换为连字符）还原为 ISO 字符串。
+ * 仅替换 `T` 之后的时分秒，保留日期部分的连字符。
+ * @param {string} raw 文件名里 `.reset.` / `.deleted.` 后的时间串，如 `2026-04-15T13-05-48.786Z`
+ * @returns {string}
+ */
+export function normalizeArchivedAt(raw) {
+  return raw.replace(/T(\d{2})-(\d{2})-(\d{2})/, 'T$1:$2:$3');
+}
 
 /**
  * Determine session status and ID from filename
@@ -12,9 +28,12 @@ export const SESSION_DIR = join(homedir(), '.openclaw', 'agents', 'main', 'sessi
 export function parseSessionFile(filename) {
   const base = basename(filename);
 
-  // Skip non-session files
-  if (base === 'sessions.json' || base.endsWith('.json')) return null;
+  // Skip non-session files (sessions.json 索引、其他 *.json 元数据)
+  if (base.endsWith('.json')) return null;
   if (base.startsWith('probe-')) return null;
+
+  // Skip checkpoint 变体：避免与主文件/reset 副本双重计数
+  if (base.includes('.checkpoint.')) return null;
 
   // Extract UUID from filename
   const uuidMatch = base.match(/^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/);
@@ -28,11 +47,11 @@ export function parseSessionFile(filename) {
   if (base.includes('.jsonl.reset.')) {
     status = 'reset';
     const tsMatch = base.match(/\.reset\.(.+)$/);
-    if (tsMatch) archivedAt = tsMatch[1].replace(/-/g, ':').replace(/T/, 'T');
+    if (tsMatch) archivedAt = normalizeArchivedAt(tsMatch[1]);
   } else if (base.includes('.jsonl.deleted.')) {
     status = 'deleted';
     const tsMatch = base.match(/\.deleted\.(.+)$/);
-    if (tsMatch) archivedAt = tsMatch[1].replace(/-/g, ':').replace(/T/, 'T');
+    if (tsMatch) archivedAt = normalizeArchivedAt(tsMatch[1]);
   } else if (!base.endsWith('.jsonl')) {
     return null; // Unknown format
   }
@@ -105,16 +124,84 @@ export async function parseSessionJsonl(filepath, pricingConfig) {
 }
 
 /**
+ * 初始化空统计桶（summary / byProvider[x] / byModel[x] / byDate[x] 通用结构）
+ */
+function emptyBucket() {
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    totalCost: 0,
+    requests: 0,
+  };
+}
+
+/**
+ * 在日期+键维度上累加一条记录。
+ * @param {Record<string, Record<string, ReturnType<typeof emptyBucket>>>} table
+ * @param {string} date
+ * @param {string} key
+ * @param {Object} rec
+ */
+function addToCrossTable(table, date, key, rec) {
+  if (!table[date]) table[date] = {};
+  if (!table[date][key]) table[date][key] = emptyBucket();
+  const b = table[date][key];
+  b.input += rec.usage.input;
+  b.output += rec.usage.output;
+  b.cacheRead += rec.usage.cacheRead;
+  b.cacheWrite += rec.usage.cacheWrite;
+  b.totalTokens += rec.usage.totalTokens;
+  b.totalCost += rec.cost.total;
+  b.requests += 1;
+}
+
+/**
+ * 按 key 排序对象 key（浅拷贝）
+ */
+function sortedObject(obj) {
+  const out = {};
+  Object.keys(obj).sort().forEach((k) => {
+    out[k] = obj[k];
+  });
+  return out;
+}
+
+/**
  * Aggregate all session data
  * @param {Object|null} pricingConfig - 价格配置对象，null 时自动加载
  */
 export async function aggregateStats(pricingConfig = null) {
-  // 如果没有提供 pricingConfig，自动加载
   if (!pricingConfig) {
     pricingConfig = await loadPricingConfig();
   }
 
-  const files = readdirSync(SESSION_DIR);
+  const sessionDir = getSessionDir();
+
+  let files;
+  try {
+    files = readdirSync(sessionDir);
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      // sessions 目录不存在：返回空聚合而不是抛错
+      return {
+        summary: {
+          totalInput: 0, totalOutput: 0, totalCacheRead: 0, totalCacheWrite: 0,
+          totalTokens: 0, totalCost: 0, totalRequests: 0, totalSessions: 0,
+        },
+        byProvider: {},
+        byModel: {},
+        byDate: {},
+        byDateProvider: {},
+        byDateModel: {},
+        sessions: [],
+        generatedAt: new Date().toISOString(),
+      };
+    }
+    throw err;
+  }
 
   const summary = {
     totalInput: 0,
@@ -130,21 +217,26 @@ export async function aggregateStats(pricingConfig = null) {
   const byProvider = {};
   const byModel = {};
   const byDate = {};
+  /** 日期 × provider */
+  const byDateProvider = {};
+  /** 日期 × `provider/model` */
+  const byDateModel = {};
   const sessions = [];
 
   for (const file of files) {
     const meta = parseSessionFile(file);
     if (!meta) continue;
 
-    const filepath = join(SESSION_DIR, file);
+    const filepath = join(sessionDir, file);
 
+    let records;
     try {
-       statSync(filepath);
-    } catch {
+      records = await parseSessionJsonl(filepath, pricingConfig);
+    } catch (err) {
+      // 单个文件失败不影响整体聚合
+      console.warn(`[aggregator] 跳过 ${file}: ${err.message}`);
       continue;
     }
-
-    const records = await parseSessionJsonl(filepath, pricingConfig);
 
     if (records.length === 0) continue;
 
@@ -166,6 +258,8 @@ export async function aggregateStats(pricingConfig = null) {
       requestCount: records.length,
       firstTimestamp: null,
       lastTimestamp: null,
+      /** 会话内的按日分布，供前端筛选时切片 */
+      byDate: {},
     };
 
     for (const rec of records) {
@@ -198,12 +292,7 @@ export async function aggregateStats(pricingConfig = null) {
       }
 
       // By provider
-      if (!byProvider[rec.provider]) {
-        byProvider[rec.provider] = {
-          input: 0, output: 0, cacheRead: 0, cacheWrite: 0,
-          totalTokens: 0, totalCost: 0, requests: 0,
-        };
-      }
+      if (!byProvider[rec.provider]) byProvider[rec.provider] = emptyBucket();
       const p = byProvider[rec.provider];
       p.input += rec.usage.input;
       p.output += rec.usage.output;
@@ -216,11 +305,7 @@ export async function aggregateStats(pricingConfig = null) {
       // By model
       const modelKey = `${rec.provider}/${rec.model}`;
       if (!byModel[modelKey]) {
-        byModel[modelKey] = {
-          provider: rec.provider, model: rec.model,
-          input: 0, output: 0, cacheRead: 0, cacheWrite: 0,
-          totalTokens: 0, totalCost: 0, requests: 0,
-        };
+        byModel[modelKey] = { provider: rec.provider, model: rec.model, ...emptyBucket() };
       }
       const m = byModel[modelKey];
       m.input += rec.usage.input;
@@ -231,15 +316,10 @@ export async function aggregateStats(pricingConfig = null) {
       m.totalCost += rec.cost.total;
       m.requests++;
 
-      // By date
+      // By date 及交叉聚合
       if (rec.timestamp) {
         const date = rec.timestamp.substring(0, 10);
-        if (!byDate[date]) {
-          byDate[date] = {
-            input: 0, output: 0, cacheRead: 0, cacheWrite: 0,
-            totalTokens: 0, totalCost: 0, requests: 0,
-          };
-        }
+        if (!byDate[date]) byDate[date] = emptyBucket();
         const d = byDate[date];
         d.input += rec.usage.input;
         d.output += rec.usage.output;
@@ -248,6 +328,20 @@ export async function aggregateStats(pricingConfig = null) {
         d.totalTokens += rec.usage.totalTokens;
         d.totalCost += rec.cost.total;
         d.requests++;
+
+        addToCrossTable(byDateProvider, date, rec.provider, rec);
+        addToCrossTable(byDateModel, date, modelKey, rec);
+
+        // 会话内按日
+        if (!sessionStats.byDate[date]) sessionStats.byDate[date] = emptyBucket();
+        const sd = sessionStats.byDate[date];
+        sd.input += rec.usage.input;
+        sd.output += rec.usage.output;
+        sd.cacheRead += rec.usage.cacheRead;
+        sd.cacheWrite += rec.usage.cacheWrite;
+        sd.totalTokens += rec.usage.totalTokens;
+        sd.totalCost += rec.cost.total;
+        sd.requests++;
       }
     }
 
@@ -264,16 +358,13 @@ export async function aggregateStats(pricingConfig = null) {
     return b.lastTimestamp.localeCompare(a.lastTimestamp);
   });
 
-  const sortedByDate = {};
-  Object.keys(byDate).sort().forEach((k) => {
-    sortedByDate[k] = byDate[k];
-  });
-
   return {
     summary,
     byProvider,
     byModel,
-    byDate: sortedByDate,
+    byDate: sortedObject(byDate),
+    byDateProvider: sortedObject(byDateProvider),
+    byDateModel: sortedObject(byDateModel),
     sessions,
     generatedAt: new Date().toISOString(),
   };

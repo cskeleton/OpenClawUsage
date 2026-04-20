@@ -21,21 +21,6 @@ export function getAgentModelsJsonPath() {
 }
 
 /**
- * 解析 agents/main/agent/models.json：存在则返回绝对路径，否则 null
- * @returns {Promise<string|null>}
- */
-export async function resolveAgentModelsJsonPath() {
-  const p = getAgentModelsJsonPath();
-  try {
-    await readFile(p, 'utf-8');
-    return p;
-  } catch (e) {
-    if (e.code === 'ENOENT') return null;
-    throw e;
-  }
-}
-
-/**
  * 判断 cost 是否视为「有有效单价」（input 或 output 非零）
  * @param {Object|null} cost
  * @returns {boolean}
