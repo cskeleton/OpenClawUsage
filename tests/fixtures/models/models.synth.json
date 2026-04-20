@@ -1,0 +1,11 @@
+{
+  "providers": {
+    "openai": {
+      "models": [
+        { "id": "gpt-4o", "name": "GPT-4o", "cost": { "input": 2.5, "output": 10 }, "contextWindow": 128000, "maxTokens": 16384 },
+        { "id": "gpt-mini-unpriced", "name": "Unpriced model" }
+      ]
+    },
+    "empty-provider": { "models": [] }
+  }
+}
