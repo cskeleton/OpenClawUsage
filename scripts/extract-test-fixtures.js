@@ -31,6 +31,46 @@ const MODELS_DST = join(REPO_ROOT, 'tests', 'fixtures', 'models', 'models.real.j
 const MANIFEST = join(REPO_ROOT, 'tests', 'fixtures', 'MANIFEST.json');
 
 const REDACTED_TEXT = '<REDACTED_TEXT>';
+const REDACTED_PATH = '<REDACTED_PATH>';
+const REDACTED_TOKEN = '<REDACTED_TOKEN>';
+
+// 仅匹配整串即为绝对路径的场景（如 cwd 字段），避免误伤包含路径片段的长文本
+const PATH_RE = /^\/(Users|home)\/[^/]+(?:\/.*)?$/;
+// 匹配常见 bearer / sk- 形式 token
+const TOKEN_RE = /\b(sk-[A-Za-z0-9_-]{20,}|Bearer\s+[A-Za-z0-9._-]{20,})\b/g;
+// 任何 key 命中则直接删除该字段
+const CRED_KEYS = new Set([
+  'apiKey',
+  'apiSecret',
+  'token',
+  'authorization',
+  'authHeader',
+  'bearerToken',
+]);
+
+/**
+ * 通用深度脱敏器：对解析后的 JSON 对象做防御性清理。
+ * - 字符串：整串绝对路径替换为占位符；内嵌 token 片段替换为占位符
+ * - 对象：命中 CRED_KEYS 的键整体丢弃
+ * - 数组：逐项递归
+ */
+function deepScrub(node) {
+  if (node == null) return node;
+  if (typeof node === 'string') {
+    if (PATH_RE.test(node)) return REDACTED_PATH;
+    return node.replace(TOKEN_RE, REDACTED_TOKEN);
+  }
+  if (Array.isArray(node)) return node.map(deepScrub);
+  if (typeof node === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(node)) {
+      if (CRED_KEYS.has(k)) continue;
+      out[k] = deepScrub(v);
+    }
+    return out;
+  }
+  return node;
+}
 
 function redactMessage(obj) {
   if (!obj || typeof obj !== 'object') return obj;
@@ -55,7 +95,9 @@ function redactJsonlLine(line) {
   if (!line.trim()) return line;
   try {
     const parsed = JSON.parse(line);
-    return JSON.stringify(redactMessage(parsed));
+    const layer1 = redactMessage(parsed);
+    const layer2 = deepScrub(layer1);
+    return JSON.stringify(layer2);
   } catch {
     return '';
   }
@@ -74,7 +116,7 @@ function redactModelsJson(raw) {
       if (p.endpoint) p.endpoint = 'https://example.invalid';
     }
   }
-  return out;
+  return deepScrub(out);
 }
 
 function pickRepresentativeSessions(files) {
@@ -126,7 +168,14 @@ function main() {
       mkdirSync(dirname(MODELS_DST), { recursive: true });
       writeFileSync(MODELS_DST, JSON.stringify(redacted, null, 2), 'utf-8');
     }
-    manifest.modelsJson = { source: MODELS_SRC, redactedKeys: ['apiKey', 'apiSecret', 'token', 'authorization', 'headers'] };
+    const HOME = homedir();
+    const sourceDisplay = MODELS_SRC.startsWith(HOME)
+      ? '~' + MODELS_SRC.slice(HOME.length)
+      : REDACTED_PATH;
+    manifest.modelsJson = {
+      source: sourceDisplay,
+      redactedKeys: ['apiKey', 'apiSecret', 'token', 'authorization', 'headers'],
+    };
   }
 
   if (!DRY) writeFileSync(MANIFEST, JSON.stringify(manifest, null, 2), 'utf-8');
