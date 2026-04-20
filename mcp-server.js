@@ -8,26 +8,26 @@ import {
   refreshStatsCache,
 } from "./stats-service.js";
 
-// Server instance
-const server = new Server(
-  {
-    name: "openclaw-usage-stats",
-    version: "1.0.0",
-  },
-  {
-    capabilities: {
-      tools: {},
+/**
+ * 创建一个配置完成的 MCP Server 实例（不连接 stdio）。
+ * 返回的实例带有 `__handlers = { listTools, callTool }`，
+ * 这是为测试开的“逃生门”：MCP SDK 未暴露已注册 handler 的公共 API，
+ * 因此直接挂在实例上以便单元/集成测试绕过 stdio 传输直接调用。
+ */
+export function createMcpServer() {
+  const server = new Server(
+    {
+      name: "openclaw-usage-stats",
+      version: "1.0.0",
     },
-  }
-);
+    {
+      capabilities: {
+        tools: {},
+      },
+    }
+  );
 
-async function getData() {
-  return getStats();
-}
-
-// 1. List available tools
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return {
+  const listToolsHandler = async () => ({
     tools: [
       {
         name: "get_total_usage",
@@ -105,143 +105,150 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
     ],
-  };
-});
+  });
 
-// 2. Handle tool calls
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
-  const data = await getData();
+  const callToolHandler = async (request) => {
+    const { name, arguments: args } = request.params;
+    const data = await getStats();
 
-  try {
-    switch (name) {
-      case "get_total_usage": {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(data.summary, null, 2),
-            },
-          ],
-        };
-      }
-
-      case "get_usage_by_provider": {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(data.byProvider, null, 2),
-            },
-          ],
-        };
-      }
-
-      case "get_usage_by_model": {
-        const sortedModels = Object.values(data.byModel)
-          .sort((a, b) => b.totalTokens - a.totalTokens);
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(sortedModels, null, 2),
-            },
-          ],
-        };
-      }
-
-      case "list_recent_sessions": {
-        const limit = args?.limit || 10;
-        const recent = data.sessions.slice(0, limit).map(s => ({
-          id: s.id,
-          status: s.status,
-          providers: s.providers,
-          models: s.models,
-          totalTokens: s.totalTokens,
-          totalCost: s.totalCost,
-          lastActive: s.lastTimestamp,
-        }));
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(recent, null, 2),
-            },
-          ],
-        };
-      }
-
-      case "get_session_stats": {
-        const { sessionId } = args;
-        const session = data.sessions.find(s => s.id === sessionId);
-        if (!session) {
+    try {
+      switch (name) {
+        case "get_total_usage": {
           return {
-            content: [{ type: "text", text: `Session with ID ${sessionId} not found.` }],
-            isError: true,
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(data.summary, null, 2),
+              },
+            ],
           };
         }
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(session, null, 2),
-            },
-          ],
-        };
-      }
-      case "get_pricing_config": {
-        const config = await getPricingConfig();
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(config, null, 2),
-            },
-          ],
-        };
-      }
-      case "update_pricing_config": {
-        const result = await updatePricingConfig(args.config);
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        };
-      }
-      case "refresh_stats_cache": {
-        const result = await refreshStatsCache();
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        };
-      }
 
-      default:
-        throw new Error(`Tool not found: ${name}`);
+        case "get_usage_by_provider": {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(data.byProvider, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "get_usage_by_model": {
+          const sortedModels = Object.values(data.byModel)
+            .sort((a, b) => b.totalTokens - a.totalTokens);
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(sortedModels, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "list_recent_sessions": {
+          const limit = args?.limit || 10;
+          const recent = data.sessions.slice(0, limit).map(s => ({
+            id: s.id,
+            status: s.status,
+            providers: s.providers,
+            models: s.models,
+            totalTokens: s.totalTokens,
+            totalCost: s.totalCost,
+            lastActive: s.lastTimestamp,
+          }));
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(recent, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "get_session_stats": {
+          const { sessionId } = args;
+          const session = data.sessions.find(s => s.id === sessionId);
+          if (!session) {
+            return {
+              content: [{ type: "text", text: `Session with ID ${sessionId} not found.` }],
+              isError: true,
+            };
+          }
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(session, null, 2),
+              },
+            ],
+          };
+        }
+        case "get_pricing_config": {
+          const config = await getPricingConfig();
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(config, null, 2),
+              },
+            ],
+          };
+        }
+        case "update_pricing_config": {
+          const result = await updatePricingConfig(args.config);
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        }
+        case "refresh_stats_cache": {
+          const result = await refreshStatsCache();
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        }
+
+        default:
+          throw new Error(`Tool not found: ${name}`);
+      }
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error.message}` }],
+        isError: true,
+      };
     }
-  } catch (error) {
-    return {
-      content: [{ type: "text", text: `Error: ${error.message}` }],
-      isError: true,
-    };
-  }
-});
+  };
 
-// 3. Start server
+  server.setRequestHandler(ListToolsRequestSchema, listToolsHandler);
+  server.setRequestHandler(CallToolRequestSchema, callToolHandler);
+
+  server.__handlers = { listTools: listToolsHandler, callTool: callToolHandler };
+  return server;
+}
+
 async function main() {
+  const server = createMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("OpenClaw Usage MCP server running on stdio");
 }
 
-main().catch(error => {
-  console.error("Fatal error in MCP server:", error);
-  process.exit(1);
-});
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((error) => {
+    console.error("Fatal error in MCP server:", error);
+    process.exit(1);
+  });
+}
