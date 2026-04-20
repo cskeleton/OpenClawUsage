@@ -62,21 +62,21 @@ describe('calculateCostFromUsage', () => {
     expect(r.source).toBe('custom');
   });
 
-  it('falls back cache price to input/output when null', () => {
+  it('falls back cache price to input when null', () => {
     const r = calculateCostFromUsage(usage, 'openai', 'gpt-4o', {
       version: '1.0',
       pricing: { 'openai/gpt-4o': { input: 2, output: 4, cacheRead: null, cacheWrite: null } },
     });
     expect(r.cacheRead).toBeCloseTo(2);
-    expect(r.cacheWrite).toBeCloseTo(4);
+    expect(r.cacheWrite).toBeCloseTo(2);
   });
 
-  it('cache fallback also works when cacheRead/cacheWrite keys are absent', () => {
+  it('cache fallback also works when cacheRead/cacheWrite keys are absent and uses input', () => {
     const r = calculateCostFromUsage(usage, 'openai', 'gpt-4o', {
       version: '1.0',
       pricing: { 'openai/gpt-4o': { input: 2, output: 4 } },
     });
     expect(r.cacheRead).toBeCloseTo(2);
-    expect(r.cacheWrite).toBeCloseTo(4);
+    expect(r.cacheWrite).toBeCloseTo(2);
   });
 });

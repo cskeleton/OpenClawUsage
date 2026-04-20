@@ -74,7 +74,7 @@
                   <li>关闭「启用」或关闭某一行的「启用」后，该范围使用会话中的 OpenClaw 账面成本</li>
                   <li>开启「启用」且开启对应行时，使用自定义单价重算成本（理论价）</li>
                   <li>下方「内置价格」「缺少价格」参考表来自 <code>models.json</code>（<code>$OPENCLAW_CONFIG_DIR</code> 或默认 <code>~/.openclaw</code> 下 <code>agents/main/agent/models.json</code>）中的模型条目；<strong>实际在 OpenClaw 里能选择的模型</strong>取决于 <code>openclaw.json</code> 中 <code>agents.defaults.models</code> 的配置，与参考表并非一一对应</li>
-                  <li>Cache Read/Write 留空表示不设单独缓存价：<strong>按 Input / Output 原价计算</strong>（读取用 Input 单价，写入用 Output 单价）</li>
+                  <li>Cache Read/Write 留空表示不设单独缓存价：<strong>统一按 Input 原价计算</strong>（读取与写入都用 Input 单价）</li>
                   <li>修改后会自动保存到配置文件并失效聚合缓存，重新计算成本</li>
                   <li>支持<strong>通配符</strong>（如 <code>*/claude-*</code>）与<strong>正则</strong>（如 <code>/claude.*/i</code>）规则，按声明顺序匹配完整 <code>provider/model</code>；<strong>精确规则优先</strong></li>
                 </ul>
@@ -155,7 +155,7 @@
         <input type="number" id="new-input-price" placeholder="Input" step="0.01" />
         <input type="number" id="new-output-price" placeholder="Output" step="0.01" />
         <input type="number" id="new-cache-read-price" class="pricing-input--cache" placeholder="留空按 Input 原价" title="留空时按该行 Input 单价计算 Cache Read 费用" step="0.01" />
-        <input type="number" id="new-cache-write-price" class="pricing-input--cache" placeholder="留空按 Output 原价" title="留空时按该行 Output 单价计算 Cache Write 费用" step="0.01" />
+        <input type="number" id="new-cache-write-price" class="pricing-input--cache" placeholder="留空按 Input 原价" title="留空时按该行 Input 单价计算 Cache Write 费用" step="0.01" />
         <button id="add-pricing-btn" class="btn-primary" type="button">添加</button>
         <p id="new-pattern-hint" class="pricing-pattern-hint pricing-add-hint-full" hidden>
           通配符：<code>*</code> 任意长度，<code>?</code> 单字符。正则：须以 <code>/</code> 开头，可为 <code>/pattern/flags</code>。

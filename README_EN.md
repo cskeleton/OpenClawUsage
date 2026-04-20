@@ -22,7 +22,7 @@ A standalone token usage statistics and visualization tool for OpenClaw. It pars
   - **Two-level toggles**: Turn off **Enable custom pricing** globally, or disable a single rule, to switch between **recalculated costs from your custom $/M rates** and **per-message costs embedded in sessions** (`usage.cost`, as produced by OpenClaw).
   - The pricing page includes **OpenClaw built-in prices (reference)** and **Models missing prices (reference)**: both are derived from `agents/main/agent/models.json` under `OPENCLAW_CONFIG_DIR` (default `~/.openclaw`), split by whether input/output rates are present. Each table shows whether a row is already covered by custom rules (including wildcard/regex matches) and lets you copy uncovered keys into “Add price”. **Models actually selectable in OpenClaw** are governed by **`agents.defaults.models`** in `openclaw.json`, which is not the same as the rows listed in these reference tables.
   - Supports 4 price types: Input, Output, Cache Read, Cache Write.
-  - Cache prices are optional; when left empty, costs are computed **at the Input / Output list price** (read traffic at Input $/M, write traffic at Output $/M; no separate cache rate).
+  - Cache prices are optional; when left empty, costs are computed **at the Input list price** (both cache read and cache write traffic use Input $/M; no separate cache rate).
   - Dedicated pricing configuration page with add/edit/delete/reset functionality.
   - **Dynamic config path**: The pricing file (`openclaw-usage-pricing.json`) auto-detects the OpenClaw workspace directory, so it travels with your config across machines.
 
@@ -211,7 +211,7 @@ Configure pricing for `openai/gpt-4`:
 - Input: $30/M
 - Output: $60/M
 - Cache Read: Left empty (priced at Input $30/M)
-- Cache Write: Left empty (priced at Output $60/M)
+- Cache Write: Left empty (priced at Input $30/M)
 
 Using 100,000 input tokens, the cost is calculated as:
 - 100,000 / 1,000,000 × 30 = $3

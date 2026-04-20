@@ -419,7 +419,7 @@ function renderPricingTable(config) {
       <td class="col-numeric"><input type="number" class="pricing-input" data-field="input" value="${prices.input}" step="0.01"></td>
       <td class="col-numeric"><input type="number" class="pricing-input" data-field="output" value="${prices.output}" step="0.01"></td>
       <td class="col-numeric"><input type="number" class="pricing-input pricing-input--cache" data-field="cacheRead" value="${prices.cacheRead ?? ''}" step="0.01" placeholder="留空按 Input 原价" title="留空时按该行 Input 单价计算 Cache Read 费用"></td>
-      <td class="col-numeric"><input type="number" class="pricing-input pricing-input--cache" data-field="cacheWrite" value="${prices.cacheWrite ?? ''}" step="0.01" placeholder="留空按 Output 原价" title="留空时按该行 Output 单价计算 Cache Write 费用"></td>
+      <td class="col-numeric"><input type="number" class="pricing-input pricing-input--cache" data-field="cacheWrite" value="${prices.cacheWrite ?? ''}" step="0.01" placeholder="留空按 Input 原价" title="留空时按该行 Input 单价计算 Cache Write 费用"></td>
       <td class="col-center pricing-actions-cell">
         <button type="button" class="btn-row-done btn-primary" data-original-model="${escapeAttr(model)}">完成</button>
         <button type="button" class="btn-row-cancel btn-secondary">取消</button>

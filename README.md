@@ -26,7 +26,7 @@
   - **两级开关**：可关闭「启用自定义价格」（全局），或对单条规则关闭「启用」，以便在**自定义单价重算的理论成本**与**会话中 OpenClaw 写入的账面成本**之间切换。
   - 价格配置页提供 **OpenClaw 内置价格（参考）** 与 **缺少价格的模型（参考）**：数据来自 `OPENCLAW_CONFIG_DIR`（默认 `~/.openclaw`）下的 `agents/main/agent/models.json`，两表在同一文件内按「有/无有效单价」划分；每张表可查看是否已被自定义规则覆盖（含通配符/正则），并对未覆盖项支持一键填入「添加新价格」。**实际在 OpenClaw 里可选的模型**由 `openclaw.json` 的 **`agents.defaults.models`** 决定，与参考表列出的条目并非一一对应。
   - 支持 Input、Output、Cache Read、Cache Write 四种价格类型。
-  - Cache 价格可选；留空时不设单独缓存价，**按 Input / Output 原价计算**（读用 Input、写用 Output）。
+  - Cache 价格可选；留空时不设单独缓存价，**统一按 Input 原价计算**（读写都用 Input）。
   - 独立的价格配置页面，支持添加、编辑、删除和重置价格配置。
 
 ## 💰 价格配置文件路径
@@ -203,7 +203,7 @@ npm run mcp
 
 - **价格单位**：$/M（每百万 tokens 的美元价，例如 Input $30/M）
 - **计算公式**：成本 = (用量 / 1,000,000) × 价格
-- **Cache 价格**：留空表示不设单独缓存价；**按 Input / Output 原价计算**（读取量用 Input 单价，写入量用 Output 单价）
+- **Cache 价格**：留空表示不设单独缓存价；**统一按 Input 原价计算**（读取量与写入量都用 Input 单价）
 - **全局开关 `enabled`**（可选，默认视为开启）：为 `false` 时，**全部**模型使用会话 JSONL 中的 OpenClaw 账面成本（`usage.cost`），不进行自定义重算。
 - **单条规则 `pricing[k].enabled`**（可选，默认视为开启）：为 `false` 时，**仅该** `provider/model` 使用 OpenClaw 账面成本；其余仍按自定义规则计算（在全局开启的前提下）。
 - **可选计价**：仅当全局开启、且某模型存在自定义规则且该规则启用时，对该模型使用自定义单价；否则使用 OpenClaw 账面成本。
@@ -214,7 +214,7 @@ npm run mcp
 - Input: $30/M
 - Output: $60/M
 - Cache Read: 留空（按 Input $30/M 原价计）
-- Cache Write: 留空（按 Output $60/M 原价计）
+- Cache Write: 留空（按 Input $30/M 原价计）
 
 使用 100,000 input tokens，成本计算为：
 - 100,000 / 1,000,000 × 30 = $3

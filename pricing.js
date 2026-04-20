@@ -337,9 +337,9 @@ export function calculateCostFromUsage(usage, provider, model, pricingConfig) {
   const inputCost = (pricing.input * (usage.input || 0)) / TOKENS_PER_UNIT;
   const outputCost = (pricing.output * (usage.output || 0)) / TOKENS_PER_UNIT;
 
-  // 缓存单价留空：无单独缓存价，按 Input/Output 原价计算缓存 token 费用
+  // 缓存单价留空：无单独缓存价，统一按 Input 原价计算缓存 token 费用
   const cacheReadPrice = pricing.cacheRead ?? pricing.input;
-  const cacheWritePrice = pricing.cacheWrite ?? pricing.output;
+  const cacheWritePrice = pricing.cacheWrite ?? pricing.input;
 
   const cacheReadCost = (cacheReadPrice * (usage.cacheRead || 0)) / TOKENS_PER_UNIT;
   const cacheWriteCost = (cacheWritePrice * (usage.cacheWrite || 0)) / TOKENS_PER_UNIT;

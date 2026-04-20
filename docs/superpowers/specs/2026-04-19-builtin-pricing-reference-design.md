@@ -24,6 +24,7 @@
 
 - 顶层 `enabled`：`false` 时全局不使用自定义重算。
 - `pricing[<provider/model>].enabled`：`false` 时该模型不使用自定义重算。
+- `pricing[<provider/model>].cacheRead/cacheWrite`：可选；留空时表示不设单独缓存价，**Cache Read 与 Cache Write 均按该行 `input` 单价计算**。
 
 缺省视为 `true`（向后兼容旧文件）。
 
