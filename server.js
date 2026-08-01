@@ -1,5 +1,7 @@
 import express from 'express';
-import cors from 'cors';
+import { existsSync } from 'fs';
+import { dirname, join, resolve } from 'path';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { getSessionDir } from './aggregator.js';
 import {
   findMatchingPricing,
@@ -12,7 +14,86 @@ import {
   refreshStatsCache,
 } from './stats-service.js';
 
-const PORT = 3001;
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const DEFAULT_PORT = 3001;
+const LISTEN_HOST = '127.0.0.1';
+
+/**
+ * 解析并校验 OPENCLAW_USAGE_PORT（或回退默认端口）
+ * @param {string|undefined} raw
+ * @returns {number}
+ */
+export function resolveListenPort(raw = process.env.OPENCLAW_USAGE_PORT) {
+  if (raw === undefined || raw === null || String(raw).trim() === '') {
+    return DEFAULT_PORT;
+  }
+  const text = String(raw).trim();
+  if (!/^\d+$/.test(text)) {
+    throw new Error(`Invalid OPENCLAW_USAGE_PORT: ${raw}`);
+  }
+  const port = Number(text);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid OPENCLAW_USAGE_PORT: ${raw}`);
+  }
+  return port;
+}
+
+/** 需要 CSRF 防护的写方法 */
+const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/**
+ * 判断 Origin 是否可信（用于阻止跨站表单 / 跨站 fetch 触发写操作）。
+ *
+ * 规则：
+ * 1. 只接受 http / https 协议的 Origin；`null`（sandbox iframe、file://）一律拒绝。
+ * 2. Origin 的 host 与请求 Host 完全一致时放行（生产态同源访问）。
+ * 3. Origin 指向本机 loopback 时放行，用于开发态 Vite `changeOrigin` 代理
+ *    （浏览器 Origin 为 127.0.0.1:3000，而代理改写后的 Host 为 127.0.0.1:3001）。
+ *    跨站攻击页面无法伪造 loopback Origin，因此不削弱防跨站表单的目标。
+ * @param {string} origin
+ * @param {import('express').Request} req
+ * @returns {boolean}
+ */
+export function isTrustedWriteOrigin(origin, req) {
+  if (!origin || origin === 'null') return false;
+  let parsed;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+
+  const requestHost = req.headers?.host;
+  if (requestHost && parsed.host === requestHost) return true;
+
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
+  return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '::1';
+}
+
+/**
+ * 写接口防护中间件：
+ * - 携带 Origin 时必须是可信来源，否则 403（阻止跨站表单 / 跨站 fetch）。
+ * - 写请求必须声明 `Content-Type: application/json` 或 `application/*+json`，否则 415；
+ *   HTML 表单只能发送 urlencoded / multipart / text-plain，因此无法绕过。
+ * - 无 Origin 的请求视为本机命令行工具（curl 等），仅受 JSON 内容类型约束。
+ * - 正文解析由下方 `express.json({ type: [...] })` 同步覆盖这两种类型，避免 guard 放行后 body 为空。
+ */
+export function writeRequestGuard(req, res, next) {
+  if (!WRITE_METHODS.has(req.method)) return next();
+
+  const origin = req.headers?.origin;
+  if (origin !== undefined && !isTrustedWriteOrigin(origin, req)) {
+    return res.status(403).json({ error: 'Cross-origin write request rejected' });
+  }
+
+  const contentType = String(req.headers?.['content-type'] || '').trim();
+  if (!/^application\/(json|[\w.+-]+\+json)\s*(;|$)/i.test(contentType)) {
+    return res.status(415).json({ error: 'Content-Type must be application/json' });
+  }
+
+  return next();
+}
 
 /**
  * 为 models.json 的一条模型记录附加 custom 对比字段
@@ -41,11 +122,30 @@ function attachCustomRule(row, customMap) {
   };
 }
 
-export function createApp() {
+/**
+ * 创建 Express 应用。
+ * @param {{ staticDir?: string }} [options]
+ *   staticDir 默认解析为 server.js 同级的 dist/，不依赖 process.cwd()
+ */
+export function createApp({ staticDir } = {}) {
   const app = express();
+  const resolvedStaticDir = resolve(staticDir || join(__dirname, 'dist'));
 
-  app.use(cors());
-  app.use(express.json());
+  // 与 writeRequestGuard 对齐：除 application/json 外也解析 vendor JSON（application/*+json）
+  app.use(express.json({ type: ['application/json', 'application/*+json'] }));
+
+  // 所有 /api 写接口先过同源 + JSON 内容类型防护
+  app.use('/api', writeRequestGuard);
+
+  // 轻量健康检查：不得触发 getStats / Session 扫描
+  app.get('/api/health', (req, res) => {
+    res.json({
+      ok: true,
+      service: 'openclaw-usage',
+      pid: process.pid,
+      launchId: process.env.OPENCLAW_USAGE_LAUNCH_ID || null,
+    });
+  });
 
   app.get('/api/stats', async (req, res) => {
     try {
@@ -137,14 +237,75 @@ export function createApp() {
     }
   });
 
+  // 未知 /api/* 返回 JSON 404，不回退到 HTML
+  app.use('/api', (req, res) => {
+    res.status(404).json({ error: 'Not found' });
+  });
+
+  // 仅托管 dist/，禁止暴露仓库其它内容
+  if (existsSync(resolvedStaticDir)) {
+    app.use(express.static(resolvedStaticDir, {
+      index: ['index.html'],
+      fallthrough: true,
+      redirect: false,
+    }));
+  }
+
+  // 未知页面 / 非 GET·HEAD 未知请求：404，不得返回 HTML 200
+  app.use((req, res) => {
+    res.status(404).type('text').send('Not Found');
+  });
+
   return app;
 }
 
-// Only listen when run directly with `node server.js`
-if (import.meta.url === `file://${process.argv[1]}`) {
+/**
+ * 启动生产态 HTTP 服务（仅直接运行 server.js 时调用）
+ */
+export function startServer() {
+  let port;
+  try {
+    port = resolveListenPort();
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
+
   const app = createApp();
-  app.listen(PORT, () => {
-    console.log(`OpenClaw Usage API running at http://localhost:${PORT}`);
+  const server = app.listen(port, LISTEN_HOST, () => {
+    console.log(`OpenClaw Usage running at http://${LISTEN_HOST}:${port}`);
     console.log(`Scanning sessions from: ${getSessionDir()}`);
   });
+
+  server.on('error', (err) => {
+    console.error(`Failed to listen on ${LISTEN_HOST}:${port}:`, err.message);
+    process.exit(1);
+  });
+
+  let shuttingDown = false;
+  const shutdown = (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`Received ${signal}, shutting down...`);
+    server.close(() => {
+      process.exit(0);
+    });
+    // 短暂等待现有请求结束后强制退出
+    setTimeout(() => {
+      console.error('Graceful shutdown timed out, exiting');
+      process.exit(1);
+    }, 5000).unref();
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+  return server;
+}
+
+// 仅在直接运行 `node server.js` 时监听
+const isDirectRun = process.argv[1]
+  && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
+
+if (isDirectRun) {
+  startServer();
 }

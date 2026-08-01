@@ -128,11 +128,54 @@ cd OpenClawUsage
 npm install
 ```
 
-### 运行 Web 仪表盘
+### 本机快速启动（推荐日常使用）
+
+对齐 `oc-switch` 的本机体验：安装一次薄包装后，可在任意目录启停**单个**后台 Node 进程（同时提供 API 与已构建的静态前端）。
+
+```bash
+# 1. 安装 ~/bin/openclaw-usage（若已存在非本安装器脚本，需加 --force）
+./scripts/install-local-launcher.sh
+
+# 2. 显式构建前端（start 不会自动 npm install / build）
+openclaw-usage build
+
+# 3. 后台启动（默认 http://127.0.0.1:3001 ，成功后会打开浏览器）
+openclaw-usage start
+
+# 常用命令
+openclaw-usage status
+openclaw-usage stop
+openclaw-usage start --no-open   # 适合脚本，不打开浏览器
+openclaw-usage help
+```
+
+| 项 | 路径 / 说明 |
+|----|-------------|
+| 默认 URL | `http://127.0.0.1:3001`（仪表盘 `/`，定价页 `/pricing.html`） |
+| 端口 | 环境变量 `OPENCLAW_USAGE_PORT`（`1..65535`，默认 `3001`） |
+| 运行状态 | `$OPENCLAW_CONFIG_DIR/run/openclaw-usage/serve.json` |
+| 生命周期锁 | `$OPENCLAW_CONFIG_DIR/run/openclaw-usage/lifecycle.lock` |
+| 后台日志 | `$OPENCLAW_CONFIG_DIR/logs/openclaw-usage/serve.log`（超过 5 MiB 时轮转为 `serve.log.1`） |
+| 统计缓存 | `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/stats-v1.json`（`start`/`stop` 不会删除） |
+
+设计说明见 [本机启动器规格](docs/superpowers/specs/2026-08-01-local-launcher-like-oc-switch.md)。
+
+#### 排错（本机启动器）
+
+- **`Missing build output`**：先执行 `openclaw-usage build`。
+- **端口占用 / `port-conflict`**：默认与开发态 API 同为 `3001`。先 `openclaw-usage stop`，或设置空闲的 `OPENCLAW_USAGE_PORT`；不要与 `npm run dev` 同时跑默认端口。
+- **`unhealthy`**：受管进程仍在但 `/api/health` 身份不匹配。查看日志后尝试 `openclaw-usage stop` 再 `start`。
+- **`stale` / 归属无法确认**：CLI **不会**向可疑 PID 发信号。确认进程后清理状态或重试 `stop`。
+- **仓库移动后**：重新运行 `./scripts/install-local-launcher.sh`（薄包装含绝对路径）。
+- **`~/bin` 不在 PATH**：按安装脚本提示把 `$HOME/bin` 写入 shell 配置。
+
+### 开发态 Web 仪表盘
 ```bash
 npm run dev
 ```
-启动后访问：`http://localhost:3000`
+启动后访问：`http://127.0.0.1:3000`（Vite；API 代理到 `127.0.0.1:3001`）。
+
+> ⚠️ 开发态与本机启动器默认共用 API 端口 `3001`，**不能同时运行**。进入 `npm run dev` 前请先 `openclaw-usage stop`。
 
 ### 运行 MCP 服务端 (Stdio 模式)
 ```bash
@@ -215,8 +258,13 @@ npm run mcp
    curl http://localhost:3001/api/openclaw/models
 
    # 重置为默认配置（使用 OpenClaw 内置价格）
-   curl -X POST http://localhost:3001/api/pricing/reset
+   curl -X POST http://localhost:3001/api/pricing/reset \
+     -H "Content-Type: application/json"
    ```
+
+   > 写接口（`PUT /api/pricing`、`POST /api/pricing/reset`）要求 `Content-Type: application/json`；
+   > 若请求携带 `Origin`，必须来自同源或本机 loopback，否则返回 403。这是为了阻止其它网站
+   > 通过跨站表单静默修改本机价格配置。
 
 ### 价格计算规则
 

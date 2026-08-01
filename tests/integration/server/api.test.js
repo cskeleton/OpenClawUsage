@@ -94,8 +94,109 @@ describe('/api/pricing CRUD', () => {
   });
 
   it('POST /api/pricing/reset returns default config', async () => {
-    const res = await request(app).post('/api/pricing/reset').expect(200);
+    const res = await request(app)
+      .post('/api/pricing/reset')
+      .set('Content-Type', 'application/json')
+      .expect(200);
     expect(res.body.ok).toBe(true);
+  });
+});
+
+describe('write endpoint CSRF guard', () => {
+  it('rejects cross-site Origin on PUT /api/pricing', async () => {
+    const res = await request(app)
+      .put('/api/pricing')
+      .set('Origin', 'https://evil.example.com')
+      .send({ version: '1.0', enabled: true, pricing: {} })
+      .expect(403);
+    expect(res.body.error).toMatch(/cross-origin/i);
+  });
+
+  it('rejects cross-site Origin on POST /api/pricing/reset', async () => {
+    await request(app)
+      .post('/api/pricing/reset')
+      .set('Origin', 'https://evil.example.com')
+      .set('Content-Type', 'application/json')
+      .expect(403);
+  });
+
+  it('rejects opaque Origin (sandboxed iframe / file://)', async () => {
+    await request(app)
+      .post('/api/pricing/reset')
+      .set('Origin', 'null')
+      .set('Content-Type', 'application/json')
+      .expect(403);
+  });
+
+  it('rejects cross-site form content types', async () => {
+    for (const contentType of [
+      'application/x-www-form-urlencoded',
+      'multipart/form-data; boundary=x',
+      'text/plain',
+    ]) {
+      const res = await request(app)
+        .post('/api/pricing/reset')
+        .set('Content-Type', contentType)
+        .send('version=1.0')
+        .expect(415);
+      expect(res.body.error).toMatch(/application\/json/i);
+    }
+  });
+
+  it('rejects reset without any Content-Type', async () => {
+    await request(app).post('/api/pricing/reset').expect(415);
+  });
+
+  it('accepts same-origin JSON fetch from the local frontend', async () => {
+    const res = await request(app)
+      .put('/api/pricing')
+      .set('Host', '127.0.0.1:3001')
+      .set('Origin', 'http://127.0.0.1:3001')
+      .send({ version: '1.0', enabled: true, pricing: {} })
+      .expect(200);
+    expect(res.body.ok).toBe(true);
+  });
+
+  it('accepts the dev-mode Vite proxy origin (loopback, different port)', async () => {
+    const res = await request(app)
+      .post('/api/pricing/reset')
+      .set('Host', '127.0.0.1:3001')
+      .set('Origin', 'http://localhost:3000')
+      .set('Content-Type', 'application/json')
+      .expect(200);
+    expect(res.body.ok).toBe(true);
+  });
+
+  it('does not affect read endpoints', async () => {
+    await request(app)
+      .get('/api/pricing')
+      .set('Origin', 'https://evil.example.com')
+      .expect(200);
+  });
+
+  it('parses vendor JSON (+json) and accepts a valid pricing config', async () => {
+    const res = await request(app)
+      .put('/api/pricing')
+      .set('Content-Type', 'application/vnd.test+json')
+      .send({
+        version: '1.0',
+        enabled: true,
+        pricing: { 'openai/gpt-4o': { input: 2.5, output: 10 } },
+      })
+      .expect(200);
+    expect(res.body.ok).toBe(true);
+  });
+
+  it('parses vendor JSON (+json) but still rejects an invalid pricing config', async () => {
+    const res = await request(app)
+      .put('/api/pricing')
+      .set('Content-Type', 'application/vnd.test+json')
+      .send({
+        version: '1.0',
+        pricing: { 'openai/gpt-4o': { input: -1, output: 1 } },
+      })
+      .expect(400);
+    expect(res.body.error).toBeTruthy();
   });
 });
 

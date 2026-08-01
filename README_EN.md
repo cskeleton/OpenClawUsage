@@ -83,11 +83,54 @@ cd OpenClawUsage
 npm install
 ```
 
-### Run Web Dashboard
+### Local quick start (recommended for daily use)
+
+Aligned with the `oc-switch` local workflow: install a thin wrapper once, then start/stop a **single** background Node process from any directory (API + built static frontend together).
+
+```bash
+# 1. Install ~/bin/openclaw-usage (use --force if a non-installer script already exists)
+./scripts/install-local-launcher.sh
+
+# 2. Explicit frontend build (start does not auto-run npm install / build)
+openclaw-usage build
+
+# 3. Start in the background (default http://127.0.0.1:3001; opens the browser on success)
+openclaw-usage start
+
+# Common commands
+openclaw-usage status
+openclaw-usage stop
+openclaw-usage start --no-open   # for scripts; skip opening a browser
+openclaw-usage help
+```
+
+| Item | Path / notes |
+|------|----------------|
+| Default URL | `http://127.0.0.1:3001` (dashboard `/`, pricing `/pricing.html`) |
+| Port | `OPENCLAW_USAGE_PORT` (`1..65535`, default `3001`) |
+| Run state | `$OPENCLAW_CONFIG_DIR/run/openclaw-usage/serve.json` |
+| Lifecycle lock | `$OPENCLAW_CONFIG_DIR/run/openclaw-usage/lifecycle.lock` |
+| Background log | `$OPENCLAW_CONFIG_DIR/logs/openclaw-usage/serve.log` (rotated to `serve.log.1` above 5 MiB) |
+| Stats cache | `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/stats-v1.json` (not deleted by `start`/`stop`) |
+
+See the [local launcher spec](docs/superpowers/specs/2026-08-01-local-launcher-like-oc-switch.md).
+
+#### Troubleshooting (local launcher)
+
+- **`Missing build output`**: run `openclaw-usage build` first.
+- **Port in use / `port-conflict`**: default API port is `3001`, same as `npm run dev`. Run `openclaw-usage stop` first, or set a free `OPENCLAW_USAGE_PORT`. Do not run both on the default port at once.
+- **`unhealthy`**: managed process is alive but `/api/health` identity does not match. Check the log, then `stop` and `start` again.
+- **`stale` / ownership uncertain**: the CLI will **not** signal a suspicious PID. Inspect the process, then retry `stop` or clear state deliberately.
+- **After moving the repo**: re-run `./scripts/install-local-launcher.sh` (the wrapper embeds an absolute path).
+- **`~/bin` not on PATH**: follow the installer hint to add `$HOME/bin` to your shell profile.
+
+### Development Web dashboard
 ```bash
 npm run dev
 ```
-Visit: `http://localhost:3000`
+Visit: `http://127.0.0.1:3000` (Vite; `/api` proxies to `127.0.0.1:3001`).
+
+> ⚠️ Dev mode and the local launcher both default to API port `3001` and **must not run at the same time**. Run `openclaw-usage stop` before `npm run dev`.
 
 ### Run MCP Server (Stdio)
 ```bash
@@ -212,8 +255,14 @@ Instead of under `~/.openclaw/`. This keeps the pricing config bound to the Open
    curl http://localhost:3001/api/openclaw/models
 
    # Reset to default configuration (use OpenClaw built-in pricing)
-   curl -X POST http://localhost:3001/api/pricing/reset
+   curl -X POST http://localhost:3001/api/pricing/reset \
+     -H "Content-Type: application/json"
    ```
+
+   > Write endpoints (`PUT /api/pricing`, `POST /api/pricing/reset`) require
+   > `Content-Type: application/json`. If an `Origin` header is present it must be same-origin
+   > or a local loopback origin, otherwise the request is rejected with 403. This blocks other
+   > websites from silently changing your local pricing config via cross-site forms.
 
 ### Pricing Calculation Rules
 

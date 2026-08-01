@@ -22,7 +22,11 @@ async function updatePricingConfig(config) {
 }
 
 async function resetPricingConfig() {
-  const res = await fetch('/api/pricing/reset', { method: 'POST' });
+  // 显式声明 JSON 内容类型：服务端写接口以此阻止跨站表单提交
+  const res = await fetch('/api/pricing/reset', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }

@@ -1,7 +1,7 @@
 /**
  * 全局主题：浅色 / 深色 / 跟随系统
  * 在 <html> 上设置 .theme-light | .theme-dark，并持久化到 localStorage。
- * 非 ES module，可在 <head> 中同步加载以避免 FOUC。
+ * 可在 <head> 中以 type="module" 加载；页面另有内联脚本防 FOUC。
  */
 (function initOpenClawTheme(global) {
   /** @type {string} */
