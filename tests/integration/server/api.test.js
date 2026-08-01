@@ -5,13 +5,13 @@ import { join } from 'path';
 import { createTmpWorkspace } from '../../helpers/tmp-workspace.js';
 import { fixturePath } from '../../helpers/fixture-loader.js';
 import { createApp } from '../../../server.js';
-import { invalidateStatsCache } from '../../../stats-service.js';
+import { invalidateStatsCache, resetStatsServiceForTests } from '../../../stats-service.js';
 
 const disposables = [];
 let app;
 
 beforeEach(async () => {
-  invalidateStatsCache();
+  resetStatsServiceForTests();
   const ws = await createTmpWorkspace();
   disposables.push(ws.cleanup);
 
@@ -33,7 +33,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  invalidateStatsCache();
+  resetStatsServiceForTests();
   while (disposables.length) await disposables.pop()();
 });
 
@@ -44,6 +44,13 @@ describe('GET /api/stats', () => {
     expect(res.body.byProvider).toBeDefined();
     expect(res.body.byDateProvider).toBeDefined();
     expect(typeof res.body.generatedAt).toBe('string');
+    expect(res.body.cache).toBeDefined();
+    expect(res.body.cache.state).toMatch(/fresh|refreshing|stale/);
+  });
+
+  it('fresh=1 waits and returns fresh cache state', async () => {
+    const res = await request(app).get('/api/stats?fresh=1').expect(200);
+    expect(res.body.cache.state).toBe('fresh');
   });
 });
 
@@ -52,6 +59,13 @@ describe('GET /api/refresh', () => {
     const res = await request(app).get('/api/refresh').expect(200);
     expect(res.body.ok).toBe(true);
     expect(res.body.generatedAt).toBeDefined();
+    expect(res.body.cache).toBeDefined();
+  });
+
+  it('full=1 returns ok after full rebuild', async () => {
+    const res = await request(app).get('/api/refresh?full=1').expect(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.cache.state).toBe('fresh');
   });
 });
 

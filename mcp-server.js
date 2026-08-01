@@ -98,10 +98,16 @@ export function createMcpServer() {
       },
       {
         name: "refresh_stats_cache",
-        description: "主动刷新统计缓存 / Force refresh aggregated stats cache.",
+        description: "主动刷新统计缓存；默认增量检查并只解析变化文件 / Refresh stats cache; default incremental (changed files only), use full:true for full rebuild.",
         inputSchema: {
           type: "object",
-          properties: {},
+          properties: {
+            full: {
+              type: "boolean",
+              description: "If true, ignore per-file cache and re-read all session files",
+              default: false,
+            },
+          },
         },
       },
     ],
@@ -109,11 +115,11 @@ export function createMcpServer() {
 
   const callToolHandler = async (request) => {
     const { name, arguments: args } = request.params;
-    const data = await getStats();
 
     try {
       switch (name) {
         case "get_total_usage": {
+          const data = await getStats({ waitForRefresh: true });
           return {
             content: [
               {
@@ -125,6 +131,7 @@ export function createMcpServer() {
         }
 
         case "get_usage_by_provider": {
+          const data = await getStats({ waitForRefresh: true });
           return {
             content: [
               {
@@ -136,6 +143,7 @@ export function createMcpServer() {
         }
 
         case "get_usage_by_model": {
+          const data = await getStats({ waitForRefresh: true });
           const sortedModels = Object.values(data.byModel)
             .sort((a, b) => b.totalTokens - a.totalTokens);
           return {
@@ -149,6 +157,7 @@ export function createMcpServer() {
         }
 
         case "list_recent_sessions": {
+          const data = await getStats({ waitForRefresh: true });
           const limit = args?.limit || 10;
           const recent = data.sessions.slice(0, limit).map(s => ({
             id: s.id,
@@ -170,6 +179,7 @@ export function createMcpServer() {
         }
 
         case "get_session_stats": {
+          const data = await getStats({ waitForRefresh: true });
           const { sessionId } = args;
           const session = data.sessions.find(s => s.id === sessionId);
           if (!session) {
@@ -210,7 +220,7 @@ export function createMcpServer() {
           };
         }
         case "refresh_stats_cache": {
-          const result = await refreshStatsCache();
+          const result = await refreshStatsCache({ full: args?.full === true });
           return {
             content: [
               {

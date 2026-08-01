@@ -49,17 +49,26 @@
           💰 价格配置
         </a>
         <span id="generated-at" class="generated-at"></span>
-        <button id="refresh-btn" class="btn-refresh" title="刷新数据" data-i18n-attr="title:common.refreshData">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="23 4 23 10 17 10"></polyline>
-            <polyline points="1 20 1 14 7 14"></polyline>
-            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-          </svg>
-        </button>
+        <span id="cache-state-badge" class="cache-state-badge" hidden></span>
+        <div class="refresh-group" id="refresh-group">
+          <button id="refresh-btn" class="btn-refresh" title="刷新数据" data-i18n-attr="title:common.refreshData;aria-label:common.refreshData" aria-label="刷新数据">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="23 4 23 10 17 10"></polyline>
+              <polyline points="1 20 1 14 7 14"></polyline>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+            </svg>
+          </button>
+          <button id="refresh-menu-btn" class="btn-refresh-menu" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Refresh options" data-i18n-attr="aria-label:common.refreshMenu">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
+          <div id="refresh-dropdown" class="refresh-dropdown" role="menu" hidden>
+            <button type="button" id="refresh-full-btn" class="refresh-dropdown-item" role="menuitem" data-i18n="common.fullRebuild">全量刷新</button>
+          </div>
+        </div>
       </div>
     </header>
 
-    <!-- Loading -->
+    <div id="toast-container" class="toast-container" aria-live="polite"></div>
     <div id="loading" class="loading">
       <div class="spinner"></div>
       <p data-i18n="common.loadingSessions">正在扫描 Session 文件...</p>

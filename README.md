@@ -29,6 +29,11 @@
   - Cache 价格可选；留空时不设单独缓存价，**统一按 Input 原价计算**（读写都用 Input）。
   - 独立的价格配置页面，支持添加、编辑、删除和重置价格配置。
 
+- **持久化增量统计缓存**：
+  - 页面仍会请求服务端，但 Session 与定价未变化时直接复用持久缓存，不重新解析 JSONL。
+  - 检测到变化时先返回最后成功结果，后台只处理变化文件；普通刷新默认增量，下拉菜单提供全量重建。
+  - Web 与 MCP 共享同一缓存策略。完整设计见[持久化增量统计缓存规格](docs/superpowers/specs/2026-08-01-persistent-incremental-stats-cache.md)。
+
 ## 💰 价格配置文件路径
 
 价格配置文件（`openclaw-usage-pricing.json`）采用**动态路径检测**，优先跟随 OpenClaw 工作目录而非固定路径，以确保多机器使用时配置可跟随。
@@ -96,6 +101,20 @@
   }
   ```
 
+## 🗄️ 持久化增量缓存
+
+- **请求不等于刷新**：页面每次打开可以调用 `/api/stats`，但只有 Session 文件身份或定价发生变化时才重新聚合。
+- **跨重启复用**：缓存保存到 `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/stats-v1.json`，供 Web 与 MCP 进程共享。
+- **增量更新**：未变化文件复用逐文件统计贡献；新增、修改、删除文件才触发对应更新。定价变化只重新计算费用。
+- **先旧后新**：发现变化时先返回最后成功结果，后台完成增量刷新后页面自动更新（`GET /api/stats?fresh=1`）。
+- **两种手动刷新**：默认刷新为增量模式（`GET /api/refresh`）；刷新按钮下拉菜单中的「全量刷新」绕过所有逐文件缓存（`GET /api/refresh?full=1`）。
+- **失败保护**：刷新失败或数据源暂时不可用时保留最后成功结果并标记为 `stale`，不静默覆盖为空数据。
+- **不使用浏览器持久缓存**：页面刷新后仍从服务端读取，不使用 IndexedDB 或 LocalStorage 保存统计结果。
+- **API `cache` 字段**：`GET /api/stats` 响应顶层含 `cache.state`（`fresh | refreshing | stale`）、`revision`、`sourceId`、`checkedAt`。
+- **MCP**：`refresh_stats_cache` 默认增量，可选 `full: true` 全量重建；价格相关工具不触发统计聚合。
+
+完整行为、缓存结构与验收标准见[设计规格](docs/superpowers/specs/2026-08-01-persistent-incremental-stats-cache.md)。
+
 ## 🚀 快速开始
 
 ### 环境依赖
@@ -141,7 +160,7 @@ npm run mcp
 
 - `get_pricing_config`：读取当前价格配置（只读）。
 - `update_pricing_config`：更新价格配置（写入）。
-- `refresh_stats_cache`：强制刷新统计缓存（不改业务数据，仅刷新聚合结果）。
+- `refresh_stats_cache`：刷新统计缓存（不改业务数据，仅刷新聚合结果）。**默认执行增量刷新**（只解析新增/变化的 Session 文件），可通过 `full: true` 请求全量重建。
 
 `update_pricing_config` 的 `config` 参数示例（完整配置对象）：
 
@@ -221,9 +240,11 @@ npm run mcp
 
 ## 📂 项目结构
 
-- `server.js`: Web API 服务端入口（Express）。提供 `/api/stats`、`/api/pricing`、`/api/openclaw/models` 等端点；缓存以 `pricing.updated` 为失效键。
-- `mcp-server.js`: MCP 服务端入口（@modelcontextprotocol/sdk）；复用同一缓存策略。
-- `stats-service.js`: 统计缓存与价格配置管理的共享服务层，被 Web API 与 MCP 共用。
+- `server.js`: Web API 服务端入口（Express）。提供 `/api/stats`、`/api/pricing`、`/api/openclaw/models` 等端点。
+- `mcp-server.js`: MCP 服务端入口（@modelcontextprotocol/sdk）；与 Web 共享 `stats-service.js` 及磁盘缓存。
+- `stats-service.js`: 统计缓存与价格配置管理的共享服务层；持久化增量缓存、跨进程锁与 `cache` 状态机。
+- `stats-cache-store.js`: 磁盘缓存读写、跨进程锁与定价指纹。
+- `stats-contribution.js`: 逐文件贡献解析与合并聚合。
 - `aggregator.js`: 共享数据处理引擎；解析 `$OPENCLAW_CONFIG_DIR/agents/main/sessions/` 下的 JSONL（跳过 checkpoint 变体），输出 `byDate`、`byDateProvider`、`byDateModel` 等交叉聚合。
 - `pricing.js`: 价格配置加载与保存，支持动态路径检测与成本计算；`findMatchingPricing` 负责 exact/wildcard/regex 优先级匹配。
 - `openclaw-config.js`: 读取 `agents/main/agent/models.json`（`OPENCLAW_CONFIG_DIR` 或默认 `~/.openclaw`），划分有/无有效单价模型（供参考 API 使用）。

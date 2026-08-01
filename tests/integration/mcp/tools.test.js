@@ -1,16 +1,16 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readdirSync, copyFileSync } from 'fs';
 import { join } from 'path';
 import { createTmpWorkspace } from '../../helpers/tmp-workspace.js';
 import { fixturePath } from '../../helpers/fixture-loader.js';
 import { createMcpServer } from '../../../mcp-server.js';
-import { invalidateStatsCache } from '../../../stats-service.js';
+import { invalidateStatsCache, resetStatsServiceForTests } from '../../../stats-service.js';
 
 const disposables = [];
 let handlers;
 
 beforeEach(async () => {
-  invalidateStatsCache();
+  resetStatsServiceForTests();
   const ws = await createTmpWorkspace();
   disposables.push(ws.cleanup);
 
@@ -31,7 +31,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  invalidateStatsCache();
+  resetStatsServiceForTests();
   while (disposables.length) await disposables.pop()();
 });
 
@@ -92,10 +92,34 @@ describe('MCP callTool', () => {
     expect(res.content[0].text).toMatch(/not found/);
   });
 
-  it('get_pricing_config returns current config', async () => {
+  it('get_pricing_config does not require stats aggregation', async () => {
     const res = await call('get_pricing_config');
     const parsed = JSON.parse(res.content[0].text);
     expect(parsed.version).toBe('1.0');
+  });
+
+  it('get_pricing_config and update_pricing_config do not call getStats', async () => {
+    const agg = await import('../../../aggregator.js');
+    const parseSpy = vi.spyOn(agg, 'parseSessionJsonlRaw');
+    resetStatsServiceForTests();
+
+    await call('get_pricing_config');
+    expect(parseSpy).not.toHaveBeenCalled();
+
+    await call('update_pricing_config', {
+      config: {
+        version: '1.0',
+        enabled: true,
+        pricing: { 'openai/gpt-4o': { input: 1, output: 2 } },
+      },
+    });
+    expect(parseSpy).not.toHaveBeenCalled();
+    parseSpy.mockRestore();
+  });
+
+  it('refresh_stats_cache supports full rebuild', async () => {
+    const res = await call('refresh_stats_cache', { full: true });
+    expect(JSON.parse(res.content[0].text).ok).toBe(true);
   });
 
   it('update_pricing_config + refresh_stats_cache reflect change', async () => {

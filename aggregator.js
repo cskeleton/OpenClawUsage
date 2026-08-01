@@ -60,6 +60,88 @@ export function parseSessionFile(filename) {
 }
 
 /**
+ * 解析 JSONL 并提取与定价无关的原始用量与 OpenClaw 账面成本
+ * @param {string} filepath
+ * @returns {Promise<Array<{ provider: string, model: string, usage: object, openclawCost: object, timestamp: string|null }>>}
+ */
+export async function parseSessionJsonlRaw(filepath) {
+  const records = [];
+
+  return new Promise((resolve, reject) => {
+    const rl = createInterface({
+      input: createReadStream(filepath, { encoding: 'utf-8' }),
+      crlfDelay: Infinity,
+    });
+
+    rl.on('line', (line) => {
+      if (!line.trim()) return;
+      try {
+        const obj = JSON.parse(line);
+        if (obj.type !== 'message') return;
+
+        const msg = obj.message;
+        if (!msg || !msg.usage) return;
+        if (msg.provider === 'openclaw') return;
+
+        const usage = {
+          input: msg.usage.input || 0,
+          output: msg.usage.output || 0,
+          cacheRead: msg.usage.cacheRead || 0,
+          cacheWrite: msg.usage.cacheWrite || 0,
+          totalTokens: msg.usage.totalTokens || 0,
+        };
+
+        records.push({
+          provider: msg.provider || 'unknown',
+          model: msg.model || 'unknown',
+          usage,
+          openclawCost: {
+            input: msg.usage.cost?.input || 0,
+            output: msg.usage.cost?.output || 0,
+            cacheRead: msg.usage.cost?.cacheRead || 0,
+            cacheWrite: msg.usage.cost?.cacheWrite || 0,
+            total: msg.usage.cost?.total || 0,
+          },
+          timestamp: obj.timestamp || null,
+        });
+      } catch {
+        // 跳过畸形行
+      }
+    });
+
+    rl.on('close', () => resolve(records));
+    rl.on('error', reject);
+  });
+}
+
+/**
+ * 枚举 Session 目录顶层有效文件的身份清单
+ * @param {string} sessionDir
+ * @returns {{ exists: boolean, manifest: Record<string, { size: number, mtimeMs: number }> }}
+ */
+export function scanSessionManifest(sessionDir) {
+  let files;
+  try {
+    files = readdirSync(sessionDir);
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      return { exists: false, manifest: {} };
+    }
+    throw err;
+  }
+
+  const manifest = {};
+  for (const file of files) {
+    const meta = parseSessionFile(file);
+    if (!meta) continue;
+    const filepath = join(sessionDir, file);
+    const st = statSync(filepath);
+    manifest[meta.filename] = { size: st.size, mtimeMs: st.mtimeMs };
+  }
+  return { exists: true, manifest };
+}
+
+/**
  * Parse a single JSONL file and extract usage records
  * @param {string} filepath - 文件路径
  * @param {Object|null} pricingConfig - 价格配置对象，null 表示使用 OpenClaw 原始成本

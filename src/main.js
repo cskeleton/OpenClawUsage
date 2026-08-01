@@ -284,14 +284,64 @@ function refreshTable() {
 
 let fullData = null;
 let activeRange = 'today';
+let eventsBound = false;
+let refreshInFlight = false;
+let backgroundPollActive = false;
 
-async function fetchStats() {
-  const res = await fetch('/api/stats');
+function showToast(message, isError = false) {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  const el = document.createElement('div');
+  el.className = `toast${isError ? ' is-error' : ''}`;
+  el.textContent = message;
+  container.appendChild(el);
+  setTimeout(() => el.remove(), 5000);
+}
+
+function updateCacheStateBadge(cache) {
+  const badge = document.getElementById('cache-state-badge');
+  if (!badge) return;
+  badge.classList.remove('is-refreshing', 'is-stale');
+  if (!cache || cache.state === 'fresh') {
+    badge.hidden = true;
+    badge.textContent = '';
+    return;
+  }
+  badge.hidden = false;
+  if (cache.state === 'refreshing') {
+    badge.classList.add('is-refreshing');
+    badge.textContent = t('common.cacheRefreshing');
+  } else if (cache.state === 'stale') {
+    badge.classList.add('is-stale');
+    badge.textContent = t('common.cacheStale');
+  }
+}
+
+function updateGeneratedAt(data) {
+  const generatedAt = document.getElementById('generated-at');
+  if (data?.generatedAt && generatedAt) {
+    const d = new Date(data.generatedAt);
+    generatedAt.textContent = t('common.updatedAt', { time: d.toLocaleTimeString(getLocale()) });
+  }
+}
+
+async function fetchStats({ fresh = false } = {}) {
+  const url = fresh ? '/api/stats?fresh=1' : '/api/stats';
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
 
-function applyDateRange(rangeKey) {
+function getCurrentDateFilter() {
+  if (activeRange === 'all') {
+    return { from: null, to: null };
+  }
+  const from = document.getElementById('date-from').value || null;
+  const to = document.getElementById('date-to').value || null;
+  return { from, to };
+}
+
+function applyDateRange(rangeKey, resetPage = true) {
   if (!fullData) return;
 
   activeRange = rangeKey;
@@ -304,10 +354,10 @@ function applyDateRange(rangeKey) {
     btn.classList.toggle('active', btn.dataset.range === rangeKey);
   });
 
-  applyFilter(from, to);
+  applyFilter(from, to, resetPage);
 }
 
-function applyFilter(from, to) {
+function applyFilter(from, to, resetPage = true) {
   if (!fullData) return;
 
   const filteredData = filterDataByDateRange(fullData, from, to);
@@ -317,143 +367,243 @@ function applyFilter(from, to) {
   renderCharts(filteredData);
 
   allSessions = filteredData.sessions;
-  currentPage = 1;
+  if (resetPage) currentPage = 1;
   renderSessionsTable(allSessions);
 }
 
-async function init() {
+function renderDataFromFull(resetPage = false) {
+  if (!fullData) return;
+  updateGeneratedAt(fullData);
+  updateCacheStateBadge(fullData.cache);
+
+  const { from, to } = getCurrentDateFilter();
+  applyFilter(from, to, resetPage);
+}
+
+async function pollUntilFresh() {
+  if (backgroundPollActive) return;
+  backgroundPollActive = true;
+  try {
+    const data = await fetchStats({ fresh: true });
+    fullData = data;
+    renderDataFromFull(false);
+  } catch (err) {
+    showToast(t('common.refreshFailed'), true);
+  } finally {
+    backgroundPollActive = false;
+  }
+}
+
+async function loadAndRender({ initial = false } = {}) {
   const loading = document.getElementById('loading');
   const mainContent = document.getElementById('main-content');
-  const generatedAt = document.getElementById('generated-at');
 
   try {
-    fullData = await fetchStats();
+    const data = await fetchStats();
+    fullData = data;
 
-    loading.style.display = 'none';
-    mainContent.style.display = 'block';
-
-    if (fullData.generatedAt) {
-      const d = new Date(fullData.generatedAt);
-      generatedAt.textContent = t('common.updatedAt', { time: d.toLocaleTimeString(getLocale()) });
+    if (initial) {
+      loading.style.display = 'none';
+      mainContent.style.display = 'block';
+      applyDateRange('today', true);
+    } else {
+      renderDataFromFull(false);
     }
 
-    applyDateRange('today');
-
-    // --- Event Listeners ---
-
-    document.querySelectorAll('.time-btn').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        applyDateRange(btn.dataset.range);
-      });
-    });
-
-    document.getElementById('date-from').addEventListener('change', () => {
-      document.querySelectorAll('.time-btn').forEach((b) => b.classList.remove('active'));
-      const from = document.getElementById('date-from').value || null;
-      const to = document.getElementById('date-to').value || null;
-      applyFilter(from, to);
-    });
-    document.getElementById('date-to').addEventListener('change', () => {
-      document.querySelectorAll('.time-btn').forEach((b) => b.classList.remove('active'));
-      const from = document.getElementById('date-from').value || null;
-      const to = document.getElementById('date-to').value || null;
-      applyFilter(from, to);
-    });
-
-    document.querySelectorAll('thead th[data-sort]').forEach((th) => {
-      th.addEventListener('click', () => {
-        const field = th.dataset.sort;
-        if (sortField === field) {
-          sortAsc = !sortAsc;
-        } else {
-          sortField = field;
-          sortAsc = false;
-        }
-        currentPage = 1;
-        refreshTable();
-      });
-    });
-
-    document.getElementById('status-filter').addEventListener('change', () => {
-      currentPage = 1;
-      refreshTable();
-    });
-
-    let searchTimeout;
-    document.getElementById('search-input').addEventListener('input', () => {
-      clearTimeout(searchTimeout);
-      searchTimeout = setTimeout(() => {
-        currentPage = 1;
-        refreshTable();
-      }, 200);
-    });
-
-    document.getElementById('page-size').addEventListener('change', (e) => {
-      pageSize = parseInt(e.target.value, 10);
-      currentPage = 1;
-      refreshTable();
-    });
-
-    document.getElementById('page-buttons').addEventListener('click', (e) => {
-      const btn = e.target.closest('.page-btn');
-      if (!btn || btn.disabled) return;
-      const page = parseInt(btn.dataset.page, 10);
-      if (isNaN(page) || page < 1) return;
-      currentPage = page;
-      refreshTable();
-    });
-
-    document.getElementById('model-log-scale').addEventListener('change', () => {
-      const { from, to } = activeRange === 'all'
-        ? { from: null, to: null }
-        : (() => {
-            const f = document.getElementById('date-from').value || null;
-            const t = document.getElementById('date-to').value || null;
-            return { from: f, to: t };
-          })();
-      const filteredData = filterDataByDateRange(fullData, from, to);
-      destroyCharts();
-      renderCharts(filteredData);
-    });
-
+    if (data.cache?.state === 'refreshing') {
+      pollUntilFresh();
+    }
   } catch (err) {
-    loading.innerHTML = `
-      <div style="color: var(--accent-rose); text-align: center;">
-        <p style="font-size: 2rem; margin-bottom: 12px;">❌</p>
-        <p>${escapeHtml(t('dashboard.loadFailed', { message: err.message }))}</p>
-        <p style="color: var(--text-muted); margin-top: 8px;">${escapeHtml(t('dashboard.ensureBackendRunning'))}</p>
-      </div>
-    `;
+    if (initial) {
+      loading.innerHTML = `
+        <div style="color: var(--accent-rose); text-align: center;">
+          <p style="font-size: 2rem; margin-bottom: 12px;">❌</p>
+          <p>${escapeHtml(t('dashboard.loadFailed', { message: err.message }))}</p>
+          <p style="color: var(--text-muted); margin-top: 8px;">${escapeHtml(t('dashboard.ensureBackendRunning'))}</p>
+        </div>
+      `;
+    } else {
+      showToast(t('common.refreshFailed'), true);
+    }
   }
+}
+
+function bindEventsOnce() {
+  if (eventsBound) return;
+  eventsBound = true;
+
+  document.querySelectorAll('.time-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      applyDateRange(btn.dataset.range);
+    });
+  });
+
+  document.getElementById('date-from').addEventListener('change', () => {
+    document.querySelectorAll('.time-btn').forEach((b) => b.classList.remove('active'));
+    const from = document.getElementById('date-from').value || null;
+    const to = document.getElementById('date-to').value || null;
+    activeRange = 'custom';
+    applyFilter(from, to);
+  });
+  document.getElementById('date-to').addEventListener('change', () => {
+    document.querySelectorAll('.time-btn').forEach((b) => b.classList.remove('active'));
+    const from = document.getElementById('date-from').value || null;
+    const to = document.getElementById('date-to').value || null;
+    activeRange = 'custom';
+    applyFilter(from, to);
+  });
+
+  document.querySelectorAll('thead th[data-sort]').forEach((th) => {
+    th.addEventListener('click', () => {
+      const field = th.dataset.sort;
+      if (sortField === field) {
+        sortAsc = !sortAsc;
+      } else {
+        sortField = field;
+        sortAsc = false;
+      }
+      currentPage = 1;
+      refreshTable();
+    });
+  });
+
+  document.getElementById('status-filter').addEventListener('change', () => {
+    currentPage = 1;
+    refreshTable();
+  });
+
+  let searchTimeout;
+  document.getElementById('search-input').addEventListener('input', () => {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => {
+      currentPage = 1;
+      refreshTable();
+    }, 200);
+  });
+
+  document.getElementById('page-size').addEventListener('change', (e) => {
+    pageSize = parseInt(e.target.value, 10);
+    currentPage = 1;
+    refreshTable();
+  });
+
+  document.getElementById('page-buttons').addEventListener('click', (e) => {
+    const btn = e.target.closest('.page-btn');
+    if (!btn || btn.disabled) return;
+    const page = parseInt(btn.dataset.page, 10);
+    if (isNaN(page) || page < 1) return;
+    currentPage = page;
+    refreshTable();
+  });
+
+  document.getElementById('model-log-scale').addEventListener('change', () => {
+    const { from, to } = getCurrentDateFilter();
+    const filteredData = filterDataByDateRange(fullData, from, to);
+    destroyCharts();
+    renderCharts(filteredData);
+  });
+}
+
+function setRefreshControlsDisabled(disabled) {
+  document.getElementById('refresh-btn').disabled = disabled;
+  document.getElementById('refresh-menu-btn').disabled = disabled;
+  document.getElementById('refresh-full-btn').disabled = disabled;
+}
+
+async function runManualRefresh(full = false) {
+  if (refreshInFlight) return;
+  refreshInFlight = true;
+  const btn = document.getElementById('refresh-btn');
+  btn.classList.add('spinning');
+  setRefreshControlsDisabled(true);
+
+  try {
+    const url = full ? '/api/refresh?full=1' : '/api/refresh';
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await loadAndRender({ initial: false });
+  } catch (err) {
+    showToast(t('common.refreshFailed'), true);
+  } finally {
+    btn.classList.remove('spinning');
+    setRefreshControlsDisabled(false);
+    refreshInFlight = false;
+    closeRefreshDropdown();
+  }
+}
+
+function closeRefreshDropdown() {
+  const dropdown = document.getElementById('refresh-dropdown');
+  const menuBtn = document.getElementById('refresh-menu-btn');
+  if (!dropdown || !menuBtn) return;
+  dropdown.hidden = true;
+  menuBtn.setAttribute('aria-expanded', 'false');
+}
+
+function openRefreshDropdown() {
+  const dropdown = document.getElementById('refresh-dropdown');
+  const menuBtn = document.getElementById('refresh-menu-btn');
+  dropdown.hidden = false;
+  menuBtn.setAttribute('aria-expanded', 'true');
+  document.getElementById('refresh-full-btn').focus();
+}
+
+function bindRefreshControls() {
+  document.getElementById('refresh-btn').addEventListener('click', () => {
+    runManualRefresh(false);
+  });
+
+  const menuBtn = document.getElementById('refresh-menu-btn');
+  const dropdown = document.getElementById('refresh-dropdown');
+  const fullBtn = document.getElementById('refresh-full-btn');
+
+  menuBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (dropdown.hidden) openRefreshDropdown();
+    else closeRefreshDropdown();
+  });
+
+  fullBtn.addEventListener('click', () => {
+    runManualRefresh(true);
+  });
+
+  menuBtn.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      openRefreshDropdown();
+    }
+  });
+
+  dropdown.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closeRefreshDropdown();
+      menuBtn.focus();
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!document.getElementById('refresh-group').contains(e.target)) {
+      closeRefreshDropdown();
+    }
+  });
+}
+
+async function init() {
+  bindEventsOnce();
+  bindRefreshControls();
+  await loadAndRender({ initial: true });
 }
 
 window.addEventListener('openclaw-themechange', () => {
   if (!fullData) return;
-  const from = document.getElementById('date-from')?.value || null;
-  const to = document.getElementById('date-to')?.value || null;
-  applyFilter(from, to);
-});
-
-document.getElementById('refresh-btn').addEventListener('click', async () => {
-  const btn = document.getElementById('refresh-btn');
-  btn.classList.add('spinning');
-
-  try {
-    await fetch('/api/refresh');
-    fullData = null;
-    await init();
-  } finally {
-    btn.classList.remove('spinning');
-  }
+  const { from, to } = getCurrentDateFilter();
+  applyFilter(from, to, false);
 });
 
 window.addEventListener('openclaw-localechange', () => {
   if (!fullData) return;
-  const generatedAt = document.getElementById('generated-at');
-  if (fullData.generatedAt && generatedAt) {
-    const d = new Date(fullData.generatedAt);
-    generatedAt.textContent = t('common.updatedAt', { time: d.toLocaleTimeString(getLocale()) });
-  }
+  updateGeneratedAt(fullData);
+  updateCacheStateBadge(fullData.cache);
   refreshTable();
   renderSummaryCards(filterDataByDateRange(
     fullData,

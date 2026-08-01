@@ -26,6 +26,11 @@ A standalone token usage statistics and visualization tool for OpenClaw. It pars
   - Dedicated pricing configuration page with add/edit/delete/reset functionality.
   - **Dynamic config path**: The pricing file (`openclaw-usage-pricing.json`) auto-detects the OpenClaw workspace directory, so it travels with your config across machines.
 
+- **Persistent Incremental Stats Cache**:
+  - The page will still request the server, but unchanged sessions and pricing will reuse the persistent cache without reparsing JSONL files.
+  - When changes are detected, the last successful result is returned first and only changed files are processed in the background. Normal refresh is incremental; a dropdown action performs a full rebuild.
+  - Web and MCP share the same cache strategy. See the [persistent incremental stats cache specification](docs/superpowers/specs/2026-08-01-persistent-incremental-stats-cache.md) for the complete design.
+
 ## 📊 Data Source & Logic
 
 The tool monitors and parses the local OpenClaw persistence directory:
@@ -50,6 +55,20 @@ The tool monitors and parses the local OpenClaw persistence directory:
     "provider": "minimax-portal", "model": "MiniMax-M2.7"
   }
   ```
+
+## 🗄️ Persistent Incremental Cache
+
+- **A request is not a refresh**: The page may call `/api/stats` whenever it opens, but aggregation only runs when session file identities or pricing have changed.
+- **Reuse across restarts**: The cache lives at `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/stats-v1.json` and is shared by the Web and MCP processes.
+- **Incremental updates**: Unchanged files reuse their cached contributions. Only added, modified, or removed files are processed; pricing changes only recalculate costs.
+- **Stale while revalidate**: When changes are found, the last successful result is returned first and the page updates automatically after the background refresh completes (`GET /api/stats?fresh=1`).
+- **Two manual refresh modes**: Normal refresh is incremental (`GET /api/refresh`). A dropdown “Full rebuild” action bypasses every per-file cache entry (`GET /api/refresh?full=1`).
+- **Last-known-good fallback**: Refresh failures or temporary source errors retain the last successful result and mark it `stale` instead of silently replacing it with empty data.
+- **No persistent browser cache**: Page reloads continue to read from the server; IndexedDB and LocalStorage are not used to store stats.
+- **API `cache` field**: `GET /api/stats` includes top-level `cache.state` (`fresh | refreshing | stale`), `revision`, `sourceId`, and `checkedAt`.
+- **MCP**: `refresh_stats_cache` is incremental by default; optional `full: true` performs a full rebuild. Pricing tools do not trigger stats aggregation.
+
+See the [design specification](docs/superpowers/specs/2026-08-01-persistent-incremental-stats-cache.md) for behavior, cache structure, and acceptance criteria.
 
 ## 🚀 Quick Start
 
@@ -96,7 +115,7 @@ Add the following to your OpenClaw or Claude Desktop MCP config:
 
 - `get_pricing_config`: Read the current pricing config (read-only).
 - `update_pricing_config`: Update pricing config (write operation).
-- `refresh_stats_cache`: Force refresh aggregated stats cache (does not alter business data).
+- `refresh_stats_cache`: Refreshes the aggregate cache without altering business data. It performs an **incremental refresh by default** (only added/changed session files are reparsed) and accepts `full: true` for a full rebuild.
 
 Example `config` payload for `update_pricing_config` (full config object):
 
@@ -200,7 +219,7 @@ Instead of under `~/.openclaw/`. This keeps the pricing config bound to the Open
 
 - **Price Unit**: $/M (USD per million tokens per field)
 - **Calculation Formula**: Cost = (Usage / 1,000,000) × Price
-- **Cache prices**: If left empty, cache read volume uses the **Input** price and cache write volume uses the **Output** price ($/M).
+- **Cache prices**: Optional. When left empty there is no separate cache rate; **both cache read and cache write volume are priced at the Input rate** ($/M).
 - **Global `enabled`** (optional, defaults to on): When `false`, **all** models use session `usage.cost` (OpenClaw’s per-message cost breakdown); no custom recalculation.
 - **Per-rule `pricing[k].enabled`** (optional, defaults to on): When `false`, **only that** `provider/model` uses session `usage.cost`; other models still use custom rates (if global custom pricing is on).
 - **Optional Pricing**: Custom $/M applies only when global custom pricing is on, a rule exists for that model, and that rule is enabled; otherwise session `usage.cost` is used.

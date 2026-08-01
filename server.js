@@ -49,7 +49,8 @@ export function createApp() {
 
   app.get('/api/stats', async (req, res) => {
     try {
-      const data = await getStats();
+      const waitForRefresh = req.query.fresh === '1' || req.query.fresh === 'true';
+      const data = await getStats({ waitForRefresh });
       res.json(data);
     } catch (err) {
       console.error('Error aggregating stats:', err);
@@ -59,7 +60,8 @@ export function createApp() {
 
   app.get('/api/refresh', async (req, res) => {
     try {
-      const result = await refreshStatsCache();
+      const full = req.query.full === '1' || req.query.full === 'true';
+      const result = await refreshStatsCache({ full });
       res.json(result);
     } catch (err) {
       res.status(500).json({ error: err.message });

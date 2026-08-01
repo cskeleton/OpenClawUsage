@@ -179,11 +179,12 @@ export async function loadPricingConfig() {
     return config;
   } catch {}
 
-  // 全部不存在时返回默认配置
+  // 全部不存在时返回默认配置（updated 使用稳定值，避免每次读取指纹变化）
   return {
     version: '1.0',
-    updated: new Date().toISOString(),
-    pricing: {}
+    enabled: true,
+    updated: '0001-01-01T00:00:00.000Z',
+    pricing: {},
   };
 }
 
