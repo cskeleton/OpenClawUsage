@@ -11,7 +11,9 @@
 - **可视化仪表盘 (Web UI)**：基于 Vite + Chart.js 构建的暗黑风格界面。
   - **全量统计**：支持活跃（Active）、重置（Reset）和已删除（Deleted）的所有会话统计。
   - **时间筛选**：支持预设时间段（今天、最近 7 天、本月等）及自定义日期范围。
-  - **度量指标**：统计 Input/Output Tokens、费用趋势、Provider 分布以及缓存命中（ Cache Read/Write）；首页汇总卡片中 **「总费用」置于最后一格**（前几张为 Tokens / Cache / Sessions 等）。
+  - **Provider / Model 筛选**：可按某个 Provider 或某个具体 `provider/model` 过滤，与时间区间叠加；筛选后 **汇总卡片、全部图表与 Session 明细统一重算**，顶部以 chip 回显该维度在所选区间内的费用 / Tokens / 请求数。
+  - **Provider / Model 消耗明细表**：按 Provider 或按 Model 两种维度汇总 Input / Output / Cache Read / Cache Write / Total Tokens、**费用($)**、费用占比与请求数，表头可排序，点击任意行即可下钻为筛选条件。
+  - **度量指标**：统计 Input/Output Tokens、费用趋势、Provider 分布以及缓存命中（ Cache Read/Write）；首页汇总卡片中 **「总费用」置于最后一格**（前几张为 Tokens / Cache / Sessions 等）；按日趋势图支持 **Token / 费用** 两种视图切换。
   - **交互体验**：Model 对比支持对数坐标（Log Scale），解决小数据量不可见问题；Session 明细支持分页、搜索与排序。
   
 - **MCP 服务端 (Model Context Protocol)**：

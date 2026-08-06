@@ -342,6 +342,8 @@ export async function aggregateStats(pricingConfig = null) {
       lastTimestamp: null,
       /** 会话内的按日分布，供前端筛选时切片 */
       byDate: {},
+      /** 会话内「日期 × provider/model」交叉分布，供 provider/model 筛选精确切片 */
+      byDateModel: {},
     };
 
     for (const rec of records) {
@@ -424,6 +426,9 @@ export async function aggregateStats(pricingConfig = null) {
         sd.totalTokens += rec.usage.totalTokens;
         sd.totalCost += rec.cost.total;
         sd.requests++;
+
+        // 会话内「日期 × provider/model」
+        addToCrossTable(sessionStats.byDateModel, date, modelKey, rec);
       }
     }
 

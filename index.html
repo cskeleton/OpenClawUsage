@@ -95,13 +95,39 @@
         </div>
       </section>
 
+      <!-- Provider / Model Filter Bar -->
+      <section class="dimension-filter-bar glass-card" id="dimension-filter-bar">
+        <div class="dimension-fields">
+          <label class="dimension-field">
+            <span class="dimension-label" data-i18n="dashboard.filterProvider">Provider</span>
+            <select id="provider-filter" class="select-filter">
+              <option value="" data-i18n="dashboard.allProviders">全部 Provider</option>
+            </select>
+          </label>
+          <label class="dimension-field">
+            <span class="dimension-label" data-i18n="dashboard.filterModel">Model</span>
+            <select id="model-filter" class="select-filter">
+              <option value="" data-i18n="dashboard.allModels">全部 Model</option>
+            </select>
+          </label>
+          <button type="button" id="clear-dimension-filter" class="btn-clear-filter" hidden data-i18n="dashboard.clearDimensionFilter">清除维度筛选</button>
+        </div>
+        <div class="dimension-summary" id="dimension-summary"></div>
+      </section>
+
       <!-- Summary Cards -->
       <section class="summary-cards" id="summary-cards"></section>
 
       <!-- Charts Row -->
       <section class="charts-section">
         <div class="chart-container glass-card">
-          <h3 data-i18n="dashboard.chartTimeline">📈 Token 用量趋势（按日）</h3>
+          <div class="chart-title-row">
+            <h3 data-i18n="dashboard.chartTimeline">📈 用量趋势（按日）</h3>
+            <div class="metric-switch" role="group" id="timeline-metric-switch" aria-label="趋势指标" data-i18n-attr="aria-label:dashboard.timelineMetricGroup">
+              <button type="button" class="metric-btn active" data-metric="tokens" data-i18n="dashboard.metricTokens">Token</button>
+              <button type="button" class="metric-btn" data-metric="cost" data-i18n="dashboard.metricCost">费用</button>
+            </div>
+          </div>
           <canvas id="chart-timeline"></canvas>
         </div>
         <div class="chart-container glass-card">
@@ -121,6 +147,39 @@
             </label>
           </div>
           <canvas id="chart-model"></canvas>
+        </div>
+      </section>
+
+      <!-- Provider / Model Breakdown -->
+      <section class="table-section glass-card">
+        <div class="table-header">
+          <h3 data-i18n="dashboard.breakdownTitle">💵 Provider / Model 消耗明细</h3>
+          <div class="table-controls">
+            <div class="breakdown-dimension" role="group" id="breakdown-dimension" aria-label="统计维度" data-i18n-attr="aria-label:dashboard.breakdownDimensionGroup">
+              <button type="button" class="dim-btn active" data-dimension="provider" data-i18n="dashboard.byProvider">按 Provider</button>
+              <button type="button" class="dim-btn" data-dimension="model" data-i18n="dashboard.byModel">按 Model</button>
+            </div>
+          </div>
+        </div>
+        <p class="table-hint" data-i18n="dashboard.breakdownHint">点击任意行即可把该 Provider / Model 设为筛选条件</p>
+        <div class="table-wrapper">
+          <table id="breakdown-table">
+            <thead>
+              <tr>
+                <th data-breakdown-sort="key" id="breakdown-key-header" data-i18n="dashboard.tableProvider">Provider</th>
+                <th data-breakdown-sort="input" data-i18n="dashboard.tableInput">Input</th>
+                <th data-breakdown-sort="output" data-i18n="dashboard.tableOutput">Output</th>
+                <th data-breakdown-sort="cacheRead" data-i18n="dashboard.tableCacheRead">Cache Read</th>
+                <th data-breakdown-sort="cacheWrite" data-i18n="dashboard.tableCacheWrite">Cache Write</th>
+                <th data-breakdown-sort="totalTokens" data-i18n="dashboard.tableTotalTokens">Total Tokens</th>
+                <th data-breakdown-sort="totalCost" data-i18n="dashboard.tableCost">费用 ($)</th>
+                <th data-breakdown-sort="costShare" data-i18n="dashboard.tableCostShare">费用占比</th>
+                <th data-breakdown-sort="requests" data-i18n="dashboard.tableRequests">请求数</th>
+              </tr>
+            </thead>
+            <tbody id="breakdown-tbody"></tbody>
+            <tfoot id="breakdown-tfoot"></tfoot>
+          </table>
         </div>
       </section>
 

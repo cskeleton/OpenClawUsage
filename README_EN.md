@@ -7,7 +7,9 @@ A standalone token usage statistics and visualization tool for OpenClaw. It pars
 - **Visual Dashboard (Web UI)**: Dark-themed interface built with Vite + Chart.js.
   - **Comprehensive Stats**: Covers all sessions include active (`.jsonl`), reset (`.jsonl.reset.*`), and archived deleted sessions.
   - **Time Filtering**: Built-in presets (Today, Last 7 Days, This Month, etc.) and custom date ranges.
-  - **Rich Metrics**: Tracks Input/Output Tokens, cost trends, Provider distribution, and Cache (Read/Write) performance. On the home summary row, **Total cost** is the **last** card (after token/cache/session summaries).
+  - **Provider / Model Filtering**: Filter by a Provider or a specific `provider/model` together with the selected time range. After filtering, **summary cards, all charts, and Session details are recalculated consistently**, while a chip at the top shows that dimension's cost / Tokens / request count for the selected period.
+  - **Provider / Model Usage Details**: Aggregate by Provider or Model across Input / Output / Cache Read / Cache Write / Total Tokens, **Cost ($)**, cost share, and request count. Columns are sortable, and clicking any row drills down by applying it as a filter.
+  - **Rich Metrics**: Tracks Input/Output Tokens, cost trends, Provider distribution, and Cache (Read/Write) performance. On the home summary row, **Total cost** is the **last** card (after token/cache/session summaries); the daily trend chart can switch between **Token / Cost** views.
   - **UX Enhancements**: Logarithmic scale for Model comparison, and paginated/searchable session details table.
   
 - **MCP Server (Model Context Protocol)**:

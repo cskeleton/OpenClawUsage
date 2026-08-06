@@ -29,6 +29,7 @@ import {
   readDiskCache,
 } from '../../../stats-cache-store.js';
 import { parseSessionJsonlRaw } from '../../../aggregator.js';
+import { STATS_SHAPE_VERSION } from '../../../stats-contribution.js';
 
 /** 追加一条有效 usage 消息，使请求数 +1 */
 function appendUsageLine(sessionPath) {
@@ -453,6 +454,73 @@ describe('stats-service persistent cache', () => {
     expect(second.cache.state).toBe('fresh');
     // 强制刷新路径应发布新 revision，即使源文件未变化
     expect(second.cache.revision).toBeGreaterThan(revisionBefore);
+  });
+
+  it('records statsShapeVersion in disk snapshot', async () => {
+    await setupWorkspace();
+    await getStats();
+    const disk = JSON.parse(readFileSync(getCacheFilePath(), 'utf-8'));
+    expect(disk.statsShapeVersion).toBe(STATS_SHAPE_VERSION);
+  });
+
+  it('sessions carry byDateModel cross table', async () => {
+    await setupWorkspace();
+    const data = await getStats();
+
+    const session = data.sessions[0];
+    expect(session.byDateModel).toBeDefined();
+
+    // byDate 必须是 byDateModel 在模型维度上的边缘和
+    for (const [date, keyMap] of Object.entries(session.byDateModel)) {
+      const summed = Object.values(keyMap).reduce(
+        (acc, b) => ({
+          totalTokens: acc.totalTokens + b.totalTokens,
+          requests: acc.requests + b.requests,
+        }),
+        { totalTokens: 0, requests: 0 }
+      );
+      expect(summed.totalTokens).toBe(session.byDate[date].totalTokens);
+      expect(summed.requests).toBe(session.byDate[date].requests);
+    }
+  });
+
+  it('remerges stale-shaped disk stats without reparsing JSONL', async () => {
+    await setupWorkspace();
+    await getStats();
+
+    // 模拟旧版本快照：stats 缺少 session.byDateModel，且形状版本落后
+    const disk = JSON.parse(readFileSync(getCacheFilePath(), 'utf-8'));
+    disk.statsShapeVersion = STATS_SHAPE_VERSION - 1;
+    for (const session of disk.stats.sessions) delete session.byDateModel;
+    await writeDiskCacheAtomic(disk);
+
+    resetStatsServiceForTests();
+    const parseSpy = vi.spyOn(await import('../../../aggregator.js'), 'parseSessionJsonlRaw');
+    const data = await getStats();
+
+    // 逐文件贡献未变，只需重新合并，不得重新解析 JSONL
+    expect(parseSpy).not.toHaveBeenCalled();
+    expect(data.sessions[0].byDateModel).toBeDefined();
+    parseSpy.mockRestore();
+  });
+
+  it('remerges disk stats when statsShapeVersion field is absent', async () => {
+    await setupWorkspace();
+    await getStats();
+
+    // 本次改动之前写入的快照根本没有 statsShapeVersion 字段
+    const disk = JSON.parse(readFileSync(getCacheFilePath(), 'utf-8'));
+    delete disk.statsShapeVersion;
+    for (const session of disk.stats.sessions) delete session.byDateModel;
+    await writeDiskCacheAtomic(disk);
+
+    resetStatsServiceForTests();
+    const parseSpy = vi.spyOn(await import('../../../aggregator.js'), 'parseSessionJsonlRaw');
+    const data = await getStats();
+
+    expect(parseSpy).not.toHaveBeenCalled();
+    expect(data.sessions[0].byDateModel).toBeDefined();
+    parseSpy.mockRestore();
   });
 });
 

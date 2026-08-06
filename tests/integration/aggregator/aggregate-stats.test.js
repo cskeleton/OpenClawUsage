@@ -49,6 +49,35 @@ describe('aggregateStats', () => {
     expect(data.byDateProvider['2026-04-16']).toBeDefined();
   });
 
+  it('builds per-session byDateModel matching byDate marginals', async () => {
+    const ws = await createTmpWorkspace();
+    disposables.push(ws.cleanup);
+    copySynthSession(ws);
+
+    const data = await aggregateStats(NO_CUSTOM_PRICING);
+    const session = data.sessions[0];
+
+    expect(session.byDateModel).toBeDefined();
+    expect(Object.keys(session.byDateModel).sort()).toEqual(Object.keys(session.byDate).sort());
+
+    for (const [date, keyMap] of Object.entries(session.byDateModel)) {
+      // 键必须是完整的 provider/model
+      for (const key of Object.keys(keyMap)) expect(key).toContain('/');
+
+      const summed = Object.values(keyMap).reduce(
+        (acc, b) => ({
+          totalTokens: acc.totalTokens + b.totalTokens,
+          totalCost: acc.totalCost + b.totalCost,
+          requests: acc.requests + b.requests,
+        }),
+        { totalTokens: 0, totalCost: 0, requests: 0 }
+      );
+      expect(summed.totalTokens).toBe(session.byDate[date].totalTokens);
+      expect(summed.requests).toBe(session.byDate[date].requests);
+      expect(summed.totalCost).toBeCloseTo(session.byDate[date].totalCost, 12);
+    }
+  });
+
   it('skips checkpoint files while real sessions still aggregate', async () => {
     const ws = await createTmpWorkspace();
     disposables.push(ws.cleanup);

@@ -1,5 +1,5 @@
 /**
- * 按日期区间重切聚合数据。
+ * 按日期区间 + provider/model 维度重切聚合数据。
  * 从 main.js 抽离以便独立单元测试。
  */
 
@@ -30,27 +30,81 @@ export function collapseCrossTable(crossTable, from, to) {
   return result;
 }
 
-/**
- * 基于交叉聚合表对数据做日期筛选，返回精确的 summary / byProvider / byModel / byDate / sessions。
- * @param {Object} fullData
- * @param {string|null} from YYYY-MM-DD
- * @param {string|null} to YYYY-MM-DD
- */
-export function filterDataByDateRange(fullData, from, to) {
-  if (!from && !to) return fullData;
+/** 从 `provider/model` 键中取 provider 段 */
+export function providerOfKey(key) {
+  const idx = key.indexOf('/');
+  return idx > 0 ? key.slice(0, idx) : key;
+}
 
-  const filteredByDate = {};
-  for (const [date, stats] of Object.entries(fullData.byDate || {})) {
-    if (from && date < from) continue;
-    if (to && date > to) continue;
-    filteredByDate[date] = stats;
+/** 从 `provider/model` 键中取 model 段 */
+export function modelOfKey(key) {
+  const idx = key.indexOf('/');
+  return idx > 0 ? key.slice(idx + 1) : '';
+}
+
+/**
+ * 构建 `provider/model` 键匹配器。
+ * `model` 传入完整的 `provider/model` 键；同时给出 provider 时以 model 为准。
+ * @param {{ provider?: string|null, model?: string|null }} filter
+ * @returns {((key: string) => boolean)|null} 无维度筛选时返回 null
+ */
+export function buildKeyMatcher({ provider = null, model = null } = {}) {
+  if (model) return (key) => key === model;
+  if (provider) {
+    const prefix = `${provider}/`;
+    return (key) => key === provider || key.startsWith(prefix);
+  }
+  return null;
+}
+
+/** 日期是否落在区间内 */
+function inRange(date, from, to) {
+  if (from && date < from) return false;
+  if (to && date > to) return false;
+  return true;
+}
+
+/**
+ * 由「日期 × provider/model」交叉表切出 byDate / byProvider / byModel
+ * @param {Record<string, Record<string, object>>} byDateModel
+ * @param {string|null} from
+ * @param {string|null} to
+ * @param {(key: string) => boolean} matches
+ */
+function sliceCrossTable(byDateModel, from, to, matches) {
+  const byDate = {};
+  const byProvider = {};
+  const byModel = {};
+
+  for (const [date, keyMap] of Object.entries(byDateModel || {})) {
+    if (!inRange(date, from, to)) continue;
+    for (const [key, stats] of Object.entries(keyMap)) {
+      if (!matches(key)) continue;
+
+      if (!byDate[date]) byDate[date] = emptyBucket();
+      mergeInto(byDate[date], stats);
+
+      const provider = providerOfKey(key);
+      if (!byProvider[provider]) byProvider[provider] = emptyBucket();
+      mergeInto(byProvider[provider], stats);
+
+      if (!byModel[key]) {
+        byModel[key] = { provider, model: modelOfKey(key), ...emptyBucket() };
+      }
+      mergeInto(byModel[key], stats);
+    }
   }
 
+  return { byDate, byProvider, byModel };
+}
+
+/** 由 byDate 汇总出 summary（不含 totalSessions） */
+function summarizeByDate(byDate) {
   const summary = {
     totalInput: 0, totalOutput: 0, totalCacheRead: 0, totalCacheWrite: 0,
     totalTokens: 0, totalCost: 0, totalRequests: 0, totalSessions: 0,
   };
-  for (const stats of Object.values(filteredByDate)) {
+  for (const stats of Object.values(byDate)) {
     summary.totalInput += stats.input;
     summary.totalOutput += stats.output;
     summary.totalCacheRead += stats.cacheRead;
@@ -59,65 +113,153 @@ export function filterDataByDateRange(fullData, from, to) {
     summary.totalCost += stats.totalCost;
     summary.totalRequests += stats.requests;
   }
+  return summary;
+}
 
-  const byProvider = collapseCrossTable(fullData.byDateProvider || {}, from, to);
-  const byModelRaw = collapseCrossTable(fullData.byDateModel || {}, from, to);
+/** 用切片桶覆写会话的合计字段 */
+function applyBucketToSession(session, bucket) {
+  return {
+    ...session,
+    totalInput: bucket.input,
+    totalOutput: bucket.output,
+    totalCacheRead: bucket.cacheRead,
+    totalCacheWrite: bucket.cacheWrite,
+    totalTokens: bucket.totalTokens,
+    totalCost: bucket.totalCost,
+    requestCount: bucket.requests,
+  };
+}
 
-  // byModel 需要额外带上 provider/model 便于图表展示
-  const byModel = {};
-  for (const [key, stats] of Object.entries(byModelRaw)) {
-    const slashIdx = key.indexOf('/');
-    const provider = slashIdx > 0 ? key.slice(0, slashIdx) : key;
-    const model = slashIdx > 0 ? key.slice(slashIdx + 1) : '';
-    byModel[key] = { provider, model, ...stats };
+/**
+ * 无维度筛选时按日期切会话（保持原有行为）
+ */
+function sliceSessionByDate(session, from, to) {
+  if (!session.byDate) {
+    // 兼容后端未提供 byDate 的情形：按 overlap 保留整期数据
+    if (!session.lastTimestamp && !session.firstTimestamp) return null;
+    const first = (session.firstTimestamp || session.lastTimestamp).slice(0, 10);
+    const last = (session.lastTimestamp || session.firstTimestamp).slice(0, 10);
+    if (from && last < from) return null;
+    if (to && first > to) return null;
+    return session;
   }
 
-  // 会话明细：只保留 byDate 交集内的聚合（非整期）
-  const filteredSessions = [];
-  for (const s of fullData.sessions || []) {
-    if (!s.byDate) {
-      // 兼容后端未提供 byDate 的情形：按 overlap 保留整期数据
-      if (!s.lastTimestamp && !s.firstTimestamp) continue;
-      const first = (s.firstTimestamp || s.lastTimestamp).slice(0, 10);
-      const last = (s.lastTimestamp || s.firstTimestamp).slice(0, 10);
-      if (from && last < from) continue;
-      if (to && first > to) continue;
-      filteredSessions.push(s);
-      continue;
-    }
+  const bucket = emptyBucket();
+  let hit = false;
+  for (const [date, stats] of Object.entries(session.byDate)) {
+    if (!inRange(date, from, to)) continue;
+    mergeInto(bucket, stats);
+    hit = true;
+  }
+  if (!hit) return null;
+  return applyBucketToSession(session, bucket);
+}
 
-    const bucket = emptyBucket();
-    let hit = false;
-    for (const [date, stats] of Object.entries(s.byDate)) {
-      if (from && date < from) continue;
-      if (to && date > to) continue;
+/**
+ * 维度筛选下按「日期 ∩ provider/model」切会话。
+ * 旧快照缺 `byDateModel` 时保守回退：按 providers / models 列表判断整行去留，
+ * 数字仍是该会话在时间段内的全量合计（宁可偏大，也不静默丢数据）。
+ */
+function sliceSessionByKey(session, from, to, matches, filter) {
+  if (!session.byDateModel) {
+    if (!sessionMatchesLegacy(session, filter)) return null;
+    return sliceSessionByDate(session, from, to);
+  }
+
+  const bucket = emptyBucket();
+  let hit = false;
+  for (const [date, keyMap] of Object.entries(session.byDateModel)) {
+    if (!inRange(date, from, to)) continue;
+    for (const [key, stats] of Object.entries(keyMap)) {
+      if (!matches(key)) continue;
       mergeInto(bucket, stats);
       hit = true;
     }
-    if (!hit) continue;
+  }
+  if (!hit) return null;
+  return applyBucketToSession(session, bucket);
+}
 
-    filteredSessions.push({
-      ...s,
-      totalInput: bucket.input,
-      totalOutput: bucket.output,
-      totalCacheRead: bucket.cacheRead,
-      totalCacheWrite: bucket.cacheWrite,
-      totalTokens: bucket.totalTokens,
-      totalCost: bucket.totalCost,
-      requestCount: bucket.requests,
-    });
+/**
+ * 旧快照回退匹配：session.models 存的是裸模型名，只能近似判断。
+ * @param {object} session
+ * @param {{ provider?: string|null, model?: string|null }} filter
+ */
+function sessionMatchesLegacy(session, { provider = null, model = null } = {}) {
+  if (model) {
+    const wantProvider = providerOfKey(model);
+    const wantModel = modelOfKey(model);
+    return (session.providers || []).includes(wantProvider)
+      && (session.models || []).includes(wantModel);
+  }
+  if (provider) {
+    return (session.providers || []).includes(provider);
+  }
+  return true;
+}
+
+/**
+ * 基于交叉聚合表对数据做日期 + provider/model 筛选，
+ * 返回精确的 summary / byProvider / byModel / byDate / sessions。
+ * @param {Object} fullData
+ * @param {{ from?: string|null, to?: string|null, provider?: string|null, model?: string|null }} [filter]
+ *   from / to 为 YYYY-MM-DD；model 传完整 `provider/model` 键
+ */
+export function filterData(fullData, filter = {}) {
+  const { from = null, to = null, provider = null, model = null } = filter;
+  const matches = buildKeyMatcher({ provider, model });
+
+  if (!from && !to && !matches) return fullData;
+
+  let byDate;
+  let byProvider;
+  let byModel;
+
+  if (matches) {
+    // 维度筛选下三张表统一由交叉表切片，保证彼此一致
+    ({ byDate, byProvider, byModel } = sliceCrossTable(fullData.byDateModel || {}, from, to, matches));
+  } else {
+    byDate = {};
+    for (const [date, stats] of Object.entries(fullData.byDate || {})) {
+      if (!inRange(date, from, to)) continue;
+      byDate[date] = stats;
+    }
+    byProvider = collapseCrossTable(fullData.byDateProvider || {}, from, to);
+    byModel = {};
+    for (const [key, stats] of Object.entries(collapseCrossTable(fullData.byDateModel || {}, from, to))) {
+      byModel[key] = { provider: providerOfKey(key), model: modelOfKey(key), ...stats };
+    }
   }
 
-  summary.totalSessions = filteredSessions.length;
+  const summary = summarizeByDate(byDate);
+
+  const sessions = [];
+  for (const s of fullData.sessions || []) {
+    const sliced = matches
+      ? sliceSessionByKey(s, from, to, matches, { provider, model })
+      : sliceSessionByDate(s, from, to);
+    if (sliced) sessions.push(sliced);
+  }
+  summary.totalSessions = sessions.length;
 
   return {
     summary,
     byProvider,
     byModel,
-    byDate: filteredByDate,
+    byDate,
     byDateProvider: fullData.byDateProvider,
     byDateModel: fullData.byDateModel,
-    sessions: filteredSessions,
+    sessions,
     generatedAt: fullData.generatedAt,
   };
+}
+
+/**
+ * 仅按日期区间筛选（`filterData` 的薄封装，保留既有调用方式）
+ * @param {Object} fullData
+ * @param {string|null} from YYYY-MM-DD
+ * @param {string|null} to YYYY-MM-DD
+ */
+export function filterDataByDateRange(fullData, from, to) {
+  return filterData(fullData, { from, to });
 }
