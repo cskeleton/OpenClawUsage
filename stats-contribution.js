@@ -2,6 +2,14 @@ import { statSync } from 'fs';
 import { parseSessionJsonlRaw } from './aggregator.js';
 import { calculateCostFromUsage } from './pricing.js';
 
+/**
+ * 合并结果（`stats`）的形状版本。
+ * 逐文件贡献（`files`）结构不变、仅合并输出新增字段时递增本值：
+ * 读盘时形状不匹配则从 `files` 重新合并，无需重新解析 JSONL。
+ * v2：session 增加 `byDateModel`（日期 × provider/model 交叉表）
+ */
+export const STATS_SHAPE_VERSION = 2;
+
 function emptyBucket() {
   return {
     input: 0,
@@ -179,6 +187,8 @@ export function mergeFileContributions(filesMap, pricingConfig) {
       firstTimestamp: contribution.firstTimestamp,
       lastTimestamp: contribution.lastTimestamp,
       byDate: {},
+      /** 会话内「日期 × provider/model」交叉分布，供 provider/model 筛选精确切片 */
+      byDateModel: {},
     };
 
     for (const bucket of contribution.buckets) {
@@ -250,6 +260,8 @@ export function mergeFileContributions(filesMap, pricingConfig) {
         sd.totalTokens += usage.totalTokens;
         sd.totalCost += cost;
         sd.requests += bucket.requests;
+
+        addToCrossTable(sessionStats.byDateModel, date, modelKey, usage, cost, bucket.requests);
       }
     }
 

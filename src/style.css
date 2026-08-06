@@ -822,6 +822,228 @@ html.theme-dark .date-input {
   font-size: 0.85rem;
 }
 
+/* ---- Provider / Model Filter Bar ---- */
+.dimension-filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.dimension-fields {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.dimension-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dimension-label {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.dimension-field .select-filter {
+  height: 38px;
+  min-width: 200px;
+  max-width: 320px;
+}
+
+.btn-clear-filter {
+  padding: 8px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: all 0.25s ease;
+}
+
+.btn-clear-filter:hover {
+  border-color: var(--accent-rose);
+  color: var(--accent-rose);
+  background: rgba(225, 29, 72, 0.08);
+}
+
+.dimension-summary {
+  display: flex;
+  align-items: center;
+}
+
+.dimension-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 16px;
+  border: 1px solid rgba(234, 88, 12, 0.28);
+  border-radius: var(--radius-sm);
+  background: rgba(234, 88, 12, 0.1);
+}
+
+.dimension-chip-key {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--accent-orange);
+}
+
+.dimension-chip-cost {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--accent-amber);
+}
+
+.dimension-chip-sub {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+/* ---- Breakdown Table ---- */
+.breakdown-dimension {
+  display: flex;
+  gap: 8px;
+}
+
+.dim-btn {
+  padding: 8px 18px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  white-space: nowrap;
+}
+
+.dim-btn:hover {
+  border-color: var(--accent-orange);
+  color: var(--accent-orange);
+  background: rgba(234, 88, 12, 0.08);
+}
+
+.dim-btn.active {
+  border-color: var(--accent-orange);
+  background: rgba(234, 88, 12, 0.16);
+  color: var(--accent-orange);
+  font-weight: 600;
+}
+
+.table-hint {
+  margin: -4px 0 12px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.breakdown-row {
+  cursor: pointer;
+}
+
+.breakdown-row.is-active {
+  background: rgba(234, 88, 12, 0.1);
+  box-shadow: inset 3px 0 0 var(--accent-orange);
+}
+
+.breakdown-row:focus-visible {
+  outline: 2px solid var(--accent-orange);
+  outline-offset: -2px;
+}
+
+.breakdown-key {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.share-bar {
+  display: inline-block;
+  width: 72px;
+  height: 6px;
+  margin-right: 8px;
+  border-radius: 3px;
+  background: rgba(234, 88, 12, 0.14);
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.share-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent-orange);
+}
+
+.share-text {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+tfoot .breakdown-total td {
+  padding: 12px;
+  border-top: 1px solid var(--border-color);
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+/* ---- Timeline Metric Switch ---- */
+.metric-switch {
+  display: flex;
+  gap: 6px;
+}
+
+.metric-btn {
+  padding: 6px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font);
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: all 0.25s;
+}
+
+.metric-btn:hover {
+  border-color: var(--accent-orange);
+  color: var(--accent-orange);
+}
+
+.metric-btn.active {
+  border-color: var(--accent-orange);
+  background: rgba(234, 88, 12, 0.16);
+  color: var(--accent-orange);
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .dimension-filter-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .dimension-field .select-filter {
+    min-width: 0;
+    flex: 1;
+  }
+}
+
 /* ---- Chart Title Row ---- */
 .chart-title-row {
   display: flex;

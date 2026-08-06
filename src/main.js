@@ -1,7 +1,7 @@
 import { renderCharts, destroyCharts } from './charts.js';
 import { escapeHtml, escapeAttr } from './util.js';
 import { initLocaleControls, getLocale, t } from './i18n.js';
-import { filterDataByDateRange } from './data-filter.js';
+import { filterData, collapseCrossTable, providerOfKey, modelOfKey } from './data-filter.js';
 
 // ---- Utility functions ----
 
@@ -16,6 +16,11 @@ function formatCost(cost) {
   if (cost >= 1) return '$' + cost.toFixed(2);
   if (cost >= 0.01) return '$' + cost.toFixed(3);
   return '$' + cost.toFixed(6);
+}
+
+function formatPercent(value, total) {
+  if (!total) return '0%';
+  return ((value / total) * 100).toFixed(1) + '%';
 }
 
 function formatDate(timestamp) {
@@ -142,6 +147,181 @@ function renderSummaryCards(summary) {
       <div class="stat-sub">${escapeHtml(c.sub)}</div>
     </div>
   `).join('');
+}
+
+// ---- Provider / Model 维度筛选 ----
+
+let filterProvider = '';
+/** 完整的 `provider/model` 键 */
+let filterModel = '';
+let timelineMetric = 'tokens';
+
+/** 当前时间区间内出现过的 `provider/model` 键 */
+function getRangeModelKeys(from, to) {
+  if (!fullData) return [];
+  return Object.keys(collapseCrossTable(fullData.byDateModel || {}, from, to)).sort();
+}
+
+/**
+ * 用当前时间区间内的数据填充 Provider / Model 下拉。
+ * 已选中但在新区间内无数据的选项仍保留，避免选择被静默清空。
+ */
+function populateDimensionOptions(from, to) {
+  const keys = getRangeModelKeys(from, to);
+
+  const providers = [...new Set(keys.map(providerOfKey))].sort();
+  if (filterProvider && !providers.includes(filterProvider)) providers.push(filterProvider);
+
+  const providerSelect = document.getElementById('provider-filter');
+  providerSelect.innerHTML = [
+    `<option value="">${escapeHtml(t('dashboard.allProviders'))}</option>`,
+    ...providers.map((p) => `<option value="${escapeAttr(p)}">${escapeHtml(p)}</option>`),
+  ].join('');
+  providerSelect.value = filterProvider;
+
+  const modelKeys = filterProvider
+    ? keys.filter((k) => providerOfKey(k) === filterProvider)
+    : keys;
+  if (filterModel && !modelKeys.includes(filterModel)) modelKeys.push(filterModel);
+
+  const modelSelect = document.getElementById('model-filter');
+  modelSelect.innerHTML = [
+    `<option value="">${escapeHtml(t('dashboard.allModels'))}</option>`,
+    ...modelKeys.map((k) => {
+      // 已按 provider 收窄时只显示模型名，否则显示完整键
+      const label = filterProvider ? modelOfKey(k) : k;
+      return `<option value="${escapeAttr(k)}">${escapeHtml(label)}</option>`;
+    }),
+  ].join('');
+  modelSelect.value = filterModel;
+
+  document.getElementById('clear-dimension-filter').hidden = !filterProvider && !filterModel;
+}
+
+/** 顶部筛选回显：当前 provider/model 在所选区间内的费用与 token 合计 */
+function renderDimensionSummary(filteredData) {
+  const el = document.getElementById('dimension-summary');
+  if (!filterProvider && !filterModel) {
+    el.innerHTML = '';
+    return;
+  }
+
+  const label = filterModel || filterProvider;
+  const { summary } = filteredData;
+  el.innerHTML = `
+    <span class="dimension-chip">
+      <span class="dimension-chip-key">${escapeHtml(label)}</span>
+      <span class="dimension-chip-cost">${escapeHtml(formatCost(summary.totalCost))}</span>
+      <span class="dimension-chip-sub">${escapeHtml(t('dashboard.chipTokens', { count: formatNumber(summary.totalTokens) }))}</span>
+      <span class="dimension-chip-sub">${escapeHtml(t('dashboard.summaryRequests', { count: summary.totalRequests.toLocaleString() }))}</span>
+    </span>
+  `;
+}
+
+// ---- Provider / Model 消耗明细表 ----
+
+let breakdownDimension = 'provider';
+let breakdownSort = 'totalCost';
+let breakdownAsc = false;
+
+/**
+ * 把 byProvider / byModel 摊平为明细表行
+ * @param {Object} filteredData
+ * @returns {Array<object>}
+ */
+function buildBreakdownRows(filteredData) {
+  const source = breakdownDimension === 'provider'
+    ? filteredData.byProvider || {}
+    : filteredData.byModel || {};
+
+  return Object.entries(source).map(([key, stats]) => ({
+    key,
+    input: stats.input,
+    output: stats.output,
+    cacheRead: stats.cacheRead,
+    cacheWrite: stats.cacheWrite,
+    totalTokens: stats.totalTokens,
+    totalCost: stats.totalCost,
+    requests: stats.requests,
+  }));
+}
+
+function renderBreakdownTable(filteredData) {
+  const tbody = document.getElementById('breakdown-tbody');
+  const tfoot = document.getElementById('breakdown-tfoot');
+  const rows = buildBreakdownRows(filteredData);
+
+  const totalCost = rows.reduce((sum, r) => sum + r.totalCost, 0);
+
+  rows.sort((a, b) => {
+    // costShare 与 totalCost 同序
+    const field = breakdownSort === 'costShare' ? 'totalCost' : breakdownSort;
+    const aVal = a[field];
+    const bVal = b[field];
+    if (typeof aVal === 'string') {
+      return breakdownAsc ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+    }
+    return breakdownAsc ? aVal - bVal : bVal - aVal;
+  });
+
+  document.getElementById('breakdown-key-header').textContent = breakdownDimension === 'provider'
+    ? t('dashboard.tableProvider')
+    : t('dashboard.tableProviderModel');
+
+  if (rows.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="9" style="text-align: center; color: var(--text-secondary); padding: 40px;">
+          ${escapeHtml(t('dashboard.noBreakdownInFilter'))}
+        </td>
+      </tr>
+    `;
+    tfoot.innerHTML = '';
+    return;
+  }
+
+  const activeKey = breakdownDimension === 'provider' ? filterProvider : filterModel;
+
+  tbody.innerHTML = rows.map((r) => `
+    <tr class="breakdown-row${r.key === activeKey ? ' is-active' : ''}" data-key="${escapeAttr(r.key)}" tabindex="0">
+      <td><span class="breakdown-key">${escapeHtml(r.key)}</span></td>
+      <td>${formatNumber(r.input)}</td>
+      <td>${formatNumber(r.output)}</td>
+      <td>${formatNumber(r.cacheRead)}</td>
+      <td>${formatNumber(r.cacheWrite)}</td>
+      <td><span class="token-value">${formatNumber(r.totalTokens)}</span></td>
+      <td><span class="cost-value">${formatCost(r.totalCost)}</span></td>
+      <td>
+        <span class="share-bar"><span class="share-bar-fill" style="width:${totalCost > 0 ? (r.totalCost / totalCost) * 100 : 0}%"></span></span>
+        <span class="share-text">${formatPercent(r.totalCost, totalCost)}</span>
+      </td>
+      <td>${r.requests.toLocaleString()}</td>
+    </tr>
+  `).join('');
+
+  const totals = rows.reduce((acc, r) => {
+    acc.input += r.input;
+    acc.output += r.output;
+    acc.cacheRead += r.cacheRead;
+    acc.cacheWrite += r.cacheWrite;
+    acc.totalTokens += r.totalTokens;
+    acc.requests += r.requests;
+    return acc;
+  }, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, requests: 0 });
+
+  tfoot.innerHTML = `
+    <tr class="breakdown-total">
+      <td>${escapeHtml(t('dashboard.breakdownTotal'))}</td>
+      <td>${formatNumber(totals.input)}</td>
+      <td>${formatNumber(totals.output)}</td>
+      <td>${formatNumber(totals.cacheRead)}</td>
+      <td>${formatNumber(totals.cacheWrite)}</td>
+      <td><span class="token-value">${formatNumber(totals.totalTokens)}</span></td>
+      <td><span class="cost-value">${formatCost(totalCost)}</span></td>
+      <td>100%</td>
+      <td>${totals.requests.toLocaleString()}</td>
+    </tr>
+  `;
 }
 
 // ---- Render Sessions Table with Pagination ----
@@ -341,6 +521,20 @@ function getCurrentDateFilter() {
   return { from, to };
 }
 
+/** 当前完整筛选条件（时间 + provider/model） */
+function getCurrentFilter() {
+  const { from, to } = getCurrentDateFilter();
+  return { from, to, provider: filterProvider || null, model: filterModel || null };
+}
+
+/** 用当前筛选条件重新渲染全部区块 */
+function rerender(resetPage = false) {
+  if (!fullData) return;
+  const filter = getCurrentFilter();
+  populateDimensionOptions(filter.from, filter.to);
+  applyFilter(filter, resetPage);
+}
+
 function applyDateRange(rangeKey, resetPage = true) {
   if (!fullData) return;
 
@@ -350,21 +544,29 @@ function applyDateRange(rangeKey, resetPage = true) {
   document.getElementById('date-from').value = from || '';
   document.getElementById('date-to').value = to || '';
 
-  document.querySelectorAll('.time-btn').forEach((btn) => {
+  document.querySelectorAll('.time-btn[data-range]').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.range === rangeKey);
   });
 
-  applyFilter(from, to, resetPage);
+  populateDimensionOptions(from, to);
+  applyFilter({ from, to, provider: filterProvider || null, model: filterModel || null }, resetPage);
 }
 
-function applyFilter(from, to, resetPage = true) {
+/**
+ * 按完整筛选条件重算并渲染
+ * @param {{ from: string|null, to: string|null, provider: string|null, model: string|null }} filter
+ * @param {boolean} resetPage
+ */
+function applyFilter(filter, resetPage = true) {
   if (!fullData) return;
 
-  const filteredData = filterDataByDateRange(fullData, from, to);
+  const filteredData = filterData(fullData, filter);
 
   renderSummaryCards(filteredData.summary);
+  renderDimensionSummary(filteredData);
+  renderBreakdownTable(filteredData);
   destroyCharts();
-  renderCharts(filteredData);
+  renderCharts(filteredData, { timelineMetric });
 
   allSessions = filteredData.sessions;
   if (resetPage) currentPage = 1;
@@ -376,8 +578,7 @@ function renderDataFromFull(resetPage = false) {
   updateGeneratedAt(fullData);
   updateCacheStateBadge(fullData.cache);
 
-  const { from, to } = getCurrentDateFilter();
-  applyFilter(from, to, resetPage);
+  rerender(resetPage);
 }
 
 async function pollUntilFresh() {
@@ -432,25 +633,102 @@ function bindEventsOnce() {
   if (eventsBound) return;
   eventsBound = true;
 
-  document.querySelectorAll('.time-btn').forEach((btn) => {
+  document.querySelectorAll('.time-btn[data-range]').forEach((btn) => {
     btn.addEventListener('click', () => {
       applyDateRange(btn.dataset.range);
     });
   });
 
   document.getElementById('date-from').addEventListener('change', () => {
-    document.querySelectorAll('.time-btn').forEach((b) => b.classList.remove('active'));
-    const from = document.getElementById('date-from').value || null;
-    const to = document.getElementById('date-to').value || null;
+    document.querySelectorAll('.time-btn[data-range]').forEach((b) => b.classList.remove('active'));
     activeRange = 'custom';
-    applyFilter(from, to);
+    rerender(true);
   });
   document.getElementById('date-to').addEventListener('change', () => {
-    document.querySelectorAll('.time-btn').forEach((b) => b.classList.remove('active'));
-    const from = document.getElementById('date-from').value || null;
-    const to = document.getElementById('date-to').value || null;
+    document.querySelectorAll('.time-btn[data-range]').forEach((b) => b.classList.remove('active'));
     activeRange = 'custom';
-    applyFilter(from, to);
+    rerender(true);
+  });
+
+  document.getElementById('provider-filter').addEventListener('change', (e) => {
+    filterProvider = e.target.value;
+    // Provider 变更后，已选 model 若不属于该 provider 则失效
+    if (filterModel && filterProvider && providerOfKey(filterModel) !== filterProvider) {
+      filterModel = '';
+    }
+    rerender(true);
+  });
+
+  document.getElementById('model-filter').addEventListener('change', (e) => {
+    filterModel = e.target.value;
+    // 选定具体模型时同步收窄 Provider，保持两个下拉自洽
+    if (filterModel) filterProvider = providerOfKey(filterModel);
+    rerender(true);
+  });
+
+  document.getElementById('clear-dimension-filter').addEventListener('click', () => {
+    filterProvider = '';
+    filterModel = '';
+    rerender(true);
+  });
+
+  document.querySelectorAll('#breakdown-dimension .dim-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      breakdownDimension = btn.dataset.dimension;
+      document.querySelectorAll('#breakdown-dimension .dim-btn').forEach((b) => {
+        b.classList.toggle('active', b === btn);
+      });
+      rerender(false);
+    });
+  });
+
+  document.querySelectorAll('#breakdown-table thead th[data-breakdown-sort]').forEach((th) => {
+    th.addEventListener('click', () => {
+      const field = th.dataset.breakdownSort;
+      if (breakdownSort === field) {
+        breakdownAsc = !breakdownAsc;
+      } else {
+        breakdownSort = field;
+        breakdownAsc = false;
+      }
+      rerender(false);
+    });
+  });
+
+  // 点击明细行下钻为筛选条件；再次点击已选中的行则取消
+  const breakdownBody = document.getElementById('breakdown-tbody');
+  const drillDown = (row) => {
+    const key = row.dataset.key;
+    if (!key) return;
+    if (breakdownDimension === 'provider') {
+      filterProvider = filterProvider === key ? '' : key;
+      filterModel = '';
+    } else {
+      filterModel = filterModel === key ? '' : key;
+      filterProvider = filterModel ? providerOfKey(filterModel) : '';
+    }
+    rerender(true);
+  };
+  breakdownBody.addEventListener('click', (e) => {
+    const row = e.target.closest('.breakdown-row');
+    if (row) drillDown(row);
+  });
+  breakdownBody.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const row = e.target.closest('.breakdown-row');
+    if (!row) return;
+    e.preventDefault();
+    drillDown(row);
+  });
+
+  document.querySelectorAll('#timeline-metric-switch .metric-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      timelineMetric = btn.dataset.metric;
+      document.querySelectorAll('#timeline-metric-switch .metric-btn').forEach((b) => {
+        b.classList.toggle('active', b === btn);
+      });
+      rerender(false);
+    });
   });
 
   document.querySelectorAll('thead th[data-sort]').forEach((th) => {
@@ -497,10 +775,9 @@ function bindEventsOnce() {
   });
 
   document.getElementById('model-log-scale').addEventListener('change', () => {
-    const { from, to } = getCurrentDateFilter();
-    const filteredData = filterDataByDateRange(fullData, from, to);
+    const filteredData = filterData(fullData, getCurrentFilter());
     destroyCharts();
-    renderCharts(filteredData);
+    renderCharts(filteredData, { timelineMetric });
   });
 }
 
@@ -596,20 +873,15 @@ async function init() {
 
 window.addEventListener('openclaw-themechange', () => {
   if (!fullData) return;
-  const { from, to } = getCurrentDateFilter();
-  applyFilter(from, to, false);
+  applyFilter(getCurrentFilter(), false);
 });
 
 window.addEventListener('openclaw-localechange', () => {
   if (!fullData) return;
   updateGeneratedAt(fullData);
   updateCacheStateBadge(fullData.cache);
-  refreshTable();
-  renderSummaryCards(filterDataByDateRange(
-    fullData,
-    document.getElementById('date-from')?.value || null,
-    document.getElementById('date-to')?.value || null
-  ).summary);
+  // 下拉占位项、明细表表头与筛选回显均含文案，需整体重绘
+  rerender(false);
 });
 
 initLocaleControls();

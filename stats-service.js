@@ -25,6 +25,7 @@ import {
   buildFileContribution,
   mergeFileContributions,
   buildEmptyStats,
+  STATS_SHAPE_VERSION,
 } from './stats-contribution.js';
 
 const MANIFEST_SCAN_COALESCE_MS = 1000;
@@ -163,12 +164,28 @@ async function parseFileStable(sessionDir, filename) {
 }
 
 /**
+ * 磁盘快照里的 `stats` 是否可直接复用。
+ * 除定价指纹外还要求合并结果形状版本一致：
+ * 旧形状（缺少 session.byDateModel 等字段）必须从 `files` 重新合并，
+ * 但这是纯内存计算，不需要重新解析 JSONL。
+ * @param {object|null} diskCache
+ * @param {object} fp 当前定价指纹
+ * @returns {boolean}
+ */
+function canReuseDiskStats(diskCache, fp) {
+  if (!diskCache?.stats) return false;
+  if (!fingerprintsEqual(diskCache.pricingFingerprint, fp)) return false;
+  // 缺字段的旧快照按形状版本 1 处理
+  return (diskCache.statsShapeVersion ?? 1) === STATS_SHAPE_VERSION;
+}
+
+/**
  * 从磁盘快照采纳到内存（不解析 JSONL）。
- * 定价指纹一致时直接复用磁盘上的统计结果，避免无意义的全量重新合并。
+ * 定价指纹与结果形状均一致时直接复用磁盘上的统计结果，避免无意义的全量重新合并。
  */
 function adoptDiskCache(diskCache, pricingConfig, fp) {
   loadMemoryFromDiskCache(diskCache);
-  if (!diskCache.stats || !fingerprintsEqual(diskCache.pricingFingerprint, fp)) {
+  if (!canReuseDiskStats(diskCache, fp)) {
     memory.stats = attachPricingMeta(
       mergeFileContributions(diskCache.files, pricingConfig),
       pricingConfig
@@ -370,6 +387,7 @@ async function executeRefresh({ full = false } = {}) {
     try {
       const diskPayload = {
         schemaVersion: CACHE_SCHEMA_VERSION,
+        statsShapeVersion: STATS_SHAPE_VERSION,
         sourceId,
         pricingFingerprint: fp,
         manifest,
@@ -470,9 +488,9 @@ async function ensureLoaded(pricingConfig, fp, sourceId, manifestScan) {
   loadMemoryFromDiskCache(diskCache);
   const manifestMatch = manifestsEqual(diskCache.manifest, manifest);
 
-  // 定价未变化时直接复用磁盘上的统计结果，不重新合并贡献、不改写 generatedAt；
-  // 仅定价变化时重算费用，与内存命中路径保持一致
-  if (!diskCache.stats || !fingerprintsEqual(diskCache.pricingFingerprint, fp)) {
+  // 定价与结果形状均未变化时直接复用磁盘上的统计结果，不重新合并贡献、不改写 generatedAt；
+  // 仅定价变化或形状过期时重算，与内存命中路径保持一致
+  if (!canReuseDiskStats(diskCache, fp)) {
     memory.stats = attachPricingMeta(
       mergeFileContributions(memory.files, pricingConfig),
       pricingConfig
