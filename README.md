@@ -27,6 +27,7 @@
   - 支持按 Provider/Model 组合配置自定义价格（单位 **$/M**，每百万 tokens）。
   - **两级开关**：可关闭「启用自定义价格」（全局），或对单条规则关闭「启用」，以便在**自定义单价重算的理论成本**与**会话中 OpenClaw 写入的账面成本**之间切换。
   - 价格配置页提供 **OpenClaw 内置价格（参考）** 与 **缺少价格的模型（参考）**：数据来自 `OPENCLAW_CONFIG_DIR`（默认 `~/.openclaw`）下的 `agents/main/agent/models.json`，两表在同一文件内按「有/无有效单价」划分；每张表可查看是否已被自定义规则覆盖（含通配符/正则），并对未覆盖项支持一键填入「添加新价格」。**实际在 OpenClaw 里可选的模型**由 `openclaw.json` 的 **`agents.defaults.models`** 决定，与参考表列出的条目并非一一对应。
+  - 价格配置页「添加新价格」区提供 **从 models.dev 获取参考价** 按钮：弹出可搜索、单选的 [models.dev](https://models.dev) 公开模型目录，确认后**只填入 Input/Output/Cache Read/Cache Write 四个价格格**，不会写入模型键；价格格已有内容时可选择**全部覆盖 / 只填空白 / 取消**。目录在本地缓存 24 小时（`$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/models-dev-v1.json`），过期后先展示上次快照并后台刷新，首次拉取失败则直接报错（fail-closed）；填入后请自行确认 Provider/Model 再保存。
   - 支持 Input、Output、Cache Read、Cache Write 四种价格类型。
   - Cache 价格可选；留空时不设单独缓存价，**统一按 Input 原价计算**（读写都用 Input）。
   - 独立的价格配置页面，支持添加、编辑、删除和重置价格配置。

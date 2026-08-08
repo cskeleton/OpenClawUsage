@@ -77,6 +77,7 @@
                   <li>Cache Read/Write 留空表示不设单独缓存价：<strong>统一按 Input 原价计算</strong>（读取与写入都用 Input 单价）</li>
                   <li>修改后会自动保存到配置文件并失效聚合缓存，重新计算成本</li>
                   <li>支持<strong>通配符</strong>（如 <code>*/claude-*</code>）与<strong>正则</strong>（如 <code>/claude.*/i</code>）规则，按声明顺序匹配完整 <code>provider/model</code>；<strong>精确规则优先</strong></li>
+                  <li>「从 models.dev 获取参考价」来自 <a href="https://models.dev" target="_blank" rel="noreferrer">models.dev</a> 公开目录：本地缓存 24 小时，过期后先展示上次快照并后台刷新；填入的只是参考单价，不会写入模型键，保存前请自行确认</li>
                 </ul>
               </div>
             </div>

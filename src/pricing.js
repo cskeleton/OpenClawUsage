@@ -1019,7 +1019,7 @@ function showModelsDevError() {
   if (!status) return;
   status.innerHTML = '';
   const text = document.createElement('span');
-  text.textContent = t('pricing.modelsDevLoadFailed');
+  text.textContent = t('pricing.modelsDevFailed');
   const retry = document.createElement('button');
   retry.type = 'button';
   retry.dataset.action = 'retry';
@@ -1033,7 +1033,7 @@ function showModelsDevError() {
 
 async function loadModelsDevCatalogIntoModal() {
   const { status, list } = getModelsDevElements();
-  if (status) status.textContent = t('common.loadingSessions');
+  if (status) status.textContent = t('pricing.modelsDevLoading');
   if (list) list.innerHTML = '';
   try {
     modelsDevCatalog = await fetchModelsDevCatalog();

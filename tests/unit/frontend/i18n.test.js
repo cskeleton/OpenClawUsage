@@ -110,4 +110,13 @@ describe('i18n', () => {
     setLocale('en-US');
     expect(captured).toEqual({ locale: 'en-US' });
   });
+
+  it('pricing.modelsDev* keys exist in both locales with same key set', async () => {
+    const { zhCNMessages } = await import('../../../src/locales/zh-CN.js');
+    const { enUSMessages } = await import('../../../src/locales/en-US.js');
+    const zhKeys = Object.keys(zhCNMessages.pricing).filter((k) => k.startsWith('modelsDev')).sort();
+    const enKeys = Object.keys(enUSMessages.pricing).filter((k) => k.startsWith('modelsDev')).sort();
+    expect(zhKeys.length).toBeGreaterThan(0);
+    expect(zhKeys).toEqual(enKeys);
+  });
 });
