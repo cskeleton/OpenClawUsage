@@ -7,6 +7,7 @@ import {
   findMatchingPricing,
 } from './pricing.js';
 import { listOpenClawPricedModels, listUnpricedModels } from './openclaw-config.js';
+import { getModelsDevCatalog } from './models-dev.js';
 import {
   getStats,
   getPricingConfig,
@@ -222,6 +223,17 @@ export function createApp({ staticDir } = {}) {
     } catch (err) {
       console.error('Error listing OpenClaw priced models:', err);
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET /api/models-dev/models - models.dev 在线目录（只读，磁盘缓存 24h，先旧后新）
+  app.get('/api/models-dev/models', async (req, res) => {
+    try {
+      const data = await getModelsDevCatalog();
+      res.json(data);
+    } catch (err) {
+      console.error('Error fetching models.dev catalog:', err);
+      res.status(502).json({ error: err.message });
     }
   });
 
