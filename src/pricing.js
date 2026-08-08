@@ -997,7 +997,12 @@ function renderModelsDevList(filter = '') {
     li.dataset.key = m.key;
     li.setAttribute('role', 'option');
     li.className = 'models-dev-item';
-    const price = `$${m.cost.input} / $${m.cost.output}`;
+    const dash = '—';
+    const price =
+      `I:${m.cost.input != null ? '$' + m.cost.input : dash} ` +
+      `O:${m.cost.output != null ? '$' + m.cost.output : dash} ` +
+      `CR:${m.cost.cacheRead != null ? '$' + m.cost.cacheRead : dash} ` +
+      `CW:${m.cost.cacheWrite != null ? '$' + m.cost.cacheWrite : dash}`;
     li.innerHTML = `<span class="models-dev-item-key">${escapeHtml(m.key)}</span>` +
       `<span class="models-dev-item-price">${escapeHtml(price)}</span>`;
     if (m.key === modelsDevSelectedKey) li.classList.add('is-selected');

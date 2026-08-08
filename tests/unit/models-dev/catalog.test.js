@@ -50,6 +50,24 @@ describe('getModelsDevCatalog normalization', () => {
     expect(noCache.cost.cacheWrite).toBeNull();
     expect(noCache.displayName).toBe('no-cache');
   });
+
+  it('keeps missing input/output as null instead of 0', async () => {
+    const payload = {
+      test: {
+        id: 'test',
+        models: {
+          'no-cost': { id: 'no-cost', name: 'No Cost' },
+          partial: { id: 'partial', cost: { input: 2 } },
+        },
+      },
+    };
+    const out = await getModelsDevCatalog({ fetchImpl: okFetch(payload) });
+    const noCost = out.models.find((m) => m.key === 'test/no-cost');
+    expect(noCost.cost).toEqual({ input: null, output: null, cacheRead: null, cacheWrite: null });
+    const partial = out.models.find((m) => m.key === 'test/partial');
+    expect(partial.cost.input).toBe(2);
+    expect(partial.cost.output).toBeNull();
+  });
 });
 
 describe('cache behavior', () => {

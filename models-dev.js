@@ -23,7 +23,7 @@ function toNumberOrNull(v) {
 /**
  * 归一化 models.dev api.json 为扁平模型列表
  * @param {object} apiJson
- * @returns {Array<{ key: string, provider: string, model: string, displayName: string, cost: { input: number, output: number, cacheRead: number|null, cacheWrite: number|null }, contextWindow: number|null }>}
+ * @returns {Array<{ key: string, provider: string, model: string, displayName: string, cost: { input: number|null, output: number|null, cacheRead: number|null, cacheWrite: number|null }, contextWindow: number|null }>}
  */
 function normalizeCatalog(apiJson) {
   const models = [];
@@ -39,8 +39,8 @@ function normalizeCatalog(apiJson) {
         model: modelId,
         displayName: typeof m.name === 'string' && m.name ? m.name : modelId,
         cost: {
-          input: toNumberOrNull(cost.input) ?? 0,
-          output: toNumberOrNull(cost.output) ?? 0,
+          input: toNumberOrNull(cost.input),
+          output: toNumberOrNull(cost.output),
           cacheRead: toNumberOrNull(cost.cache_read),
           cacheWrite: toNumberOrNull(cost.cache_write),
         },

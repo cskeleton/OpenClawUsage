@@ -170,4 +170,42 @@ describe('models.dev modal', () => {
     await vi.waitFor(() => expect(status.textContent).toMatch(/失败|failed/i));
     expect(status.querySelector('[data-action="retry"]')).not.toBeNull();
   });
+
+  it('leaves fields empty for null prices (no zero filling)', async () => {
+    fetch.mockImplementation((url) => {
+      const path = String(url);
+      if (path.startsWith('/api/models-dev/models')) {
+        return Promise.resolve(jsonResponse({
+          models: [{
+            key: 'test/free', provider: 'test', model: 'free', displayName: 'Free',
+            cost: { input: null, output: null, cacheRead: null, cacheWrite: null },
+            contextWindow: null,
+          }],
+          fetchedAt: '2026-08-09T00:00:00.000Z', stale: false, source: 'models.dev',
+        }));
+      }
+      if (path.startsWith('/api/openclaw/models')) return Promise.resolve(jsonResponse({ models: [], unpricedModels: [] }));
+      if (path.startsWith('/api/pricing/models')) return Promise.resolve(jsonResponse({ models: [] }));
+      if (path.startsWith('/api/pricing')) return Promise.resolve(jsonResponse({ enabled: true, pricing: {}, updated: 'x' }));
+      return Promise.resolve(jsonResponse({}, 404));
+    });
+    await import('../../../src/pricing.js');
+    document.getElementById('fetch-models-dev-btn').click();
+    const list = document.getElementById('models-dev-list');
+    await vi.waitFor(() => expect(list.children.length).toBe(1));
+    list.querySelector('[data-key="test/free"]').click();
+    document.getElementById('models-dev-fill').click();
+    expect(document.getElementById('new-input-price').value).toBe('');
+    expect(document.getElementById('new-output-price').value).toBe('');
+    expect(document.getElementById('new-cache-read-price').value).toBe('');
+    expect(document.getElementById('new-cache-write-price').value).toBe('');
+  });
+
+  it('lists cache prices alongside input/output', async () => {
+    await importPricing();
+    const list = await openModal();
+    const first = list.querySelector('[data-key="anthropic/claude-sonnet-4-6"]');
+    expect(first.textContent).toContain('0.3');
+    expect(first.textContent).toContain('3.75');
+  });
 });

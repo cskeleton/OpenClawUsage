@@ -7,8 +7,9 @@
 > - 按钮实际位于「添加」按钮（`#add-pricing-btn`）左侧同行。
 > - 弹窗「填入价格」行内按钮文案为「填入价格 / Fill prices」。
 > - 二次确认「取消」仅收起确认区、不关闭整个弹窗（直觉修正）。
-> - 列表行展示 `provider/model` 与 Input/Output 价格；完整四价以 title 提示呈现（非全部列内联）。
+> - 列表行行内展示 `provider/model` 与 Input/Output/Cache Read/Cache Write 四价（`I:/O:/CR:/CW:` 紧凑格式，缺省显示 `—`）。
 > - 加载态为文案「正在加载 models.dev 目录…」（无独立 spinner 元素）。
+> - 空值规则修正：`input`/`output` 缺失时归一化层保留 `null`（而非 `0`），填入时留空——避免把「无价」误写为 0 价。
 
 ## 目标
 
@@ -31,8 +32,8 @@
 - **隐私**：仅向 models.dev 发起上述固定 GET；**绝不外发**本地 Provider ID、Model ID、`baseUrl`、API Key 等任何信息。
 - **单位**：models.dev 的 `cost` 单位为 USD / 1M tokens，与本项目 $/M 展示一致，直接透传数值。
 - **字段映射**（models.dev → 本系统）：
-  - `cost.input` → `input`
-  - `cost.output` → `output`
+  - `cost.input` → `input`（缺省/非数值 → `null`）
+  - `cost.output` → `output`（缺省/非数值 → `null`）
   - `cost.cache_read` → `cacheRead`（缺省/非数值 → `null`）
   - `cost.cache_write` → `cacheWrite`（缺省/非数值 → `null`）
   - `limit.context` → `contextWindow`
@@ -77,7 +78,7 @@
 
 - `id="models-dev-modal"`，结构：标题栏（含关闭 ×）、搜索输入框、状态区、模型列表（可滚动）、底部「取消 / 填入价格」按钮（实现：行内按钮文案「填入价格 / Fill prices」）。
 - **搜索**：本地过滤 `provider/model`、`displayName`（大小写不敏感子串匹配）。
-- **列表行**：行内展示 `provider/model` 与 Input/Output 参考价（$/M）；完整四价（含 Cache Read/Write）以行 `title` 提示呈现；单选高亮；未选中时「填入价格」禁用。
+- **列表行**：行内展示 `provider/model` 与 Input/Output/Cache Read/Cache Write 四价参考（$/M，紧凑格式 `I:/O:/CR:/CW:`，缺省显示 `—`）；单选高亮；未选中时「填入价格」禁用。
 - **状态机**：
   - 加载中：状态区文案「正在加载 models.dev 目录… / Loading models.dev catalog…」；
   - 失败：错误占位 + 「重试」按钮（重新请求 API）；
@@ -95,7 +96,7 @@
      - 全部覆盖：4 格整体替换为参考价（成组同源）。
      - 只填空白：仅写入当前为空的格子，已有值保留。
      - 取消：不做任何修改（实现：仅收起二次确认区，弹窗保持打开，便于重新选择；遮罩/×/「取消」按钮才关闭弹窗）。
-3. **空值规则**：参考价 `cacheRead` / `cacheWrite` 为 `null` 时，对应格子写入空（沿用「留空 = 按 Input 原价计算」语义）；`input` / `output` 缺失（罕见）按 `0` 处理由 models.dev 归一化层保证为数值。
+3. **空值规则**：参考价为 `null`（含 `cacheRead` / `cacheWrite`，以及罕见的 `input` / `output` 缺失）时，对应格子一律写入空；Cache 格留空沿用「留空 = 按 Input 原价计算」语义，绝不用 `0` 冒充无价字段。
 4. **绝不写入** `new-model-input`（模型键留空由用户自填）、`new-match-type` 不变；不触碰任何名称/显示字段。
 5. toast 反馈：「已填入 models.dev 参考价（覆盖价格格），请确认 Provider/Model 后保存」或「已填入参考价（仅空白格）…」。
 
