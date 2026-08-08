@@ -2245,3 +2245,172 @@ tr.pricing-row-highlight {
   color: var(--accent-orange);
 }
 
+
+/* ---- models.dev 在线价格参考弹窗 ---- */
+.models-dev-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.models-dev-modal[hidden] {
+  display: none;
+}
+
+.models-dev-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(28, 25, 23, 0.45);
+  backdrop-filter: blur(4px);
+}
+
+.models-dev-modal-panel {
+  position: relative;
+  width: min(720px, calc(100vw - 32px));
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+.models-dev-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.models-dev-modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-primary);
+}
+
+.models-dev-modal-close {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--radius-xs);
+}
+
+.models-dev-modal-close:hover {
+  color: var(--text-primary);
+  background: var(--bg-card-hover);
+}
+
+#models-dev-search {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-color);
+  background: var(--bg-input);
+  color: var(--text-primary);
+}
+
+.models-dev-status {
+  min-height: 20px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.models-dev-status button[data-action='retry'] {
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--accent-indigo);
+  border-radius: var(--radius-sm);
+  padding: 2px 12px;
+  cursor: pointer;
+}
+
+.models-dev-stale-badge {
+  font-size: 12px;
+  color: var(--accent-amber);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 1px 10px;
+}
+
+.models-dev-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 50vh;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xs);
+}
+
+.models-dev-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  cursor: pointer;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.models-dev-item:last-child {
+  border-bottom: none;
+}
+
+.models-dev-item:hover {
+  background: var(--bg-card-hover);
+}
+
+.models-dev-item.is-selected {
+  background: var(--gradient-card);
+  box-shadow: inset 0 0 0 1px var(--border-glow);
+}
+
+.models-dev-item-key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+
+.models-dev-item-price {
+  color: var(--text-secondary);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.models-dev-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.models-dev-fill-confirm {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xs);
+  background: var(--bg-card-hover);
+}
+
+.models-dev-fill-confirm p {
+  margin: 0 0 10px;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.models-dev-fill-confirm-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}

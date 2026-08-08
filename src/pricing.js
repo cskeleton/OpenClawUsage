@@ -941,6 +941,224 @@ function initPricingCollapsibles() {
 
 initPricingCollapsibles();
 
+// ============================================
+// models.dev 在线价格参考弹窗
+// ============================================
+
+const MODELS_DEV_PRICE_FIELDS = [
+  ['new-input-price', 'input'],
+  ['new-output-price', 'output'],
+  ['new-cache-read-price', 'cacheRead'],
+  ['new-cache-write-price', 'cacheWrite'],
+];
+
+let modelsDevCatalog = null;
+let modelsDevSelectedKey = null;
+
+async function fetchModelsDevCatalog() {
+  const res = await fetch('/api/models-dev/models');
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+function getModelsDevElements() {
+  return {
+    modal: document.getElementById('models-dev-modal'),
+    search: document.getElementById('models-dev-search'),
+    status: document.getElementById('models-dev-status'),
+    list: document.getElementById('models-dev-list'),
+    fillBtn: document.getElementById('models-dev-fill'),
+    confirm: document.getElementById('models-dev-fill-confirm'),
+  };
+}
+
+function closeModelsDevModal() {
+  const { modal, confirm, fillBtn } = getModelsDevElements();
+  if (modal) modal.hidden = true;
+  if (confirm) confirm.hidden = true;
+  modelsDevSelectedKey = null;
+  if (fillBtn) fillBtn.disabled = true;
+}
+
+function renderModelsDevList(filter = '') {
+  const { list } = getModelsDevElements();
+  if (!list) return;
+  list.innerHTML = '';
+  const keyword = filter.trim().toLowerCase();
+  const models = (modelsDevCatalog?.models || []).filter((m) => {
+    if (!keyword) return true;
+    return (
+      m.key.toLowerCase().includes(keyword) ||
+      (m.displayName || '').toLowerCase().includes(keyword)
+    );
+  });
+  for (const m of models) {
+    const li = document.createElement('li');
+    li.dataset.key = m.key;
+    li.setAttribute('role', 'option');
+    li.className = 'models-dev-item';
+    const price = `$${m.cost.input} / $${m.cost.output}`;
+    li.innerHTML = `<span class="models-dev-item-key">${escapeHtml(m.key)}</span>` +
+      `<span class="models-dev-item-price">${escapeHtml(price)}</span>`;
+    if (m.key === modelsDevSelectedKey) li.classList.add('is-selected');
+    li.addEventListener('click', () => {
+      modelsDevSelectedKey = m.key;
+      const { fillBtn, list: currentList } = getModelsDevElements();
+      if (fillBtn) fillBtn.disabled = false;
+      currentList?.querySelectorAll('.models-dev-item').forEach((node) => {
+        node.classList.toggle('is-selected', node.dataset.key === m.key);
+      });
+    });
+    list.appendChild(li);
+  }
+}
+
+function showModelsDevError() {
+  const { status, list } = getModelsDevElements();
+  if (list) list.innerHTML = '';
+  if (!status) return;
+  status.innerHTML = '';
+  const text = document.createElement('span');
+  text.textContent = t('pricing.modelsDevLoadFailed');
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.dataset.action = 'retry';
+  retry.textContent = t('pricing.modelsDevRetry');
+  retry.addEventListener('click', () => {
+    loadModelsDevCatalogIntoModal();
+  });
+  status.appendChild(text);
+  status.appendChild(retry);
+}
+
+async function loadModelsDevCatalogIntoModal() {
+  const { status, list } = getModelsDevElements();
+  if (status) status.textContent = t('common.loadingSessions');
+  if (list) list.innerHTML = '';
+  try {
+    modelsDevCatalog = await fetchModelsDevCatalog();
+    if (status) {
+      status.innerHTML = '';
+      if (modelsDevCatalog.stale) {
+        const badge = document.createElement('span');
+        badge.className = 'models-dev-stale-badge';
+        badge.textContent = t('pricing.modelsDevStale');
+        status.appendChild(badge);
+      }
+    }
+    renderModelsDevList(getModelsDevElements().search?.value || '');
+  } catch {
+    showModelsDevError();
+  }
+}
+
+function openModelsDevModal() {
+  const { modal, search, confirm } = getModelsDevElements();
+  if (!modal) return;
+  modal.hidden = false;
+  if (confirm) confirm.hidden = true;
+  if (search) {
+    search.value = '';
+    search.focus();
+  }
+  if (modelsDevCatalog) {
+    const { status } = getModelsDevElements();
+    if (status) {
+      status.innerHTML = '';
+      if (modelsDevCatalog.stale) {
+        const badge = document.createElement('span');
+        badge.className = 'models-dev-stale-badge';
+        badge.textContent = t('pricing.modelsDevStale');
+        status.appendChild(badge);
+      }
+    }
+    renderModelsDevList('');
+  } else {
+    loadModelsDevCatalogIntoModal();
+  }
+}
+
+function writeModelsDevPrices(cost, strategy) {
+  for (const [fieldId, prop] of MODELS_DEV_PRICE_FIELDS) {
+    const el = document.getElementById(fieldId);
+    if (!el) continue;
+    if (strategy === 'blank' && el.value.trim() !== '') continue;
+    el.value = cost[prop] == null ? '' : String(cost[prop]);
+  }
+}
+
+function fillSelectedModelsDevPrice(strategy) {
+  const row = modelsDevCatalog?.models.find((m) => m.key === modelsDevSelectedKey);
+  if (!row) return;
+  writeModelsDevPrices(row.cost, strategy);
+  closeModelsDevModal();
+  showPricingToast(
+    t(strategy === 'overwrite' ? 'pricing.modelsDevFilledOverwrite' : 'pricing.modelsDevFilledBlank'),
+    { variant: 'success' },
+  );
+  const section = document.getElementById('add-pricing-section');
+  if (section && typeof section.scrollIntoView === 'function') {
+    section.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+}
+
+function handleModelsDevFillClick() {
+  if (pricingTableEditingKey !== null) {
+    showToast('请先完成或取消表格中正在编辑的行', { variant: 'error' });
+    return;
+  }
+  const row = modelsDevCatalog?.models.find((m) => m.key === modelsDevSelectedKey);
+  if (!row) return;
+  const allEmpty = MODELS_DEV_PRICE_FIELDS.every(([fieldId]) => {
+    const el = document.getElementById(fieldId);
+    return !el || el.value.trim() === '';
+  });
+  if (allEmpty) {
+    fillSelectedModelsDevPrice('overwrite');
+    return;
+  }
+  const { confirm } = getModelsDevElements();
+  if (confirm) confirm.hidden = false;
+}
+
+function initModelsDevModal() {
+  const { modal, search, fillBtn, cancelBtn } = {
+    ...getModelsDevElements(),
+    cancelBtn: document.getElementById('models-dev-cancel'),
+  };
+  if (!modal) return;
+
+  document.getElementById('fetch-models-dev-btn')?.addEventListener('click', openModelsDevModal);
+
+  modal.querySelectorAll('[data-action="close"]').forEach((el) => {
+    el.addEventListener('click', closeModelsDevModal);
+  });
+  cancelBtn?.addEventListener('click', closeModelsDevModal);
+
+  search?.addEventListener('input', () => {
+    renderModelsDevList(search.value);
+  });
+
+  fillBtn?.addEventListener('click', handleModelsDevFillClick);
+
+  modal.querySelectorAll('#models-dev-fill-confirm [data-strategy]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const strategy = btn.dataset.strategy;
+      const { confirm } = getModelsDevElements();
+      if (strategy === 'cancel') {
+        if (confirm) confirm.hidden = true;
+        return;
+      }
+      fillSelectedModelsDevPrice(strategy);
+    });
+  });
+}
+
+initModelsDevModal();
+
+// 测试钩子（jsdom 用）
+window.__modelsDev = { openModelsDevModal, closeModelsDevModal, fillSelectedModelsDevPrice };
+
 document.getElementById('pricing-help-copy-btn')?.addEventListener('click', async (e) => {
   e.stopPropagation();
   const source = document.getElementById('pricing-help-copy-content');

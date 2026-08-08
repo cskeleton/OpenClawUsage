@@ -156,6 +156,7 @@
         <input type="number" id="new-output-price" placeholder="Output" step="0.01" />
         <input type="number" id="new-cache-read-price" class="pricing-input--cache" placeholder="留空按 Input 原价" title="留空时按该行 Input 单价计算 Cache Read 费用" step="0.01" />
         <input type="number" id="new-cache-write-price" class="pricing-input--cache" placeholder="留空按 Input 原价" title="留空时按该行 Input 单价计算 Cache Write 费用" step="0.01" />
+        <button id="fetch-models-dev-btn" class="btn-secondary" type="button" data-i18n="pricing.modelsDevFetch">从 models.dev 获取参考价</button>
         <button id="add-pricing-btn" class="btn-primary" type="button">添加</button>
         <p id="new-pattern-hint" class="pricing-pattern-hint pricing-add-hint-full" hidden>
           通配符：<code>*</code> 任意长度，<code>?</code> 单字符。正则：须以 <code>/</code> 开头，可为 <code>/pattern/flags</code>。
@@ -234,6 +235,33 @@
         <div id="unpriced-models-pagination" class="table-pagination" aria-label="缺少价格表分页"></div>
       </div>
     </div>
+    </div>
+  </div>
+
+
+  <!-- models.dev 参考价弹窗 -->
+  <div id="models-dev-modal" class="models-dev-modal" hidden role="dialog" aria-modal="true" aria-labelledby="models-dev-modal-title">
+    <div class="models-dev-modal-backdrop" data-action="close"></div>
+    <div class="models-dev-modal-panel glass-card">
+      <div class="models-dev-modal-header">
+        <h3 id="models-dev-modal-title" data-i18n="pricing.modelsDevTitle">models.dev 在线价格参考</h3>
+        <button type="button" class="models-dev-modal-close" data-action="close" aria-label="关闭">×</button>
+      </div>
+      <input type="search" id="models-dev-search" data-i18n-attr="placeholder: pricing.modelsDevSearchPlaceholder" placeholder="搜索 provider/model 或名称…" />
+      <div id="models-dev-status" class="models-dev-status"></div>
+      <ul id="models-dev-list" class="models-dev-list" role="listbox"></ul>
+      <div class="models-dev-modal-footer">
+        <button type="button" class="btn-secondary" id="models-dev-cancel" data-i18n="pricing.modelsDevCancel">取消</button>
+        <button type="button" class="btn-primary" id="models-dev-fill" disabled data-i18n="pricing.modelsDevFill">填入价格</button>
+      </div>
+      <div id="models-dev-fill-confirm" class="models-dev-fill-confirm" hidden>
+        <p data-i18n="pricing.modelsDevFillConfirm">价格格已有内容，如何填入？</p>
+        <div class="models-dev-fill-confirm-actions">
+          <button type="button" class="btn-primary" data-strategy="overwrite" data-i18n="pricing.modelsDevOverwrite">全部覆盖</button>
+          <button type="button" class="btn-secondary" data-strategy="blank" data-i18n="pricing.modelsDevBlank">只填空白</button>
+          <button type="button" class="btn-secondary" data-strategy="cancel" data-i18n="pricing.modelsDevConfirmCancel">取消</button>
+        </div>
+      </div>
     </div>
   </div>
 
