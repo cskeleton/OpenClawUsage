@@ -24,6 +24,24 @@ describe('chart presentation helpers', () => {
     expect(datasets[1].backgroundColor).not.toBe(datasets[2].backgroundColor);
   });
 
+  it('rounds both outer corners on the only visible input segment', () => {
+    const datasets = buildModelDatasets([{ input: 100, output: 30 }]);
+    const borderRadius = datasets[2].borderRadius({ dataIndex: 0 });
+
+    expect(borderRadius).toEqual({
+      bottomLeft: 6, bottomRight: 6, topLeft: 6, topRight: 6,
+    });
+  });
+
+  it('rounds both outer corners when Cache Write is the only visible input segment', () => {
+    const datasets = buildModelDatasets([{ input: 0, cacheWrite: 20, cacheRead: 0, output: 30 }]);
+    const borderRadius = datasets[1].borderRadius({ dataIndex: 0 });
+
+    expect(borderRadius).toEqual({
+      bottomLeft: 6, bottomRight: 6, topLeft: 6, topRight: 6,
+    });
+  });
+
   it('shows provider cost and one-decimal share', () => {
     expect(formatProviderTooltipLabel('openai', 2.5, 10))
       .toBe(' openai: $2.50 (25.0%)');

@@ -108,6 +108,26 @@ const MODEL_INPUT_COLORS = {
   input: 'rgba(99, 102, 241, 0.28)',
 };
 
+const MODEL_INPUT_SEGMENTS = ['cacheRead', 'cacheWrite', 'input'];
+
+function getInputSegmentBorderRadius(rows, segment) {
+  return (context) => {
+    const row = rows[context.dataIndex] ?? {};
+    const visibleSegments = MODEL_INPUT_SEGMENTS.filter((name) => (
+      Number.isFinite(row[name]) && row[name] > 0
+    ));
+
+    if (!visibleSegments.includes(segment)) return 0;
+
+    return {
+      bottomLeft: visibleSegments[0] === segment ? 6 : 0,
+      bottomRight: visibleSegments[0] === segment ? 6 : 0,
+      topLeft: visibleSegments.at(-1) === segment ? 6 : 0,
+      topRight: visibleSegments.at(-1) === segment ? 6 : 0,
+    };
+  };
+}
+
 export function buildModelDatasets(rows) {
   return [
     {
@@ -117,7 +137,7 @@ export function buildModelDatasets(rows) {
       backgroundColor: MODEL_INPUT_COLORS.cacheRead,
       borderColor: COLORS.indigo.border,
       borderWidth: 1,
-      borderRadius: { bottomLeft: 6, bottomRight: 6, topLeft: 0, topRight: 0 },
+      borderRadius: getInputSegmentBorderRadius(rows, 'cacheRead'),
       borderSkipped: false,
     },
     {
@@ -127,7 +147,7 @@ export function buildModelDatasets(rows) {
       backgroundColor: MODEL_INPUT_COLORS.cacheWrite,
       borderColor: COLORS.indigo.border,
       borderWidth: 1,
-      borderRadius: 0,
+      borderRadius: getInputSegmentBorderRadius(rows, 'cacheWrite'),
       borderSkipped: false,
     },
     {
@@ -137,7 +157,7 @@ export function buildModelDatasets(rows) {
       backgroundColor: MODEL_INPUT_COLORS.input,
       borderColor: COLORS.indigo.border,
       borderWidth: 1,
-      borderRadius: { bottomLeft: 0, bottomRight: 0, topLeft: 6, topRight: 6 },
+      borderRadius: getInputSegmentBorderRadius(rows, 'input'),
       borderSkipped: false,
     },
     {
