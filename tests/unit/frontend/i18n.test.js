@@ -152,6 +152,8 @@ describe('i18n', () => {
 
     expect(narrowRules).toMatch(/\.time-custom\s*\{[^}]*width:\s*100%/);
     expect(narrowRules).toMatch(/\.time-custom \.date-input\s*\{[^}]*min-width:\s*0[^}]*width:\s*100%/);
+    expect(narrowRules).toMatch(/\.dimension-fields,\s*\.dimension-field\s*\{[^}]*width:\s*100%/);
+    expect(narrowRules).toMatch(/\.pagination-controls,\s*\.page-buttons\s*\{[^}]*width:\s*100%[^}]*flex-wrap:\s*wrap/);
   });
 
   it('keeps dashboard chart locale keys synchronized between Chinese and English', () => {

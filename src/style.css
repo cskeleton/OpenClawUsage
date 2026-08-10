@@ -751,6 +751,17 @@ tbody td {
     width: 100%;
   }
 
+  .dimension-fields,
+  .dimension-field {
+    width: 100%;
+  }
+
+  .pagination-controls,
+  .page-buttons {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
   .table-controls {
     flex-direction: column;
     width: 100%;
