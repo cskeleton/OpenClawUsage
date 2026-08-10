@@ -53,13 +53,17 @@ function createRow(key, label) {
   };
 }
 
+function normalizedTokenTotal(row) {
+  return (row.totalInput / Number.MAX_VALUE) + (row.output / Number.MAX_VALUE);
+}
+
 export function buildModelChartRows(byModel, { mergeDateCheckpoints = true } = {}) {
   const rows = new Map();
 
   for (const [sourceKey, entry] of Object.entries(byModel ?? {})) {
     const model = typeof entry?.model === 'string' ? entry.model : '';
     const key = mergeDateCheckpoints ? stripDateCheckpoint(model) : sourceKey;
-    const label = mergeDateCheckpoints ? key : model;
+    const label = key;
     const row = rows.get(key) ?? createRow(key, label);
 
     row.input = addFinite(row.input, entry?.input);
@@ -74,7 +78,7 @@ export function buildModelChartRows(byModel, { mergeDateCheckpoints = true } = {
   }
 
   return [...rows.values()].sort((left, right) => (
-    (right.totalInput + right.output) - (left.totalInput + left.output)
+    normalizedTokenTotal(right) - normalizedTokenTotal(left)
     || left.label.localeCompare(right.label)
     || left.key.localeCompare(right.key)
   ));

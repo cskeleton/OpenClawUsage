@@ -53,6 +53,22 @@ describe('buildModelChartRows', () => {
     expect(buildModelChartRows(byModel, { mergeDateCheckpoints: false })).toHaveLength(2);
   });
 
+  it('labels same-model exact entries with their provider when merging is disabled', () => {
+    const rows = buildModelChartRows({
+      'provider-a/shared-model': {
+        provider: 'provider-a', model: 'shared-model', input: 20,
+      },
+      'provider-b/shared-model': {
+        provider: 'provider-b', model: 'shared-model', input: 10,
+      },
+    }, { mergeDateCheckpoints: false });
+
+    expect(rows.map(({ key, label }) => [key, label])).toEqual([
+      ['provider-a/shared-model', 'provider-a/shared-model'],
+      ['provider-b/shared-model', 'provider-b/shared-model'],
+    ]);
+  });
+
   it('sorts by cache-inclusive input plus output rather than ordinary input', () => {
     const rows = buildModelChartRows({
       'provider-a/ordinary-input-winner': {
@@ -107,5 +123,23 @@ describe('buildModelChartRows', () => {
     });
     expect(Number.isFinite(rows[0].input)).toBe(true);
     expect(Number.isFinite(rows[0].totalInput)).toBe(true);
+  });
+
+  it('ranks overflow-sized totals by magnitude before label tie-breaking', () => {
+    const rows = buildModelChartRows({
+      'provider-a/a-smaller-overflow': {
+        provider: 'provider-a', model: 'a-smaller-overflow',
+        input: Number.MAX_VALUE, output: Number.MAX_VALUE / 2,
+      },
+      'provider-z/z-larger-overflow': {
+        provider: 'provider-z', model: 'z-larger-overflow',
+        input: Number.MAX_VALUE, output: Number.MAX_VALUE,
+      },
+    });
+
+    expect(rows.map(({ key }) => key)).toEqual([
+      'z-larger-overflow',
+      'a-smaller-overflow',
+    ]);
   });
 });

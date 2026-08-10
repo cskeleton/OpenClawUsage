@@ -98,7 +98,20 @@ function formatCostValue(v) {
 
 export function formatProviderTooltipLabel(label, value, total) {
   const cost = Number.isFinite(value) ? value : 0;
-  const share = Number.isFinite(total) && total > 0 ? (cost / total) * 100 : 0;
+  let share = 0;
+  if (Array.isArray(total)) {
+    const scale = total.reduce((max, item) => (
+      Number.isFinite(item) ? Math.max(max, Math.abs(item)) : max
+    ), 0);
+    const normalizedTotal = scale > 0
+      ? total.reduce((sum, item) => (
+          Number.isFinite(item) ? sum + (item / scale) : sum
+        ), 0)
+      : 0;
+    share = normalizedTotal > 0 ? ((cost / scale) / normalizedTotal) * 100 : 0;
+  } else if (Number.isFinite(total) && total > 0) {
+    share = (cost / total) * 100;
+  }
   return ` ${label}: ${formatCostValue(cost)} (${share.toFixed(1)}%)`;
 }
 
@@ -176,10 +189,61 @@ export function buildModelDatasets(rows) {
 export function formatModelTotalInput(items) {
   const total = items.reduce((sum, item) => (
     item.dataset.stack === 'input' && Number.isFinite(item.parsed?.y)
-      ? sum + item.parsed.y
+      ? Math.min(sum + item.parsed.y, Number.MAX_VALUE)
       : sum
   ), 0);
   return `${t('dashboard.chartTotalInput')}: ${total.toLocaleString()}`;
+}
+
+export function buildModelChartOptions({
+  useLogScale = false,
+  tooltipConfig = {},
+  gridColor,
+} = {}) {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    indexAxis: 'x',
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      tooltip: {
+        ...tooltipConfig,
+        callbacks: {
+          label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()}`,
+          footer: formatModelTotalInput,
+        },
+      },
+    },
+    scales: {
+      y: {
+        type: useLogScale ? 'logarithmic' : 'linear',
+        beginAtZero: !useLogScale,
+        min: useLogScale ? 1 : undefined,
+        ticks: {
+          callback: (v) => {
+            if (useLogScale) {
+              // Only show labels at powers of 10
+              if (v === 1 || v === 10 || v === 100 || v === 1000
+                || v === 10000 || v === 100000 || v === 1000000
+                || v === 10000000 || v === 100000000) {
+                return formatTickValue(v);
+              }
+              return '';
+            }
+            return formatTickValue(v);
+          },
+        },
+        grid: { color: gridColor },
+      },
+      x: {
+        grid: { display: false },
+        ticks: {
+          maxRotation: 45,
+          minRotation: 0,
+        },
+      },
+    },
+  };
 }
 
 /**
@@ -337,9 +401,6 @@ function renderProviderChart(byProvider) {
   clearEmptyChart(ctx);
 
   const costs = providers.map((p) => byProvider[p].totalCost);
-  const totalCost = costs.reduce((total, cost) => (
-    Number.isFinite(cost) ? total + cost : total
-  ), 0);
 
   chartInstances.provider = new Chart(ctx, {
     type: 'doughnut',
@@ -364,7 +425,7 @@ function renderProviderChart(byProvider) {
         tooltip: {
           ...getTooltipConfig(),
           callbacks: {
-            label: (ctx) => formatProviderTooltipLabel(ctx.label, ctx.parsed, totalCost),
+            label: (ctx) => formatProviderTooltipLabel(ctx.label, ctx.parsed, costs),
           },
         },
       },
@@ -410,50 +471,11 @@ function renderModelChart(byModel) {
       labels,
       datasets,
     },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      indexAxis: 'x',
-      interaction: { mode: 'index', intersect: false },
-      plugins: {
-        tooltip: {
-          ...getTooltipConfig(),
-          callbacks: {
-            label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()}`,
-            footer: formatModelTotalInput,
-          },
-        },
-      },
-      scales: {
-        y: {
-          type: useLogScale ? 'logarithmic' : 'linear',
-          beginAtZero: !useLogScale,
-          min: useLogScale ? 1 : undefined,
-          ticks: {
-            callback: (v) => {
-              if (useLogScale) {
-                // Only show labels at powers of 10
-                if (v === 1 || v === 10 || v === 100 || v === 1000
-                  || v === 10000 || v === 100000 || v === 1000000
-                  || v === 10000000 || v === 100000000) {
-                  return formatTickValue(v);
-                }
-                return '';
-              }
-              return formatTickValue(v);
-            },
-          },
-          grid: { color: getChartThemeFromCss().grid },
-        },
-        x: {
-          grid: { display: false },
-          ticks: {
-            maxRotation: 45,
-            minRotation: 0,
-          },
-        },
-      },
-    },
+    options: buildModelChartOptions({
+      useLogScale,
+      tooltipConfig: getTooltipConfig(),
+      gridColor: getChartThemeFromCss().grid,
+    }),
   });
 }
 
