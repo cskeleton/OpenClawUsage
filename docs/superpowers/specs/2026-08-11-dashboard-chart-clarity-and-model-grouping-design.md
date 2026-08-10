@@ -1,7 +1,7 @@
 # 设计规格：仪表盘图表清晰度与模型归并
 
 **日期**：2026-08-11
-**状态**：设计已确认，待实施
+**状态**：已实现（同步审计后回写）
 
 ## 背景与目标
 
@@ -173,3 +173,29 @@ Tooltip 使用 index 交互，使同一模型的所有分段可一次读取，�
 ## 7. Post-Implementation Sync Audit
 
 实现与验证完成后，逐项对照本规格核查代码、测试和真实浏览器行为。任何经验证需要调整的交互或技术细节必须回写本文件，并把状态更新为“已实现（同步审计后回写）”，确保规格继续作为单一事实源。
+
+## 实现说明与同步审计（2026-08-11）
+
+### 实际实现边界
+
+- 纯转换模块为 `src/model-chart-data.js`：`stripDateCheckpoint()` 识别并校验末尾 `-MMDD`、`-YYYYMMDD`、`-YYYY-MM-DD`；`MMDD` 使用 2000 年校验，因此允许 `0229`。`buildModelChartRows()` 在合并开启时以去除 checkpoint 后的 Model 名跨 Provider 聚合，在关闭时保留每条精确 `provider/model` 记录并以完整键作为显示标签；所有聚合字段先做有限数值归一化，并以饱和加法避免极端输入产生 `Infinity`，排序比较则使用归一化总量避免比较器自身溢出。
+- Chart.js 展示集中在 `src/charts.js`：数据集实际顺序为 `Cache Read`、`Cache Write`、普通 `Input`、`Output`；前三者共享 `stack: 'input'`，Output 使用 `stack: 'output'`。Input 三段使用同一靛蓝色系的深、中、浅透明度，并按每根柱实际存在的最底/最顶分段只绘制外缘圆角；Model 图的交互、Tooltip 和坐标轴配置由无 DOM/CDN 依赖的 options builder 生成，并直接传给真实 Chart.js 实例。
+- Model Tooltip 使用 `interaction.mode: 'index'`。主体按数据集顺序显示 Cache Read、Cache Write、Input、Output，footer 显示三段相加后的 Total Input；中英文文案均来自 `src/locales/zh-CN.js` 与 `src/locales/en-US.js`。
+- 合并开关位于 `index.html` 的 Model 图标题行、对数坐标开关之前，首次加载由 HTML `checked` 默认开启；`src/main.js` 仅在当前页面生命周期读取其状态并沿用既有 destroy-before-render 流程，筛选、线性/对数、主题和语言重绘不会重置它，刷新页面后恢复默认开启。
+- Provider 圆环仍使用当前筛选后的 `byProvider` 顺序和费用；Tooltip 由 `formatProviderTooltipLabel()` 输出小额友好费用与一位小数占比，总费用为零时固定为 `0.0%`。
+- 装饰性标题 Emoji 已从 `index.html` fallback 与双语词典移除；品牌 `🦞`、Session 状态、摘要卡片和 `💰 价格配置` 图标保留。`README.md` 与 `README_EN.md` 已同步说明缓存分段、默认 checkpoint 合并及 Provider 占比 Tooltip。
+- 320px 实机验收额外暴露了日期输入、维度筛选和分页控件的固有宽度溢出。最终 `src/style.css` 在窄屏让日期输入可收缩、维度字段占满可用宽度、分页控件换行；这是对第 6 节“无重叠或横向裁切”验收项的必要修正，不改变桌面端交互。
+
+### 测试与真实浏览器证据
+
+- 单元测试覆盖 `tests/unit/frontend/model-chart-data.test.js`、`tests/unit/frontend/charts.test.js` 与 `tests/unit/frontend/i18n.test.js`；最终 `npm test` 为 25 个测试文件通过，243 个测试通过、1 个跳过（共 244 个），`npm run build` 由 Vite 6.4.2 成功构建 14 个模块。
+- 真实浏览器使用工作树本地 launcher 在隔离的临时 `OPENCLAW_CONFIG_DIR` 与 loopback 端口运行；验收数据使用匿名化的受控样本，同时覆盖跨 Provider 的日期 checkpoint 变体以及 Cache Read / Cache Write。
+- 在合成验收样本中，合并开启后两个精确条目 `provider-a/model-alpha-0731` 与 `provider-b/model-alpha` 归并为单个 `model-alpha` 标签，各 Token 分量等于两个来源的手工校验合计；关闭开关后恢复两个带 Provider 的精确标签。
+- 深色 Tooltip 以合成的有限数值样本验证 Cache Read、Cache Write、Input、Output 与 Total Input 的加总关系；Provider Tooltip 以匿名 Provider 和合成费用验证当前筛选总费用下的一位小数占比。
+- 线性 / 对数切换实测分别创建有效 `linear` / `logarithmic` 图表且保持合并开关状态；Provider、Model、最近 30 天、语言和主题操作均生成新的 Chart 实例并保留当前筛选与合并选择。英文状态下标题、开关、图例及 Total Input Tooltip 已同步切换。
+- 320px 复验结果为 `document.scrollWidth === 320`，Model 两个开关分行且无重叠，日期输入、Provider/Model 筛选及分页按钮均位于视口内。验证结束后已停止隔离 PID、确认端口释放并删除临时配置目录。
+- 截图证据保存在忽略的 SDD 工作区：`artifacts/light-merged-model-chart.png`、`artifacts/dark-merged-model-tooltip.png`、`artifacts/dark-merge-off-model-chart.png`、`artifacts/dark-provider-percentage-tooltip.png`、`artifacts/narrow-320-fixed-full-page.png`（目录：`.superpowers/sdd/2026-08-11-dashboard-chart-clarity-and-model-grouping/`）。
+
+### 审计结论
+
+第 1–6 节的功能、非目标、国际化、文档、空态/非有限数值兼容、Chart 生命周期与验收项均已在代码、自动化测试和真实浏览器中逐项核对。除上述为满足窄屏验收而补充的响应式约束外，最终行为与原设计无语义偏差。

@@ -20,6 +20,11 @@
 - Preserve all pre-existing worktree changes. In particular, do not stage `.cursor/hooks/state/*`, `AGENTS.md`, `.superpowers/`, or `docs/superpowers/plans/2026-08-09-models-dev-pricing-reference.md`.
 - Do not modify `CLAUDE.md`.
 
+## Approved Pre-Flight Rulings
+
+- Test rendered DOM behavior instead of grepping HTML source text. Reading the static HTML fixture is allowed only to parse it into a DOM whose elements, attributes, and text are asserted.
+- Verify the isolated worktree with its own launcher process, temporary `OPENCLAW_CONFIG_DIR`, and a free `OPENCLAW_USAGE_PORT`; do not invoke or replace the globally installed `~/bin/openclaw-usage` wrapper.
+
 ## File Structure
 
 - Create `src/model-chart-data.js`: date-checkpoint validation, normalization, cross-Provider chart-only aggregation, stable sorting.
@@ -313,7 +318,7 @@ git commit -m "feat(charts): show cache composition and provider share"
 
 - [ ] **Step 1: Write failing i18n and markup contract tests**
 
-Extend `tests/unit/frontend/i18n.test.js` to read `index.html` and `pricing.html` and assert exact behavior:
+Extend `tests/unit/frontend/i18n.test.js` to parse `index.html` and `pricing.html` into DOM documents and assert the rendered static behavior:
 
 ```js
 import fs from 'node:fs';
@@ -321,16 +326,18 @@ import fs from 'node:fs';
 it('keeps dashboard chart controls and heading emoji contract synchronized', () => {
   const dashboardHtml = fs.readFileSync(new URL('../../../index.html', import.meta.url), 'utf8');
   const pricingHtml = fs.readFileSync(new URL('../../../pricing.html', import.meta.url), 'utf8');
+  const dashboardDoc = new DOMParser().parseFromString(dashboardHtml, 'text/html');
+  const pricingDoc = new DOMParser().parseFromString(pricingHtml, 'text/html');
 
-  expect(dashboardHtml).toMatch(/id="model-merge-checkpoints"[^>]*checked/);
+  expect(dashboardDoc.querySelector('#model-merge-checkpoints')?.checked).toBe(true);
   expect(zhCNMessages.dashboard.chartTimeline).toBe('用量趋势（按日）');
   expect(zhCNMessages.dashboard.chartProvider).toBe('Provider 费用分布');
   expect(zhCNMessages.dashboard.chartModel).toBe('Model 用量对比');
   expect(zhCNMessages.dashboard.breakdownTitle).toBe('Provider / Model 消耗明细');
   expect(zhCNMessages.dashboard.sessionDetails).toBe('Session 明细');
   expect(enUSMessages.dashboard.chartModel).toBe('Model usage comparison');
-  expect(pricingHtml).toContain('💰 价格配置');
-  expect(dashboardHtml).toContain('<div class="logo">🦞</div>');
+  expect(pricingDoc.querySelector('.pricing-title-text')?.textContent).toContain('💰');
+  expect(dashboardDoc.querySelector('.logo')?.textContent).toBe('🦞');
 });
 ```
 
@@ -437,17 +444,23 @@ npm run build
 
 Expected: index has no staged leftovers, all Vitest projects PASS, and Vite build exits 0. Record the observed test counts and build result; do not reuse earlier results.
 
-- [ ] **Step 2: Start the built app without disturbing an existing launcher unnecessarily**
+- [ ] **Step 2: Start the worktree build in an isolated runtime**
 
-Run `~/bin/openclaw-usage status` first and record whether this task owns the process. If stopped, run:
+Create a temporary config root, link only the real read-only data sources needed for browser evidence, and use a free port. Do not invoke or modify the globally installed wrapper:
 
 ```bash
-~/bin/openclaw-usage build
-~/bin/openclaw-usage start
-~/bin/openclaw-usage status
+QA_CONFIG_DIR=$(mktemp -d)
+mkdir -p "$QA_CONFIG_DIR"
+ln -s "$HOME/.openclaw/agents" "$QA_CONFIG_DIR/agents"
+if [ -f "$HOME/.openclaw/openclaw.json" ]; then
+  ln -s "$HOME/.openclaw/openclaw.json" "$QA_CONFIG_DIR/openclaw.json"
+fi
+OPENCLAW_CONFIG_DIR="$QA_CONFIG_DIR" OPENCLAW_USAGE_PORT=3101 node scripts/openclaw-usage-cli.js build
+OPENCLAW_CONFIG_DIR="$QA_CONFIG_DIR" OPENCLAW_USAGE_PORT=3101 node scripts/openclaw-usage-cli.js start
+OPENCLAW_CONFIG_DIR="$QA_CONFIG_DIR" OPENCLAW_USAGE_PORT=3101 node scripts/openclaw-usage-cli.js status
 ```
 
-If it was already running, run the launcher’s build command and follow its safe restart/status behavior instead of starting a second server. Only stop the process at the end if this task started it.
+If port 3101 is occupied, select another explicit free loopback port and use the same value for every command. This task owns this isolated process; after browser QA, stop it with the same environment and retain `QA_CONFIG_DIR` until all screenshots and fault checks are complete.
 
 - [ ] **Step 3: Perform real-browser functional and visual QA**
 
@@ -464,6 +477,13 @@ Use the `playwright` skill and the launcher URL. Verify with current local data 
 9. Narrow viewport controls wrap without overlap or horizontal clipping.
 
 Capture screenshots for at least: light merged chart, dark merged chart with tooltip, merge-off chart, and Provider percentage tooltip. Keep screenshots outside git unless the user requests repository artifacts.
+
+After QA, stop the isolated process and remove only the validated temporary directory created above:
+
+```bash
+OPENCLAW_CONFIG_DIR="$QA_CONFIG_DIR" OPENCLAW_USAGE_PORT=3101 node scripts/openclaw-usage-cli.js stop
+test -n "$QA_CONFIG_DIR" && test "$QA_CONFIG_DIR" != / && rm -rf -- "$QA_CONFIG_DIR"
+```
 
 - [ ] **Step 4: Fix any evidence-backed defect with a failing regression test first**
 

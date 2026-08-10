@@ -1,5 +1,6 @@
 // Chart.js via CDN — loaded dynamically
 import { t } from './i18n.js';
+import { buildModelChartRows } from './model-chart-data.js';
 
 let Chart;
 
@@ -93,6 +94,156 @@ function formatCostValue(v) {
   if (v >= 0.01) return '$' + v.toFixed(3);
   if (v > 0) return '$' + v.toFixed(6);
   return '$0';
+}
+
+export function formatProviderTooltipLabel(label, value, total) {
+  const cost = Number.isFinite(value) ? value : 0;
+  let share = 0;
+  if (Array.isArray(total)) {
+    const scale = total.reduce((max, item) => (
+      Number.isFinite(item) ? Math.max(max, Math.abs(item)) : max
+    ), 0);
+    const normalizedTotal = scale > 0
+      ? total.reduce((sum, item) => (
+          Number.isFinite(item) ? sum + (item / scale) : sum
+        ), 0)
+      : 0;
+    share = normalizedTotal > 0 ? ((cost / scale) / normalizedTotal) * 100 : 0;
+  } else if (Number.isFinite(total) && total > 0) {
+    share = (cost / total) * 100;
+  }
+  return ` ${label}: ${formatCostValue(cost)} (${share.toFixed(1)}%)`;
+}
+
+const MODEL_INPUT_COLORS = {
+  cacheRead: 'rgba(99, 102, 241, 0.88)',
+  cacheWrite: 'rgba(99, 102, 241, 0.58)',
+  input: 'rgba(99, 102, 241, 0.28)',
+};
+
+const MODEL_INPUT_SEGMENTS = ['cacheRead', 'cacheWrite', 'input'];
+
+function getInputSegmentBorderRadius(rows, segment) {
+  return (context) => {
+    const row = rows[context.dataIndex] ?? {};
+    const visibleSegments = MODEL_INPUT_SEGMENTS.filter((name) => (
+      Number.isFinite(row[name]) && row[name] > 0
+    ));
+
+    if (!visibleSegments.includes(segment)) return 0;
+
+    return {
+      bottomLeft: visibleSegments[0] === segment ? 6 : 0,
+      bottomRight: visibleSegments[0] === segment ? 6 : 0,
+      topLeft: visibleSegments.at(-1) === segment ? 6 : 0,
+      topRight: visibleSegments.at(-1) === segment ? 6 : 0,
+    };
+  };
+}
+
+export function buildModelDatasets(rows) {
+  return [
+    {
+      label: t('dashboard.chartCacheRead'),
+      stack: 'input',
+      data: rows.map((row) => row.cacheRead),
+      backgroundColor: MODEL_INPUT_COLORS.cacheRead,
+      borderColor: COLORS.indigo.border,
+      borderWidth: 1,
+      borderRadius: getInputSegmentBorderRadius(rows, 'cacheRead'),
+      borderSkipped: false,
+    },
+    {
+      label: t('dashboard.chartCacheWrite'),
+      stack: 'input',
+      data: rows.map((row) => row.cacheWrite),
+      backgroundColor: MODEL_INPUT_COLORS.cacheWrite,
+      borderColor: COLORS.indigo.border,
+      borderWidth: 1,
+      borderRadius: getInputSegmentBorderRadius(rows, 'cacheWrite'),
+      borderSkipped: false,
+    },
+    {
+      label: t('dashboard.chartInput'),
+      stack: 'input',
+      data: rows.map((row) => row.input),
+      backgroundColor: MODEL_INPUT_COLORS.input,
+      borderColor: COLORS.indigo.border,
+      borderWidth: 1,
+      borderRadius: getInputSegmentBorderRadius(rows, 'input'),
+      borderSkipped: false,
+    },
+    {
+      label: t('dashboard.chartOutput'),
+      stack: 'output',
+      data: rows.map((row) => row.output),
+      backgroundColor: COLORS.violet.bg,
+      borderColor: COLORS.violet.border,
+      borderWidth: 1,
+      borderRadius: 6,
+      borderSkipped: false,
+    },
+  ];
+}
+
+export function formatModelTotalInput(items) {
+  const total = items.reduce((sum, item) => (
+    item.dataset.stack === 'input' && Number.isFinite(item.parsed?.y)
+      ? Math.min(sum + item.parsed.y, Number.MAX_VALUE)
+      : sum
+  ), 0);
+  return `${t('dashboard.chartTotalInput')}: ${total.toLocaleString()}`;
+}
+
+export function buildModelChartOptions({
+  useLogScale = false,
+  tooltipConfig = {},
+  gridColor,
+} = {}) {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    indexAxis: 'x',
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      tooltip: {
+        ...tooltipConfig,
+        callbacks: {
+          label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()}`,
+          footer: formatModelTotalInput,
+        },
+      },
+    },
+    scales: {
+      y: {
+        type: useLogScale ? 'logarithmic' : 'linear',
+        beginAtZero: !useLogScale,
+        min: useLogScale ? 1 : undefined,
+        ticks: {
+          callback: (v) => {
+            if (useLogScale) {
+              // Only show labels at powers of 10
+              if (v === 1 || v === 10 || v === 100 || v === 1000
+                || v === 10000 || v === 100000 || v === 1000000
+                || v === 10000000 || v === 100000000) {
+                return formatTickValue(v);
+              }
+              return '';
+            }
+            return formatTickValue(v);
+          },
+        },
+        grid: { color: gridColor },
+      },
+      x: {
+        grid: { display: false },
+        ticks: {
+          maxRotation: 45,
+          minRotation: 0,
+        },
+      },
+    },
+  };
 }
 
 /**
@@ -274,7 +425,7 @@ function renderProviderChart(byProvider) {
         tooltip: {
           ...getTooltipConfig(),
           callbacks: {
-            label: (ctx) => ` ${ctx.label}: $${ctx.parsed.toFixed(4)}`,
+            label: (ctx) => formatProviderTooltipLabel(ctx.label, ctx.parsed, costs),
           },
         },
       },
@@ -295,18 +446,13 @@ function renderModelChart(byModel) {
   clearEmptyChart(ctx);
 
   const useLogScale = document.getElementById('model-log-scale')?.checked || false;
-
-  // Sort models by total tokens descending for better visualization
-  const sorted = models
-    .map((key) => ({ key, ...byModel[key] }))
-    .sort((a, b) => (b.input + b.output) - (a.input + a.output));
-
-  const labels = sorted.map((m) => m.model);
-  const inputData = sorted.map((m) => m.input);
-  const outputData = sorted.map((m) => m.output);
+  const mergeDateCheckpoints = document.getElementById('model-merge-checkpoints')?.checked ?? true;
+  const rows = buildModelChartRows(byModel, { mergeDateCheckpoints });
+  const labels = rows.map((row) => row.label);
+  const datasets = buildModelDatasets(rows);
 
   // Calculate data range to detect if log scale is needed
-  const allValues = [...inputData, ...outputData].filter((v) => v > 0);
+  const allValues = rows.flatMap((row) => [row.totalInput, row.output]).filter((v) => v > 0);
   const maxVal = Math.max(...allValues, 1);
   const minVal = Math.min(...allValues, 1);
   const dynamicRange = maxVal / minVal;
@@ -323,67 +469,13 @@ function renderModelChart(byModel) {
     type: 'bar',
     data: {
       labels,
-      datasets: [
-        {
-          label: 'Input Tokens',
-          data: inputData,
-          backgroundColor: COLORS.indigo.bg,
-          borderColor: COLORS.indigo.border,
-          borderWidth: 1,
-          borderRadius: 6,
-        },
-        {
-          label: 'Output Tokens',
-          data: outputData,
-          backgroundColor: COLORS.violet.bg,
-          borderColor: COLORS.violet.border,
-          borderWidth: 1,
-          borderRadius: 6,
-        },
-      ],
+      datasets,
     },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      indexAxis: 'x',
-      plugins: {
-        tooltip: {
-          ...getTooltipConfig(),
-          callbacks: {
-            label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()}`,
-          },
-        },
-      },
-      scales: {
-        y: {
-          type: useLogScale ? 'logarithmic' : 'linear',
-          beginAtZero: !useLogScale,
-          min: useLogScale ? 1 : undefined,
-          ticks: {
-            callback: (v) => {
-              if (useLogScale) {
-                // Only show labels at powers of 10
-                if (v === 1 || v === 10 || v === 100 || v === 1000
-                  || v === 10000 || v === 100000 || v === 1000000
-                  || v === 10000000 || v === 100000000) {
-                  return formatTickValue(v);
-                }
-                return '';
-              }
-              return formatTickValue(v);
-            },
-          },
-          grid: { color: getChartThemeFromCss().grid },
-        },
-        x: {
-          grid: { display: false },
-          ticks: {
-            maxRotation: 45,
-            minRotation: 0,
-          },
-        },
-      },
-    },
+    options: buildModelChartOptions({
+      useLogScale,
+      tooltipConfig: getTooltipConfig(),
+      gridColor: getChartThemeFromCss().grid,
+    }),
   });
 }
 

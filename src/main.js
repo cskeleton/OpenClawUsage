@@ -573,6 +573,13 @@ function applyFilter(filter, resetPage = true) {
   renderSessionsTable(allSessions);
 }
 
+function rerenderChartsOnly() {
+  if (!fullData) return;
+  const filteredData = filterData(fullData, getCurrentFilter());
+  destroyCharts();
+  renderCharts(filteredData, { timelineMetric });
+}
+
 function renderDataFromFull(resetPage = false) {
   if (!fullData) return;
   updateGeneratedAt(fullData);
@@ -774,10 +781,8 @@ function bindEventsOnce() {
     refreshTable();
   });
 
-  document.getElementById('model-log-scale').addEventListener('change', () => {
-    const filteredData = filterData(fullData, getCurrentFilter());
-    destroyCharts();
-    renderCharts(filteredData, { timelineMetric });
+  document.querySelectorAll('#model-log-scale, #model-merge-checkpoints').forEach((control) => {
+    control.addEventListener('change', rerenderChartsOnly);
   });
 }
 
