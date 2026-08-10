@@ -1,5 +1,6 @@
 // Chart.js via CDN — loaded dynamically
 import { t } from './i18n.js';
+import { buildModelChartRows } from './model-chart-data.js';
 
 let Chart;
 
@@ -93,6 +94,72 @@ function formatCostValue(v) {
   if (v >= 0.01) return '$' + v.toFixed(3);
   if (v > 0) return '$' + v.toFixed(6);
   return '$0';
+}
+
+export function formatProviderTooltipLabel(label, value, total) {
+  const cost = Number.isFinite(value) ? value : 0;
+  const share = Number.isFinite(total) && total > 0 ? (cost / total) * 100 : 0;
+  return ` ${label}: ${formatCostValue(cost)} (${share.toFixed(1)}%)`;
+}
+
+const MODEL_INPUT_COLORS = {
+  cacheRead: 'rgba(99, 102, 241, 0.88)',
+  cacheWrite: 'rgba(99, 102, 241, 0.58)',
+  input: 'rgba(99, 102, 241, 0.28)',
+};
+
+export function buildModelDatasets(rows) {
+  return [
+    {
+      label: t('dashboard.chartCacheRead'),
+      stack: 'input',
+      data: rows.map((row) => row.cacheRead),
+      backgroundColor: MODEL_INPUT_COLORS.cacheRead,
+      borderColor: COLORS.indigo.border,
+      borderWidth: 1,
+      borderRadius: { bottomLeft: 6, bottomRight: 6, topLeft: 0, topRight: 0 },
+      borderSkipped: false,
+    },
+    {
+      label: t('dashboard.chartCacheWrite'),
+      stack: 'input',
+      data: rows.map((row) => row.cacheWrite),
+      backgroundColor: MODEL_INPUT_COLORS.cacheWrite,
+      borderColor: COLORS.indigo.border,
+      borderWidth: 1,
+      borderRadius: 0,
+      borderSkipped: false,
+    },
+    {
+      label: t('dashboard.chartInput'),
+      stack: 'input',
+      data: rows.map((row) => row.input),
+      backgroundColor: MODEL_INPUT_COLORS.input,
+      borderColor: COLORS.indigo.border,
+      borderWidth: 1,
+      borderRadius: { bottomLeft: 0, bottomRight: 0, topLeft: 6, topRight: 6 },
+      borderSkipped: false,
+    },
+    {
+      label: t('dashboard.chartOutput'),
+      stack: 'output',
+      data: rows.map((row) => row.output),
+      backgroundColor: COLORS.violet.bg,
+      borderColor: COLORS.violet.border,
+      borderWidth: 1,
+      borderRadius: 6,
+      borderSkipped: false,
+    },
+  ];
+}
+
+export function formatModelTotalInput(items) {
+  const total = items.reduce((sum, item) => (
+    item.dataset.stack === 'input' && Number.isFinite(item.parsed?.y)
+      ? sum + item.parsed.y
+      : sum
+  ), 0);
+  return `${t('dashboard.chartTotalInput')}: ${total.toLocaleString()}`;
 }
 
 /**
@@ -250,6 +317,9 @@ function renderProviderChart(byProvider) {
   clearEmptyChart(ctx);
 
   const costs = providers.map((p) => byProvider[p].totalCost);
+  const totalCost = costs.reduce((total, cost) => (
+    Number.isFinite(cost) ? total + cost : total
+  ), 0);
 
   chartInstances.provider = new Chart(ctx, {
     type: 'doughnut',
@@ -274,7 +344,7 @@ function renderProviderChart(byProvider) {
         tooltip: {
           ...getTooltipConfig(),
           callbacks: {
-            label: (ctx) => ` ${ctx.label}: $${ctx.parsed.toFixed(4)}`,
+            label: (ctx) => formatProviderTooltipLabel(ctx.label, ctx.parsed, totalCost),
           },
         },
       },
@@ -295,18 +365,13 @@ function renderModelChart(byModel) {
   clearEmptyChart(ctx);
 
   const useLogScale = document.getElementById('model-log-scale')?.checked || false;
-
-  // Sort models by total tokens descending for better visualization
-  const sorted = models
-    .map((key) => ({ key, ...byModel[key] }))
-    .sort((a, b) => (b.input + b.output) - (a.input + a.output));
-
-  const labels = sorted.map((m) => m.model);
-  const inputData = sorted.map((m) => m.input);
-  const outputData = sorted.map((m) => m.output);
+  const mergeDateCheckpoints = document.getElementById('model-merge-checkpoints')?.checked ?? true;
+  const rows = buildModelChartRows(byModel, { mergeDateCheckpoints });
+  const labels = rows.map((row) => row.label);
+  const datasets = buildModelDatasets(rows);
 
   // Calculate data range to detect if log scale is needed
-  const allValues = [...inputData, ...outputData].filter((v) => v > 0);
+  const allValues = rows.flatMap((row) => [row.totalInput, row.output]).filter((v) => v > 0);
   const maxVal = Math.max(...allValues, 1);
   const minVal = Math.min(...allValues, 1);
   const dynamicRange = maxVal / minVal;
@@ -323,34 +388,19 @@ function renderModelChart(byModel) {
     type: 'bar',
     data: {
       labels,
-      datasets: [
-        {
-          label: 'Input Tokens',
-          data: inputData,
-          backgroundColor: COLORS.indigo.bg,
-          borderColor: COLORS.indigo.border,
-          borderWidth: 1,
-          borderRadius: 6,
-        },
-        {
-          label: 'Output Tokens',
-          data: outputData,
-          backgroundColor: COLORS.violet.bg,
-          borderColor: COLORS.violet.border,
-          borderWidth: 1,
-          borderRadius: 6,
-        },
-      ],
+      datasets,
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       indexAxis: 'x',
+      interaction: { mode: 'index', intersect: false },
       plugins: {
         tooltip: {
           ...getTooltipConfig(),
           callbacks: {
             label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()}`,
+            footer: formatModelTotalInput,
           },
         },
       },
