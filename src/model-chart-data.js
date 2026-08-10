@@ -32,6 +32,12 @@ function finiteNumber(value) {
   return Number.isFinite(value) ? value : 0;
 }
 
+function addFinite(left, right) {
+  const sum = left + finiteNumber(right);
+  if (Number.isFinite(sum)) return sum;
+  return sum < 0 ? -Number.MAX_VALUE : Number.MAX_VALUE;
+}
+
 function createRow(key, label) {
   return {
     key,
@@ -56,14 +62,14 @@ export function buildModelChartRows(byModel, { mergeDateCheckpoints = true } = {
     const label = mergeDateCheckpoints ? key : model;
     const row = rows.get(key) ?? createRow(key, label);
 
-    row.input += finiteNumber(entry?.input);
-    row.output += finiteNumber(entry?.output);
-    row.cacheRead += finiteNumber(entry?.cacheRead);
-    row.cacheWrite += finiteNumber(entry?.cacheWrite);
-    row.totalTokens += finiteNumber(entry?.totalTokens);
-    row.totalCost += finiteNumber(entry?.totalCost);
-    row.requests += finiteNumber(entry?.requests);
-    row.totalInput = row.input + row.cacheRead + row.cacheWrite;
+    row.input = addFinite(row.input, entry?.input);
+    row.output = addFinite(row.output, entry?.output);
+    row.cacheRead = addFinite(row.cacheRead, entry?.cacheRead);
+    row.cacheWrite = addFinite(row.cacheWrite, entry?.cacheWrite);
+    row.totalTokens = addFinite(row.totalTokens, entry?.totalTokens);
+    row.totalCost = addFinite(row.totalCost, entry?.totalCost);
+    row.requests = addFinite(row.requests, entry?.requests);
+    row.totalInput = addFinite(addFinite(row.input, row.cacheRead), row.cacheWrite);
     rows.set(key, row);
   }
 

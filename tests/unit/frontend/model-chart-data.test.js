@@ -90,4 +90,22 @@ describe('buildModelChartRows', () => {
       totalTokens: NaN, totalCost: Infinity, requests: null,
     });
   });
+
+  it('keeps accumulated and derived metrics finite after numeric overflow', () => {
+    const rows = buildModelChartRows({
+      'provider-a/overflow-model': {
+        provider: 'provider-a', model: 'overflow-model', input: Number.MAX_VALUE,
+      },
+      'provider-b/overflow-model-0731': {
+        provider: 'provider-b', model: 'overflow-model-0731', input: Number.MAX_VALUE,
+      },
+    });
+
+    expect(rows[0]).toMatchObject({
+      input: Number.MAX_VALUE,
+      totalInput: Number.MAX_VALUE,
+    });
+    expect(Number.isFinite(rows[0].input)).toBe(true);
+    expect(Number.isFinite(rows[0].totalInput)).toBe(true);
+  });
 });
