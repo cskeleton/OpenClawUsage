@@ -146,6 +146,14 @@ describe('i18n', () => {
     expect(dashboardDoc.querySelector('.logo')?.textContent).toBe('🦞');
   });
 
+  it('keeps narrow dashboard controls inside the viewport', () => {
+    const dashboardCss = fs.readFileSync(path.join(process.cwd(), 'src/style.css'), 'utf8');
+    const narrowRules = dashboardCss.match(/@media \(max-width: 500px\) \{([\s\S]*?)\n\}/)?.[1] ?? '';
+
+    expect(narrowRules).toMatch(/\.time-custom\s*\{[^}]*width:\s*100%/);
+    expect(narrowRules).toMatch(/\.time-custom \.date-input\s*\{[^}]*min-width:\s*0[^}]*width:\s*100%/);
+  });
+
   it('keeps dashboard chart locale keys synchronized between Chinese and English', () => {
     expect(Object.keys(zhCNMessages.dashboard).sort()).toEqual(Object.keys(enUSMessages.dashboard).sort());
   });
