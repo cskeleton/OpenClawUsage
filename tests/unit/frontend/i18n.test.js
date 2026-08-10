@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   getLocale,
@@ -5,6 +7,8 @@ import {
   t,
   translateStaticElements,
 } from '../../../src/i18n.js';
+import { zhCNMessages } from '../../../src/locales/zh-CN.js';
+import { enUSMessages } from '../../../src/locales/en-US.js';
 
 function installLocalStoragePolyfill() {
   const store = new Map();
@@ -112,11 +116,37 @@ describe('i18n', () => {
   });
 
   it('pricing.modelsDev* keys exist in both locales with same key set', async () => {
-    const { zhCNMessages } = await import('../../../src/locales/zh-CN.js');
-    const { enUSMessages } = await import('../../../src/locales/en-US.js');
     const zhKeys = Object.keys(zhCNMessages.pricing).filter((k) => k.startsWith('modelsDev')).sort();
     const enKeys = Object.keys(enUSMessages.pricing).filter((k) => k.startsWith('modelsDev')).sort();
     expect(zhKeys.length).toBeGreaterThan(0);
     expect(zhKeys).toEqual(enKeys);
+  });
+
+  it('keeps dashboard chart controls and heading emoji contract synchronized', () => {
+    const dashboardHtml = fs.readFileSync(path.join(process.cwd(), 'index.html'), 'utf8');
+    const pricingHtml = fs.readFileSync(path.join(process.cwd(), 'pricing.html'), 'utf8');
+    const dashboardDoc = new DOMParser().parseFromString(dashboardHtml, 'text/html');
+    const pricingDoc = new DOMParser().parseFromString(pricingHtml, 'text/html');
+
+    const controls = dashboardDoc.querySelector('.model-chart-controls');
+    expect(controls?.querySelector('#model-merge-checkpoints')?.checked).toBe(true);
+    expect(controls?.querySelector('#model-log-scale')).not.toBeNull();
+    expect(dashboardDoc.querySelector('[data-i18n="dashboard.chartTimeline"]')?.textContent).toBe('用量趋势（按日）');
+    expect(dashboardDoc.querySelector('[data-i18n="dashboard.chartProvider"]')?.textContent).toBe('Provider 费用分布');
+    expect(dashboardDoc.querySelector('[data-i18n="dashboard.chartModel"]')?.textContent).toBe('Model 用量对比');
+    expect(dashboardDoc.querySelector('[data-i18n="dashboard.breakdownTitle"]')?.textContent).toBe('Provider / Model 消耗明细');
+    expect(dashboardDoc.querySelector('[data-i18n="dashboard.sessionDetails"]')?.textContent).toBe('Session 明细');
+    expect(zhCNMessages.dashboard.chartTimeline).toBe('用量趋势（按日）');
+    expect(zhCNMessages.dashboard.chartProvider).toBe('Provider 费用分布');
+    expect(zhCNMessages.dashboard.chartModel).toBe('Model 用量对比');
+    expect(zhCNMessages.dashboard.breakdownTitle).toBe('Provider / Model 消耗明细');
+    expect(zhCNMessages.dashboard.sessionDetails).toBe('Session 明细');
+    expect(enUSMessages.dashboard.chartModel).toBe('Model usage comparison');
+    expect(pricingDoc.querySelector('.pricing-title-text')?.textContent).toContain('💰');
+    expect(dashboardDoc.querySelector('.logo')?.textContent).toBe('🦞');
+  });
+
+  it('keeps dashboard chart locale keys synchronized between Chinese and English', () => {
+    expect(Object.keys(zhCNMessages.dashboard).sort()).toEqual(Object.keys(enUSMessages.dashboard).sort());
   });
 });

@@ -724,6 +724,16 @@ tbody td {
   .search-input {
     width: 180px;
   }
+
+  .chart-wide .chart-title-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .chart-wide .model-chart-controls {
+    justify-content: flex-start;
+  }
 }
 
 @media (max-width: 500px) {
@@ -1054,6 +1064,14 @@ tfoot .breakdown-total td {
 
 .chart-title-row h3 {
   margin-bottom: 0;
+}
+
+.model-chart-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .log-toggle {

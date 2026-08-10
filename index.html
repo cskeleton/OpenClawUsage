@@ -122,7 +122,7 @@
       <section class="charts-section">
         <div class="chart-container glass-card">
           <div class="chart-title-row">
-            <h3 data-i18n="dashboard.chartTimeline">📈 用量趋势（按日）</h3>
+            <h3 data-i18n="dashboard.chartTimeline">用量趋势（按日）</h3>
             <div class="metric-switch" role="group" id="timeline-metric-switch" aria-label="趋势指标" data-i18n-attr="aria-label:dashboard.timelineMetricGroup">
               <button type="button" class="metric-btn active" data-metric="tokens" data-i18n="dashboard.metricTokens">Token</button>
               <button type="button" class="metric-btn" data-metric="cost" data-i18n="dashboard.metricCost">费用</button>
@@ -131,7 +131,7 @@
           <canvas id="chart-timeline"></canvas>
         </div>
         <div class="chart-container glass-card">
-          <h3 data-i18n="dashboard.chartProvider">🧩 Provider 费用分布</h3>
+          <h3 data-i18n="dashboard.chartProvider">Provider 费用分布</h3>
           <canvas id="chart-provider"></canvas>
         </div>
       </section>
@@ -140,11 +140,17 @@
       <section class="charts-section">
         <div class="chart-container chart-wide glass-card">
           <div class="chart-title-row">
-            <h3 data-i18n="dashboard.chartModel">🤖 Model 用量对比</h3>
-            <label class="log-toggle">
-              <input type="checkbox" id="model-log-scale" />
-              <span data-i18n="dashboard.logScale">对数坐标</span>
-            </label>
+            <h3 data-i18n="dashboard.chartModel">Model 用量对比</h3>
+            <div class="model-chart-controls">
+              <label class="log-toggle">
+                <input type="checkbox" id="model-merge-checkpoints" checked />
+                <span data-i18n="dashboard.modelMergeCheckpoints">合并日期 checkpoint</span>
+              </label>
+              <label class="log-toggle">
+                <input type="checkbox" id="model-log-scale" />
+                <span data-i18n="dashboard.logScale">对数坐标</span>
+              </label>
+            </div>
           </div>
           <canvas id="chart-model"></canvas>
         </div>
@@ -153,7 +159,7 @@
       <!-- Provider / Model Breakdown -->
       <section class="table-section glass-card">
         <div class="table-header">
-          <h3 data-i18n="dashboard.breakdownTitle">💵 Provider / Model 消耗明细</h3>
+          <h3 data-i18n="dashboard.breakdownTitle">Provider / Model 消耗明细</h3>
           <div class="table-controls">
             <div class="breakdown-dimension" role="group" id="breakdown-dimension" aria-label="统计维度" data-i18n-attr="aria-label:dashboard.breakdownDimensionGroup">
               <button type="button" class="dim-btn active" data-dimension="provider" data-i18n="dashboard.byProvider">按 Provider</button>
@@ -186,7 +192,7 @@
       <!-- Sessions Table -->
       <section class="table-section glass-card">
         <div class="table-header">
-          <h3 data-i18n="dashboard.sessionDetails">📋 Session 明细</h3>
+          <h3 data-i18n="dashboard.sessionDetails">Session 明细</h3>
           <div class="table-controls">
             <select id="status-filter" class="select-filter">
               <option value="all" data-i18n="dashboard.allStatus">全部状态</option>
