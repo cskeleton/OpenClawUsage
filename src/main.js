@@ -1,7 +1,14 @@
 import { renderCharts, destroyCharts } from './charts.js';
 import { escapeHtml, escapeAttr } from './util.js';
 import { initLocaleControls, getLocale, t } from './i18n.js';
-import { filterData, collapseCrossTable, providerOfKey, modelOfKey } from './data-filter.js';
+import {
+  filterData,
+  collapseCrossTable,
+  providerOfKey,
+  modelOfKey,
+  selectSourceData,
+  sourceOptions,
+} from './data-filter.js';
 
 // ---- Utility functions ----
 
@@ -154,12 +161,59 @@ function renderSummaryCards(summary) {
 let filterProvider = '';
 /** 完整的 `provider/model` 键 */
 let filterModel = '';
+let filterSource = 'all';
 let timelineMetric = 'tokens';
 
 /** 当前时间区间内出现过的 `provider/model` 键 */
 function getRangeModelKeys(from, to) {
   if (!fullData) return [];
-  return Object.keys(collapseCrossTable(fullData.byDateModel || {}, from, to)).sort();
+  const sourceData = selectSourceData(fullData, filterSource);
+  return Object.keys(collapseCrossTable(sourceData?.byDateModel || {}, from, to)).sort();
+}
+
+function sourceStatusLabel(status) {
+  if (status === 'missing') return t('dashboard.sourceMissing');
+  if (status === 'stale') return t('dashboard.sourceStale');
+  return t('dashboard.sourceFresh');
+}
+
+function populateSourceOptions() {
+  const select = document.getElementById('source-filter');
+  if (!select || !fullData) return;
+  const options = sourceOptions(fullData);
+  select.innerHTML = options.map((option) => {
+    const label = option.id === 'all'
+      ? t('dashboard.allSources')
+      : `${option.label}${option.status === 'fresh' ? '' : ` · ${sourceStatusLabel(option.status)}`}`;
+    return `<option value="${escapeAttr(option.id)}">${escapeHtml(label)}</option>`;
+  }).join('');
+  select.value = options.some((option) => option.id === filterSource) ? filterSource : 'all';
+  if (select.value !== filterSource) filterSource = 'all';
+}
+
+function renderSourceStatus() {
+  const el = document.getElementById('source-status');
+  if (!el || !fullData) return;
+  const sources = fullData.sources || [];
+  const selected = filterSource === 'all'
+    ? sources.filter((source) => source.status === 'missing' || source.status === 'stale')
+    : sources.filter((source) => source.id === filterSource && (source.status === 'missing' || source.status === 'stale'));
+  if (!selected.length) {
+    el.innerHTML = '';
+    return;
+  }
+  el.innerHTML = selected.map((source) => {
+    const details = source.status === 'missing'
+      ? t('dashboard.sourceMissingDetail')
+      : t('dashboard.sourceStaleDetail', {
+        lastReceivedAt: source.lastReceivedAt || '—',
+        staleSince: source.staleSince || '—',
+      });
+    return `<span class="source-status-item source-status-${escapeAttr(source.status)}" role="status">
+      <strong>${escapeHtml(source.label || source.id)}</strong>
+      <span>${escapeHtml(sourceStatusLabel(source.status))}: ${escapeHtml(details)}</span>
+    </span>`;
+  }).join('');
 }
 
 /**
@@ -195,7 +249,7 @@ function populateDimensionOptions(from, to) {
   ].join('');
   modelSelect.value = filterModel;
 
-  document.getElementById('clear-dimension-filter').hidden = !filterProvider && !filterModel;
+  document.getElementById('clear-dimension-filter').hidden = filterSource === 'all' && !filterProvider && !filterModel;
 }
 
 /** 顶部筛选回显：当前 provider/model 在所选区间内的费用与 token 合计 */
@@ -346,6 +400,7 @@ function getFilteredSessions(sessions) {
     const q = search.toLowerCase();
     filtered = filtered.filter((s) =>
       s.id.toLowerCase().includes(q) ||
+      (s.sourceLabel || s.sourceId || '').toLowerCase().includes(q) ||
       s.providers.join(',').toLowerCase().includes(q) ||
       s.models.join(',').toLowerCase().includes(q)
     );
@@ -383,7 +438,7 @@ function renderSessionsTable(sessions) {
   if (totalItems === 0) {
     tbody.innerHTML = `
       <tr>
-        <td colspan="10" style="text-align: center; color: var(--text-secondary); padding: 40px;">
+        <td colspan="11" style="text-align: center; color: var(--text-secondary); padding: 40px;">
           ${escapeHtml(t('dashboard.noSessionInFilter'))}
         </td>
       </tr>
@@ -392,6 +447,7 @@ function renderSessionsTable(sessions) {
     tbody.innerHTML = pageItems.map((s) => `
       <tr>
         <td>${statusBadge(s.status)}</td>
+        <td><span class="source-label" title="${escapeAttr(s.sourceId || '')}">${escapeHtml(s.sourceLabel || s.sourceId || '—')}</span></td>
         <td><span class="session-id" title="${escapeAttr(s.id)}">${escapeHtml(s.id.substring(0, 8))}…</span></td>
         <td>${escapeHtml(s.providers.join(', '))}</td>
         <td>${escapeHtml(s.models.join(', '))}</td>
@@ -524,13 +580,21 @@ function getCurrentDateFilter() {
 /** 当前完整筛选条件（时间 + provider/model） */
 function getCurrentFilter() {
   const { from, to } = getCurrentDateFilter();
-  return { from, to, provider: filterProvider || null, model: filterModel || null };
+  return {
+    from,
+    to,
+    source: filterSource,
+    provider: filterProvider || null,
+    model: filterModel || null,
+  };
 }
 
 /** 用当前筛选条件重新渲染全部区块 */
 function rerender(resetPage = false) {
   if (!fullData) return;
   const filter = getCurrentFilter();
+  populateSourceOptions();
+  renderSourceStatus();
   populateDimensionOptions(filter.from, filter.to);
   applyFilter(filter, resetPage);
 }
@@ -548,8 +612,16 @@ function applyDateRange(rangeKey, resetPage = true) {
     btn.classList.toggle('active', btn.dataset.range === rangeKey);
   });
 
+  populateSourceOptions();
+  renderSourceStatus();
   populateDimensionOptions(from, to);
-  applyFilter({ from, to, provider: filterProvider || null, model: filterModel || null }, resetPage);
+  applyFilter({
+    from,
+    to,
+    source: filterSource,
+    provider: filterProvider || null,
+    model: filterModel || null,
+  }, resetPage);
 }
 
 /**
@@ -584,6 +656,7 @@ function renderDataFromFull(resetPage = false) {
   if (!fullData) return;
   updateGeneratedAt(fullData);
   updateCacheStateBadge(fullData.cache);
+  renderSyncActions();
 
   rerender(resetPage);
 }
@@ -613,6 +686,7 @@ async function loadAndRender({ initial = false } = {}) {
     if (initial) {
       loading.style.display = 'none';
       mainContent.style.display = 'block';
+      renderSyncActions();
       applyDateRange('today', true);
     } else {
       renderDataFromFull(false);
@@ -657,6 +731,15 @@ function bindEventsOnce() {
     rerender(true);
   });
 
+  document.getElementById('source-filter').addEventListener('change', (e) => {
+    filterSource = e.target.value || 'all';
+    // A source change must not carry a dimension that was only valid for the
+    // previous source. Date, search, status and page size remain unchanged.
+    filterProvider = '';
+    filterModel = '';
+    rerender(true);
+  });
+
   document.getElementById('provider-filter').addEventListener('change', (e) => {
     filterProvider = e.target.value;
     // Provider 变更后，已选 model 若不属于该 provider 则失效
@@ -674,6 +757,7 @@ function bindEventsOnce() {
   });
 
   document.getElementById('clear-dimension-filter').addEventListener('click', () => {
+    filterSource = 'all';
     filterProvider = '';
     filterModel = '';
     rerender(true);
@@ -790,6 +874,54 @@ function setRefreshControlsDisabled(disabled) {
   document.getElementById('refresh-btn').disabled = disabled;
   document.getElementById('refresh-menu-btn').disabled = disabled;
   document.getElementById('refresh-full-btn').disabled = disabled;
+  document.querySelectorAll('[data-sync-target]').forEach((button) => {
+    button.disabled = disabled;
+  });
+}
+
+function renderSyncActions() {
+  const dropdown = document.getElementById('refresh-dropdown');
+  if (!dropdown) return;
+  dropdown.querySelectorAll('[data-sync-target]').forEach((button) => button.remove());
+  const capabilities = fullData?.instance?.capabilities;
+  const targets = Array.isArray(capabilities?.outboundTargets) ? capabilities.outboundTargets : [];
+  if (!capabilities?.canSync || targets.length === 0) return;
+  const separator = document.createElement('div');
+  separator.className = 'refresh-dropdown-separator';
+  separator.setAttribute('aria-hidden', 'true');
+  dropdown.appendChild(separator);
+  for (const target of targets) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'refresh-dropdown-item';
+    button.dataset.syncTarget = target.id;
+    button.setAttribute('role', 'menuitem');
+    button.textContent = t('common.syncTo', { label: target.label || target.id });
+    dropdown.appendChild(button);
+  }
+}
+
+async function runManualSync(targetId) {
+  if (refreshInFlight) return;
+  refreshInFlight = true;
+  setRefreshControlsDisabled(true);
+  try {
+    const res = await fetch('/api/sync/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetId }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || t('common.syncFailed'));
+    showToast(t('common.syncSuccess', { label: body.targetId || targetId }));
+  } catch (err) {
+    // Keep the dashboard usable and avoid exposing raw transport details.
+    showToast(t('common.syncFailed'), true);
+  } finally {
+    setRefreshControlsDisabled(false);
+    closeRefreshDropdown();
+    refreshInFlight = false;
+  }
 }
 
 async function runManualRefresh(full = false) {
@@ -849,6 +981,11 @@ function bindRefreshControls() {
     runManualRefresh(true);
   });
 
+  dropdown.addEventListener('click', (e) => {
+    const button = e.target.closest('[data-sync-target]');
+    if (button) runManualSync(button.dataset.syncTarget);
+  });
+
   menuBtn.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
@@ -885,6 +1022,7 @@ window.addEventListener('openclaw-localechange', () => {
   if (!fullData) return;
   updateGeneratedAt(fullData);
   updateCacheStateBadge(fullData.cache);
+  renderSyncActions();
   // 下拉占位项、明细表表头与筛选回显均含文案，需整体重绘
   rerender(false);
 });

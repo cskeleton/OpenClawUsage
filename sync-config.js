@@ -11,6 +11,7 @@ export const MAX_SYNC_INTERVAL_MINUTES = 7 * 24 * 60;
 
 const IDENTIFIER_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const MAX_LABEL_LENGTH = 120;
+const RESERVED_SOURCE_ID = 'all';
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -55,6 +56,7 @@ function validateSyncConfig(value) {
     !assertObject(value.source) ||
     !hasOnlyKeys(value.source, ['id', 'label']) ||
     !validIdentifier(value.source.id) ||
+    value.source.id === RESERVED_SOURCE_ID ||
     !validLabel(value.source.label) ||
     !assertObject(value.policy) ||
     !hasOnlyKeys(value.policy, ['allowedSshTargets']) ||
@@ -95,7 +97,7 @@ function validateSyncConfig(value) {
   const allowedSourceIds = value.imports.allowedSourceIds;
   const seen = new Set();
   for (const sourceId of allowedSourceIds) {
-    if (!validIdentifier(sourceId) || sourceId === value.source.id || seen.has(sourceId)) {
+    if (!validIdentifier(sourceId) || sourceId === RESERVED_SOURCE_ID || sourceId === value.source.id || seen.has(sourceId)) {
       throw invalidConfig();
     }
     seen.add(sourceId);

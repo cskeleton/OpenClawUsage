@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>同步设置 - OpenClaw Usage</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/src/style.css" />
+  <script>
+    (function () {
+      try {
+        var m = localStorage.getItem('openclaw-theme') || 'system';
+        var dark = m === 'dark' || (m === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.classList.add(dark ? 'theme-dark' : 'theme-light');
+        document.documentElement.dataset.themeMode = m;
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+      } catch (e) {
+        document.documentElement.classList.add('theme-light');
+      }
+    })();
+  </script>
+  <script type="module" src="/src/theme.js"></script>
+</head>
+<body data-i18n-title-key="settings.pageTitle">
+  <div id="settings-app" class="pricing-page">
+    <nav class="settings-nav" aria-label="页面导航">
+      <a href="/" class="back-link" data-i18n="common.dashboard">仪表盘</a>
+      <div class="settings-nav-links">
+        <a href="/pricing.html" class="btn-pricing">💰 <span data-i18n="common.pricingConfig">价格配置</span></a>
+        <a href="/settings.html" class="btn-pricing settings-nav-active">⚙️ <span data-i18n="common.settings">设置</span></a>
+      </div>
+    </nav>
+    <div class="pricing-header settings-header">
+      <div>
+        <h1 class="pricing-title-row"><span class="pricing-title-text">⚙️ <span data-i18n="common.settings">设置</span></span></h1>
+        <p class="subtitle" data-i18n="settings.subtitle">管理来源标签与预授权 SSH 同步</p>
+      </div>
+      <div class="actions">
+        <div class="locale-switch" role="group" aria-label="语言" data-i18n-attr="aria-label:common.languageGroup">
+          <button type="button" data-locale-control="zh-CN" title="中文" aria-label="中文">中</button>
+          <button type="button" data-locale-control="en-US" title="English" aria-label="English">EN</button>
+        </div>
+        <div class="theme-switch" role="group" aria-label="主题" data-i18n-attr="aria-label:common.themeGroup">
+          <button type="button" data-theme-control="light" title="浅色" aria-label="浅色">🌞</button>
+          <button type="button" data-theme-control="dark" title="深色" aria-label="深色">🌙</button>
+          <button type="button" data-theme-control="system" title="跟随系统" aria-label="跟随系统">💻</button>
+        </div>
+      </div>
+    </div>
+    <main id="settings-content" aria-live="polite">
+      <div class="loading"><div class="spinner"></div><p data-i18n="common.loadingSessions">正在加载...</p></div>
+    </main>
+  </div>
+  <script type="module" src="/src/settings.js"></script>
+</body>
+</html>

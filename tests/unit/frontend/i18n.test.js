@@ -159,4 +159,25 @@ describe('i18n', () => {
   it('keeps dashboard chart locale keys synchronized between Chinese and English', () => {
     expect(Object.keys(zhCNMessages.dashboard).sort()).toEqual(Object.keys(enUSMessages.dashboard).sort());
   });
+
+  it('keeps settings locale keys synchronized and exposes accessible source controls', () => {
+    expect(Object.keys(zhCNMessages.settings).sort()).toEqual(Object.keys(enUSMessages.settings).sort());
+    const dashboardHtml = fs.readFileSync(path.join(process.cwd(), 'index.html'), 'utf8');
+    const settingsHtml = fs.readFileSync(path.join(process.cwd(), 'settings.html'), 'utf8');
+    const dashboardDoc = new DOMParser().parseFromString(dashboardHtml, 'text/html');
+    const settingsDoc = new DOMParser().parseFromString(settingsHtml, 'text/html');
+    expect(dashboardDoc.querySelector('#source-filter')?.getAttribute('data-i18n-attr')).toContain('aria-label');
+    expect(dashboardDoc.querySelector('#sessions-table th[data-i18n="dashboard.tableSource"]')).not.toBeNull();
+    expect(settingsDoc.querySelector('[data-theme-control="system"]')).not.toBeNull();
+    expect(settingsDoc.querySelector('[data-locale-control="en-US"]')).not.toBeNull();
+  });
+
+  it('keeps the Settings one-column mobile override after its base grid rule', () => {
+    const css = fs.readFileSync(path.join(process.cwd(), 'src/style.css'), 'utf8');
+    const base = css.indexOf('.settings-grid {');
+    const mobile = css.indexOf('@media (max-width: 900px) {', base);
+    expect(base).toBeGreaterThanOrEqual(0);
+    expect(mobile).toBeGreaterThan(base);
+    expect(css.slice(mobile, mobile + 220)).toMatch(/\.settings-grid\s*\{[^}]*grid-template-columns:\s*1fr/);
+  });
 });

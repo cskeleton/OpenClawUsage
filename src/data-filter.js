@@ -7,6 +7,59 @@ export function emptyBucket() {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, totalCost: 0, requests: 0 };
 }
 
+function emptySummary() {
+  return {
+    totalInput: 0,
+    totalOutput: 0,
+    totalCacheRead: 0,
+    totalCacheWrite: 0,
+    totalTokens: 0,
+    totalCost: 0,
+    totalRequests: 0,
+    totalSessions: 0,
+  };
+}
+
+/**
+ * Return the aggregate backing a source selector. `all` deliberately returns
+ * the response's top-level aggregate so existing callers keep object identity.
+ * A configured source without a snapshot gets a valid empty aggregate instead
+ * of accidentally retaining the previous source's data.
+ */
+export function selectSourceData(fullData, sourceId = 'all') {
+  if (!fullData || !sourceId || sourceId === 'all') return fullData;
+  const statsBySource = fullData.statsBySource || {};
+  if (Object.hasOwn(statsBySource, sourceId) && statsBySource[sourceId]) {
+    return statsBySource[sourceId];
+  }
+  const source = (fullData.sources || []).find((item) => item.id === sourceId);
+  return {
+    summary: emptySummary(),
+    byDate: {},
+    byDateProvider: {},
+    byDateModel: {},
+    sessions: [],
+    generatedAt: null,
+    sourceId,
+    sourceLabel: source?.label || sourceId,
+  };
+}
+
+/**
+ * Stable selector options. Status is retained so the UI can communicate
+ * missing/stale imports while still allowing them to be selected.
+ */
+export function sourceOptions(fullData) {
+  return [
+    { id: 'all', label: 'All sources', status: 'all' },
+    ...(fullData?.sources || []).map((source) => ({
+      id: source.id,
+      label: source.label || source.id,
+      status: source.status || 'fresh',
+    })),
+  ];
+}
+
 export function mergeInto(dst, src) {
   dst.input += src.input || 0;
   dst.output += src.output || 0;
@@ -206,10 +259,19 @@ function sessionMatchesLegacy(session, { provider = null, model = null } = {}) {
  *   from / to 为 YYYY-MM-DD；model 传完整 `provider/model` 键
  */
 export function filterData(fullData, filter = {}) {
-  const { from = null, to = null, provider = null, model = null } = filter;
+  const {
+    from = null,
+    to = null,
+    provider = null,
+    model = null,
+    source = filter.source ?? filter.sourceId ?? 'all',
+  } = filter;
+  const sourceData = selectSourceData(fullData, source);
   const matches = buildKeyMatcher({ provider, model });
 
-  if (!from && !to && !matches) return fullData;
+  if (!from && !to && !matches) {
+    return source === 'all' ? fullData : sourceData;
+  }
 
   let byDate;
   let byProvider;
@@ -217,16 +279,16 @@ export function filterData(fullData, filter = {}) {
 
   if (matches) {
     // 维度筛选下三张表统一由交叉表切片，保证彼此一致
-    ({ byDate, byProvider, byModel } = sliceCrossTable(fullData.byDateModel || {}, from, to, matches));
+    ({ byDate, byProvider, byModel } = sliceCrossTable(sourceData.byDateModel || {}, from, to, matches));
   } else {
     byDate = {};
-    for (const [date, stats] of Object.entries(fullData.byDate || {})) {
+    for (const [date, stats] of Object.entries(sourceData.byDate || {})) {
       if (!inRange(date, from, to)) continue;
       byDate[date] = stats;
     }
-    byProvider = collapseCrossTable(fullData.byDateProvider || {}, from, to);
+    byProvider = collapseCrossTable(sourceData.byDateProvider || {}, from, to);
     byModel = {};
-    for (const [key, stats] of Object.entries(collapseCrossTable(fullData.byDateModel || {}, from, to))) {
+    for (const [key, stats] of Object.entries(collapseCrossTable(sourceData.byDateModel || {}, from, to))) {
       byModel[key] = { provider: providerOfKey(key), model: modelOfKey(key), ...stats };
     }
   }
@@ -234,7 +296,7 @@ export function filterData(fullData, filter = {}) {
   const summary = summarizeByDate(byDate);
 
   const sessions = [];
-  for (const s of fullData.sessions || []) {
+  for (const s of sourceData.sessions || []) {
     const sliced = matches
       ? sliceSessionByKey(s, from, to, matches, { provider, model })
       : sliceSessionByDate(s, from, to);
@@ -247,10 +309,12 @@ export function filterData(fullData, filter = {}) {
     byProvider,
     byModel,
     byDate,
-    byDateProvider: fullData.byDateProvider,
-    byDateModel: fullData.byDateModel,
+    byDateProvider: sourceData.byDateProvider,
+    byDateModel: sourceData.byDateModel,
     sessions,
-    generatedAt: fullData.generatedAt,
+    generatedAt: sourceData.generatedAt,
+    sourceId: source === 'all' ? undefined : source,
+    sourceLabel: source === 'all' ? undefined : sourceData.sourceLabel,
   };
 }
 

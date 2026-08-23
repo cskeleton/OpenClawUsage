@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { filterDataByDateRange, filterData, buildKeyMatcher } from '../../../src/data-filter.js';
+import {
+  filterDataByDateRange,
+  filterData,
+  buildKeyMatcher,
+  selectSourceData,
+  sourceOptions,
+} from '../../../src/data-filter.js';
 
 const bucket = (input, output) => ({
   input, output, cacheRead: 0, cacheWrite: 0,
@@ -207,5 +213,54 @@ describe('filterData with provider/model', () => {
 
     const miss = filterData(legacy, { provider: 'mistral' });
     expect(miss.sessions).toEqual([]);
+  });
+});
+
+describe('filterData with source selection', () => {
+  const local = {
+    ...mixedData,
+    sessions: [{ ...mixedData.sessions[0], sourceId: 'local', sourceLabel: 'Local' }],
+  };
+  const remote = {
+    ...mixedData,
+    byDate: { '2026-04-16': bucket(700, 80) },
+    byDateProvider: { '2026-04-16': { anthropic: bucket(700, 80) } },
+    byDateModel: { '2026-04-16': { 'anthropic/claude-sonnet-5': bucket(700, 80) } },
+    sessions: [{ ...mixedData.sessions[1], sourceId: 'remote', sourceLabel: 'MBP' }],
+  };
+  const multiSource = {
+    ...mixedData,
+    statsBySource: { local, remote },
+    sources: [
+      { id: 'local', label: 'Local', kind: 'local', status: 'fresh' },
+      { id: 'remote', label: 'MBP', kind: 'imported', status: 'stale', lastReceivedAt: '2026-04-10T00:00:00Z', staleSince: '2026-04-11T00:00:00Z' },
+      { id: 'missing', label: 'Other', kind: 'imported', status: 'missing' },
+    ],
+  };
+
+  it('selects a source before date/provider/model filtering and leaves All combined', () => {
+    expect(selectSourceData(multiSource, 'all')).toBe(multiSource);
+    expect(selectSourceData(multiSource, 'remote')).toBe(remote);
+    const filtered = filterData(multiSource, {
+      source: 'remote', from: '2026-04-16', to: '2026-04-16', provider: 'anthropic',
+    });
+    expect(filtered.summary.totalInput).toBe(700);
+    expect(filtered.sessions[0].sourceLabel).toBe('MBP');
+  });
+
+  it('returns an empty source shape for configured but missing sources', () => {
+    const filtered = filterData(multiSource, { source: 'missing' });
+    expect(filtered.summary.totalTokens).toBe(0);
+    expect(filtered.sessions).toEqual([]);
+    expect(filtered.sourceId).toBe('missing');
+  });
+
+  it('builds source options including stale and missing sources', () => {
+    expect(sourceOptions(multiSource)).toEqual([
+      { id: 'all', label: 'All sources', status: 'all' },
+      { id: 'local', label: 'Local', status: 'fresh' },
+      { id: 'remote', label: 'MBP', status: 'stale' },
+      { id: 'missing', label: 'Other', status: 'missing' },
+    ]);
   });
 });

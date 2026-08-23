@@ -76,6 +76,25 @@ describe('sync configuration', () => {
     await expect(loadSyncConfig()).rejects.toThrow(/invalid sync config/i);
   });
 
+  it('reserves all for the Dashboard source selector while allowing a targetId of all', async () => {
+    const ws = await createTmpWorkspace();
+    disposables.push(ws.cleanup);
+    const configPath = join(ws.configDir, 'openclaw-usage-sync.json');
+    for (const config of [
+      configFor({ source: { id: 'all', label: 'All' } }),
+      configFor({ imports: { allowedSourceIds: ['all'] } }),
+    ]) {
+      writeFileSync(configPath, JSON.stringify(config));
+      await expect(loadSyncConfig()).rejects.toThrow(/invalid sync config/i);
+    }
+
+    writeFileSync(configPath, JSON.stringify(configFor({
+      policy: { allowedSshTargets: { all: { label: 'All target', sshAlias: 'claw' } } },
+      settings: { enabled: true, targetId: 'all', intervalMinutes: 60 },
+    })));
+    await expect(loadSyncConfig()).resolves.toMatchObject({ settings: { targetId: 'all' } });
+  });
+
   it('requires targetId membership to be an own policy property', async () => {
     const ws = await createTmpWorkspace();
     disposables.push(ws.cleanup);
