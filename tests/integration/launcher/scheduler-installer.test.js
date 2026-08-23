@@ -25,6 +25,21 @@ exit 0
 `);
     chmodSync(path, 0o700);
   }
+  const analyzerPath = join(fakeBin, 'systemd-analyze');
+  writeFileSync(analyzerPath, `#!/usr/bin/env bash
+printf '%s ' 'systemd-analyze' >> "$FAKE_MANAGER_LOG"
+printf '%s\\n' "$*" >> "$FAKE_MANAGER_LOG"
+if [[ "$1" == "verify" ]]; then
+  target=''
+  for target in "$@"; do :; done
+  case "$target" in
+    *.service|*.timer) exit 0 ;;
+    *) exit 1 ;;
+  esac
+fi
+exit 0
+`);
+  chmodSync(analyzerPath, 0o700);
   disposables.push(() => rmSync(home, { recursive: true, force: true }));
   return home;
 }
@@ -44,6 +59,13 @@ function run(script, home, args = []) {
 
 function managerCalls(home) {
   return readFileSync(join(home, 'manager-calls.log'), 'utf8');
+}
+
+function systemdVerifyTargets(home) {
+  return managerCalls(home)
+    .split('\n')
+    .filter((line) => line.startsWith('systemd-analyze verify '))
+    .map((line) => line.slice('systemd-analyze verify '.length));
 }
 
 afterEach(() => {
@@ -66,6 +88,11 @@ describe('sync scheduler installers', () => {
     expect(readFileSync(join(unitDir, 'openclaw-usage-sync.service'), 'utf8')).not.toMatch(/@(?:REPO_ROOT|NODE_PATH)@/);
     expect(managerCalls(home)).toMatch(/systemctl --user daemon-reload/);
     expect(managerCalls(home)).toMatch(/systemctl --user enable --now openclaw-usage-sync\.timer/);
+    expect(systemdVerifyTargets(home)).toHaveLength(2);
+    expect(systemdVerifyTargets(home).map((target) => target.slice(target.lastIndexOf('.') + 1)).sort()).toEqual([
+      'service',
+      'timer',
+    ]);
   });
 
   it('installs an absolute-path macOS LaunchAgent and is idempotent', () => {
@@ -115,6 +142,12 @@ describe('sync scheduler installers', () => {
     expect(service).toContain(join(TEST_DIR, 'server.js'));
     expect(service).not.toMatch(/@(?:REPO_ROOT|NODE_PATH)@/);
     expect(service).not.toMatch(/password|private.?key|token|credential/i);
+    expect(systemdVerifyTargets(home)).toHaveLength(3);
+    expect(systemdVerifyTargets(home).map((target) => target.slice(target.lastIndexOf('.') + 1)).sort()).toEqual([
+      'service',
+      'service',
+      'timer',
+    ]);
   });
 
   it('fails closed for invalid hosts and control-character config paths without writing units', () => {

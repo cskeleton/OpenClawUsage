@@ -126,8 +126,15 @@ chmod 700 "$UNIT_DIR" 2>/dev/null || true
 
 write_unit() {
   local source="$1" destination="$2"
-  local temp
-  temp="$(mktemp "$UNIT_DIR/.openclaw-usage.XXXXXX")"
+  local temp_base temp suffix
+  suffix="${destination##*.}"
+  temp_base="$(mktemp "$UNIT_DIR/.openclaw-usage.XXXXXX")"
+  temp="${temp_base}.${suffix}"
+  if ! mv -f "$temp_base" "$temp"; then
+    rm -f "$temp_base"
+    echo "Error: could not prepare temporary systemd unit: $destination" >&2
+    exit 1
+  fi
   sed \
     -e "s|@REPO_ROOT_QUOTED@|$ROOT_ESC|g" \
     -e "s|@NODE_PATH_QUOTED@|$NODE_ESC|g" \
