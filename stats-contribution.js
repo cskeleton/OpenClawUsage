@@ -10,6 +10,41 @@ import { calculateCostFromUsage } from './pricing.js';
  */
 export const STATS_SHAPE_VERSION = 2;
 
+function dynamicMap() {
+  return Object.create(null);
+}
+
+/**
+ * Put a source boundary around contribution keys and session display IDs.
+ * Imported snapshots intentionally carry no filename; local contributions may
+ * retain their filename because it is already local data and is used by the
+ * existing dashboard. The returned map never mutates the cache or snapshot.
+ */
+export function namespaceFileContributions(
+  filesMap,
+  sourceId,
+  sourceLabel,
+  { imported = false } = {}
+) {
+  if (typeof sourceId !== 'string' || !sourceId) throw new Error('sourceId is required');
+  const prefix = `${sourceId}:`;
+  const output = dynamicMap();
+  for (const [key, contribution] of Object.entries(filesMap || {})) {
+    const session = { ...(contribution?.session || {}) };
+    if (typeof session.id === 'string') {
+      session.id = `${prefix}${session.id}`;
+    }
+    if (imported) delete session.filename;
+    output[`${prefix}${key}`] = {
+      ...contribution,
+      session,
+      sourceId,
+      sourceLabel,
+    };
+  }
+  return output;
+}
+
 function emptyBucket() {
   return {
     input: 0,
@@ -65,14 +100,14 @@ export async function buildFileContribution(filepath, meta) {
   const records = await parseSessionJsonlRaw(filepath);
 
   /** @type {Record<string, object>} */
-  const bucketMap = {};
+  const bucketMap = dynamicMap();
   let firstTimestamp = null;
   let lastTimestamp = null;
 
   for (const rec of records) {
     const date = rec.timestamp ? rec.timestamp.substring(0, 10) : null;
     const key = `${date ?? ''}\0${rec.provider}\0${rec.model}`;
-    if (!bucketMap[key]) {
+    if (!Object.hasOwn(bucketMap, key)) {
       bucketMap[key] = {
         date,
         provider: rec.provider,
@@ -120,8 +155,8 @@ export async function buildFileContribution(filepath, meta) {
  * 在日期+键维度上累加
  */
 function addToCrossTable(table, date, key, usage, cost, requests) {
-  if (!table[date]) table[date] = {};
-  if (!table[date][key]) table[date][key] = emptyBucket();
+  if (!Object.hasOwn(table, date)) table[date] = dynamicMap();
+  if (!Object.hasOwn(table[date], key)) table[date][key] = emptyBucket();
   const b = table[date][key];
   b.input += usage.input;
   b.output += usage.output;
@@ -133,7 +168,7 @@ function addToCrossTable(table, date, key, usage, cost, requests) {
 }
 
 function sortedObject(obj) {
-  const out = {};
+  const out = dynamicMap();
   Object.keys(obj).sort().forEach((k) => {
     out[k] = obj[k];
   });
@@ -158,11 +193,11 @@ export function mergeFileContributions(filesMap, pricingConfig) {
     totalSessions: 0,
   };
 
-  const byProvider = {};
-  const byModel = {};
-  const byDate = {};
-  const byDateProvider = {};
-  const byDateModel = {};
+  const byProvider = dynamicMap();
+  const byModel = dynamicMap();
+  const byDate = dynamicMap();
+  const byDateProvider = dynamicMap();
+  const byDateModel = dynamicMap();
   const sessions = [];
 
   for (const contribution of Object.values(filesMap)) {
@@ -174,7 +209,12 @@ export function mergeFileContributions(filesMap, pricingConfig) {
       id: contribution.session.id,
       status: contribution.session.status,
       archivedAt: contribution.session.archivedAt,
-      filename: contribution.session.filename,
+      ...(contribution.session.filename !== undefined
+        ? { filename: contribution.session.filename }
+        : {}),
+      ...(typeof contribution.sourceId === 'string'
+        ? { sourceId: contribution.sourceId, sourceLabel: contribution.sourceLabel }
+        : {}),
       providers: new Set(),
       models: new Set(),
       totalInput: 0,
@@ -186,9 +226,9 @@ export function mergeFileContributions(filesMap, pricingConfig) {
       requestCount: 0,
       firstTimestamp: contribution.firstTimestamp,
       lastTimestamp: contribution.lastTimestamp,
-      byDate: {},
+      byDate: dynamicMap(),
       /** 会话内「日期 × provider/model」交叉分布，供 provider/model 筛选精确切片 */
-      byDateModel: {},
+      byDateModel: dynamicMap(),
     };
 
     for (const bucket of contribution.buckets) {
@@ -213,7 +253,7 @@ export function mergeFileContributions(filesMap, pricingConfig) {
       sessionStats.totalCost += cost;
       sessionStats.requestCount += bucket.requests;
 
-      if (!byProvider[bucket.provider]) byProvider[bucket.provider] = emptyBucket();
+      if (!Object.hasOwn(byProvider, bucket.provider)) byProvider[bucket.provider] = emptyBucket();
       const p = byProvider[bucket.provider];
       p.input += usage.input;
       p.output += usage.output;
@@ -224,7 +264,7 @@ export function mergeFileContributions(filesMap, pricingConfig) {
       p.requests += bucket.requests;
 
       const modelKey = `${bucket.provider}/${bucket.model}`;
-      if (!byModel[modelKey]) {
+      if (!Object.hasOwn(byModel, modelKey)) {
         byModel[modelKey] = { provider: bucket.provider, model: bucket.model, ...emptyBucket() };
       }
       const m = byModel[modelKey];
@@ -238,7 +278,7 @@ export function mergeFileContributions(filesMap, pricingConfig) {
 
       if (bucket.date) {
         const date = bucket.date;
-        if (!byDate[date]) byDate[date] = emptyBucket();
+        if (!Object.hasOwn(byDate, date)) byDate[date] = emptyBucket();
         const d = byDate[date];
         d.input += usage.input;
         d.output += usage.output;
@@ -251,7 +291,7 @@ export function mergeFileContributions(filesMap, pricingConfig) {
         addToCrossTable(byDateProvider, date, bucket.provider, usage, cost, bucket.requests);
         addToCrossTable(byDateModel, date, modelKey, usage, cost, bucket.requests);
 
-        if (!sessionStats.byDate[date]) sessionStats.byDate[date] = emptyBucket();
+        if (!Object.hasOwn(sessionStats.byDate, date)) sessionStats.byDate[date] = emptyBucket();
         const sd = sessionStats.byDate[date];
         sd.input += usage.input;
         sd.output += usage.output;
@@ -306,11 +346,11 @@ export function buildEmptyStats() {
       totalRequests: 0,
       totalSessions: 0,
     },
-    byProvider: {},
-    byModel: {},
-    byDate: {},
-    byDateProvider: {},
-    byDateModel: {},
+    byProvider: dynamicMap(),
+    byModel: dynamicMap(),
+    byDate: dynamicMap(),
+    byDateProvider: dynamicMap(),
+    byDateModel: dynamicMap(),
     sessions: [],
     generatedAt: new Date().toISOString(),
   };

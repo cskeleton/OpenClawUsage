@@ -181,7 +181,20 @@ export function createMcpServer() {
         case "get_session_stats": {
           const data = await getStats({ waitForRefresh: true });
           const { sessionId } = args;
-          const session = data.sessions.find(s => s.id === sessionId);
+          let session = data.sessions.find(s => s.id === sessionId);
+          let legacyRawLookup = false;
+          if (!session && typeof sessionId === 'string' && !sessionId.includes(':')) {
+            // Preserve the pre-sync single-source UUID contract. A raw ID is
+            // accepted only when exactly one source-qualified session matches;
+            // collisions across sources fail closed instead of guessing.
+            const matches = data.sessions.filter((candidate) =>
+              candidate.id.endsWith(`:${sessionId}`)
+            );
+            if (matches.length === 1) {
+              session = matches[0];
+              legacyRawLookup = data.sources?.length === 1;
+            }
+          }
           if (!session) {
             return {
               content: [{ type: "text", text: `Session with ID ${sessionId} not found.` }],
@@ -192,7 +205,11 @@ export function createMcpServer() {
             content: [
               {
                 type: "text",
-                text: JSON.stringify(session, null, 2),
+                text: JSON.stringify(
+                  legacyRawLookup ? { ...session, id: sessionId } : session,
+                  null,
+                  2
+                ),
               },
             ],
           };

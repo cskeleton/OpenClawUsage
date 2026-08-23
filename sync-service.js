@@ -9,7 +9,10 @@ import {
   MAX_SNAPSHOT_BYTES,
   storeImportedSnapshot,
 } from './sync-snapshot.js';
-import { getLocalContributionCache as defaultGetLocalContributionCache } from './stats-service.js';
+import {
+  getLocalContributionCache as defaultGetLocalContributionCache,
+  invalidateStatsCache,
+} from './stats-service.js';
 
 export const SSH_TIMEOUT_MS = 30_000;
 export const SSH_CONNECT_TIMEOUT_SECONDS = 15;
@@ -324,7 +327,12 @@ export async function receiveSync(input = process.stdin, options = {}) {
 
   const config = await getConfig(options);
   try {
-    return await storeImportedSnapshot(parsed, { ...options, syncConfig: config });
+    const result = await storeImportedSnapshot(parsed, { ...options, syncConfig: config });
+    // The stats service reads durable imports on each combined response. This
+    // notification also drops any pricing/aggregate short-circuit immediately
+    // after a successful receive without making stats-service import transport.
+    invalidateStatsCache();
+    return result;
   } catch (error) {
     if (/unable to store|invalid|unauthorized|unsupported|size|counter|snapshot/i.test(error?.message || '')) {
       throw invalidSyncError(error.message, 'SYNC_SNAPSHOT_INVALID');

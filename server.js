@@ -15,6 +15,15 @@ import {
   updatePricingConfig,
   refreshStatsCache,
 } from './stats-service.js';
+import {
+  getPublicSyncConfig,
+  updateSyncSettings,
+} from './sync-config.js';
+import {
+  getSyncStatus,
+  syncToTarget,
+  testSyncTarget,
+} from './sync-service.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PORT = 3001;
@@ -142,6 +151,67 @@ function attachCustomRule(row, customMap) {
   };
 }
 
+const SAFE_SYNC_ERROR_MESSAGES = Object.freeze({
+  SYNC_SETTINGS_INVALID: 'Invalid sync settings',
+  SYNC_TARGET_INVALID: 'Invalid sync target',
+  SYNC_TARGET_NOT_ALLOWED: 'Sync target is not allowlisted',
+  SYNC_DISABLED: 'Sync is disabled',
+  SYNC_CACHE_NOT_FRESH: 'Local statistics are not fresh',
+  SNAPSHOT_TOO_LARGE: 'Sync snapshot is too large',
+  SYNC_INPUT_FAILED: 'Unable to read sync input',
+  SYNC_INPUT_INVALID: 'Invalid sync snapshot',
+  SYNC_SNAPSHOT_INVALID: 'Invalid sync snapshot',
+  SYNC_STORE_FAILED: 'Unable to store sync snapshot',
+  SYNC_STATUS_WRITE_FAILED: 'Unable to persist sync status',
+  SYNC_CONFIG_UNAVAILABLE: 'Sync configuration unavailable',
+  SSH_TIMEOUT: 'SSH transport timed out',
+  SSH_EXIT: 'SSH receiver exited unsuccessfully',
+  SSH_SIGNAL: 'SSH transport terminated',
+  SSH_FAILED: 'SSH transport failed',
+  SYNC_FAILED: 'Sync failed',
+});
+
+function safeSyncError(res, error, fallbackCode = 'SYNC_FAILED') {
+  const code = SAFE_SYNC_ERROR_MESSAGES[error?.code] ? error.code : fallbackCode;
+  const status = code.startsWith('SSH_') ? 502 : (code === 'SYNC_CONFIG_UNAVAILABLE' ? 500 : 400);
+  return res.status(status).json({ code, error: SAFE_SYNC_ERROR_MESSAGES[code] });
+}
+
+function actionTargetId(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    const error = new Error('invalid sync action body');
+    error.code = 'SYNC_TARGET_INVALID';
+    throw error;
+  }
+  const keys = Object.keys(body);
+  if (keys.some((key) => key !== 'targetId')) {
+    const error = new Error('invalid sync action body');
+    error.code = 'SYNC_TARGET_INVALID';
+    throw error;
+  }
+  if (Object.hasOwn(body, 'targetId') && typeof body.targetId !== 'string') {
+    const error = new Error('invalid sync target');
+    error.code = 'SYNC_TARGET_INVALID';
+    throw error;
+  }
+  return body.targetId;
+}
+
+function safeSyncStatus(status) {
+  const statusError = status.error;
+  const safeError = statusError === null
+    ? null
+    : (Object.values(SAFE_SYNC_ERROR_MESSAGES).includes(statusError)
+      || /^SSH receiver exited with code \d+$/.test(statusError)
+      || /^SSH receiver terminated by [A-Z0-9]+$/.test(statusError)
+      ? statusError
+      : 'Sync failed');
+  return {
+    ...status,
+    error: safeError,
+  };
+}
+
 /**
  * 创建 Express 应用。
  * @param {{ staticDir?: string }} [options]
@@ -165,6 +235,57 @@ export function createApp({ staticDir } = {}) {
       pid: process.pid,
       launchId: process.env.OPENCLAW_USAGE_LAUNCH_ID || null,
     });
+  });
+
+  app.get('/api/sync/config', async (req, res) => {
+    try {
+      res.json(await getPublicSyncConfig());
+    } catch {
+      safeSyncError(res, null, 'SYNC_CONFIG_UNAVAILABLE');
+    }
+  });
+
+  app.get('/api/sync/status', async (req, res) => {
+    try {
+      res.json(safeSyncStatus(await getSyncStatus()));
+    } catch {
+      safeSyncError(res, null, 'SYNC_CONFIG_UNAVAILABLE');
+    }
+  });
+
+  app.put('/api/sync/settings', async (req, res) => {
+    try {
+      const body = req.body;
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        const error = new Error('invalid sync settings');
+        error.code = 'SYNC_SETTINGS_INVALID';
+        throw error;
+      }
+      res.json(await updateSyncSettings(body));
+    } catch (error) {
+      const code = error?.code || (
+        /target/i.test(error?.message || '') ? 'SYNC_TARGET_INVALID' : 'SYNC_SETTINGS_INVALID'
+      );
+      safeSyncError(res, { ...error, code }, code);
+    }
+  });
+
+  app.post('/api/sync/run', async (req, res) => {
+    try {
+      const targetId = actionTargetId(req.body);
+      res.json(await syncToTarget(targetId));
+    } catch (error) {
+      safeSyncError(res, error);
+    }
+  });
+
+  app.post('/api/sync/test', async (req, res) => {
+    try {
+      const targetId = actionTargetId(req.body);
+      res.json(await testSyncTarget(targetId));
+    } catch (error) {
+      safeSyncError(res, error);
+    }
   });
 
   app.get('/api/stats', async (req, res) => {

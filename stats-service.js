@@ -1,11 +1,19 @@
 import { join } from 'path';
-import { statSync } from 'fs';
+import { createHash } from 'crypto';
+import { existsSync, statSync } from 'fs';
 import { unlink } from 'fs/promises';
 import {
   getSessionDir,
   parseSessionFile,
   scanSessionManifest,
 } from './aggregator.js';
+import { getOpenClawConfigDir } from './openclaw-config.js';
+import {
+  getPublicSyncConfig,
+  loadSyncConfig,
+  SYNC_CONFIG_FILENAME,
+} from './sync-config.js';
+import { loadImportedSnapshots } from './sync-snapshot.js';
 import { loadPricingConfig, savePricingConfig, validatePricingConfig } from './pricing.js';
 import {
   CACHE_SCHEMA_VERSION,
@@ -25,6 +33,7 @@ import {
   buildFileContribution,
   mergeFileContributions,
   buildEmptyStats,
+  namespaceFileContributions,
   STATS_SHAPE_VERSION,
 } from './stats-contribution.js';
 
@@ -70,6 +79,9 @@ function wrapStatsResponse(stats, cacheMeta) {
       revision: cacheMeta.revision,
       sourceId: cacheMeta.sourceId,
       checkedAt: cacheMeta.checkedAt,
+      ...(cacheMeta.combinedRevision
+        ? { combinedRevision: cacheMeta.combinedRevision }
+        : {}),
     },
   };
 }
@@ -517,7 +529,7 @@ async function ensureLoaded(pricingConfig, fp, sourceId, manifestScan) {
  *   forceFresh：强制绕过缓存短路，总是执行一次增量刷新后再返回；
  *   waitForRefresh：仅在检测到变化时等待刷新完成（对应 HTTP `?fresh=1`）。
  */
-export async function getStats({ forceFresh = false, waitForRefresh = false } = {}) {
+async function getLocalStats({ forceFresh = false, waitForRefresh = false } = {}) {
   const pricingConfig = await loadPricingConfig();
   const fp = buildPricingFingerprint(pricingConfig);
   const sessionDir = getSessionDir();
@@ -616,6 +628,237 @@ export async function getStats({ forceFresh = false, waitForRefresh = false } = 
     sourceId,
     checkedAt: new Date().toISOString(),
   });
+}
+
+const IMPORT_SUBDIR = 'cache/openclaw-usage/imports';
+
+function importedSnapshotPath(sourceId) {
+  return join(getOpenClawConfigDir(), IMPORT_SUBDIR, `${sourceId}.json`);
+}
+
+function receivedAtForSnapshot(snapshot) {
+  try {
+    return new Date(statSync(importedSnapshotPath(snapshot.source.id)).mtimeMs).toISOString();
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      // A receiver may replace/remove a file between directory enumeration and
+      // metadata lookup. The snapshot was still validated and is safe to use;
+      // generatedAt is a conservative last-good timestamp for this response.
+      return snapshot.generatedAt;
+    }
+    throw new Error('unable to read imported snapshots');
+  }
+}
+
+function addSourceInfo(source, kind, metadata = {}) {
+  return {
+    id: source.id,
+    label: source.label,
+    kind,
+    status: metadata.status || 'fresh',
+    stale: metadata.status === 'stale',
+    lastReceivedAt: metadata.lastReceivedAt ?? null,
+    generatedAt: metadata.generatedAt ?? null,
+    staleSince: metadata.staleSince ?? null,
+    revision: metadata.revision ?? null,
+  };
+}
+
+function canonicalSnapshotIdentity(snapshot) {
+  const compareUtf16 = (left, right) => {
+    const a = String(left);
+    const b = String(right);
+    const length = Math.min(a.length, b.length);
+    for (let index = 0; index < length; index += 1) {
+      const leftCode = a.charCodeAt(index);
+      const rightCode = b.charCodeAt(index);
+      if (leftCode < rightCode) return -1;
+      if (leftCode > rightCode) return 1;
+    }
+    if (a.length < b.length) return -1;
+    if (a.length > b.length) return 1;
+    return 0;
+  };
+  const contributions = snapshot.contributions
+    .map((contribution) => ({
+      contributionId: contribution.contributionId,
+      session: {
+        id: contribution.session.id,
+        status: contribution.session.status,
+        archivedAt: contribution.session.archivedAt,
+      },
+      firstTimestamp: contribution.firstTimestamp,
+      lastTimestamp: contribution.lastTimestamp,
+      buckets: contribution.buckets
+        .map((bucket) => ({
+          date: bucket.date,
+          provider: bucket.provider,
+          model: bucket.model,
+          usage: {
+            input: bucket.usage.input,
+            output: bucket.usage.output,
+            cacheRead: bucket.usage.cacheRead,
+            cacheWrite: bucket.usage.cacheWrite,
+            totalTokens: bucket.usage.totalTokens,
+          },
+          openclawCost: {
+            input: bucket.openclawCost.input,
+            output: bucket.openclawCost.output,
+            cacheRead: bucket.openclawCost.cacheRead,
+            cacheWrite: bucket.openclawCost.cacheWrite,
+            total: bucket.openclawCost.total,
+          },
+          requests: bucket.requests,
+        }))
+        .sort((a, b) => compareUtf16(JSON.stringify(a), JSON.stringify(b))),
+      hasRecords: contribution.hasRecords,
+    }))
+    .sort((a, b) => compareUtf16(a.contributionId, b.contributionId));
+  return {
+    version: snapshot.version,
+    kind: snapshot.kind,
+    scope: snapshot.scope,
+    source: { id: snapshot.source.id, label: snapshot.source.label },
+    revision: snapshot.revision,
+    generatedAt: snapshot.generatedAt,
+    contributions,
+  };
+}
+
+function buildCombinedRevision({ localResponse, pricingConfig, syncConfig, importedById }) {
+  const imports = syncConfig.imports.allowedSourceIds.map((sourceId) => {
+    const imported = importedById.get(sourceId);
+    return imported
+      ? {
+          sourceId,
+          state: 'present',
+          receivedAt: imported.lastReceivedAt,
+          snapshot: canonicalSnapshotIdentity(imported.snapshot),
+        }
+      : { sourceId, state: 'missing', receivedAt: null, snapshot: null };
+  });
+  const identity = {
+    local: {
+      source: {
+        id: syncConfig.source.id,
+        label: syncConfig.source.label,
+      },
+      revision: localResponse.cache?.revision ?? 0,
+      sourceId: localResponse.cache?.sourceId ?? '',
+      pricing: buildPricingFingerprint(pricingConfig),
+    },
+    imports,
+  };
+  return createHash('sha256').update(JSON.stringify(identity)).digest('hex');
+}
+
+function statsForContributions(files, pricingConfig) {
+  return attachPricingMeta(mergeFileContributions(files, pricingConfig), pricingConfig);
+}
+
+/**
+ * Build the public multi-source view from the local pricing-independent cache
+ * and durable imported snapshots. Imports are loaded on each response so a
+ * successful receive, replacement, or removal is visible on the next request
+ * without polluting the local stats-v1 cache with foreign identities.
+ */
+export async function getStats(options = {}) {
+  const localResponse = await getLocalStats(options);
+  const pricingConfig = await loadPricingConfig();
+  const syncConfig = await loadSyncConfig();
+  const publicSync = await getPublicSyncConfig({ syncConfig });
+  const snapshots = await loadImportedSnapshots({ syncConfig });
+  const localSource = syncConfig.source;
+  const localFiles = namespaceFileContributions(
+    memory.files,
+    localSource.id,
+    localSource.label
+  );
+
+  const localStats = {
+    ...statsForContributions(localFiles, pricingConfig),
+    generatedAt: localResponse.generatedAt,
+  };
+  const allFiles = Object.create(null);
+  Object.assign(allFiles, localFiles);
+  const importedById = new Map();
+  for (const snapshot of snapshots) {
+    const source = snapshot.source;
+    const files = namespaceFileContributions(
+      Object.fromEntries(snapshot.contributions.map((contribution) => [
+        contribution.contributionId,
+        contribution,
+      ])),
+      source.id,
+      source.label,
+      { imported: true }
+    );
+    Object.assign(allFiles, files);
+    importedById.set(source.id, {
+      snapshot,
+      files,
+      lastReceivedAt: receivedAtForSnapshot(snapshot),
+    });
+  }
+
+  const statsBySource = Object.create(null);
+  statsBySource[localSource.id] = localStats;
+  const now = Date.now();
+  const sources = [addSourceInfo(localSource, 'local', {
+    status: localResponse.cache?.state === 'stale' ? 'stale' : 'fresh',
+    generatedAt: localStats.generatedAt,
+  })];
+
+  for (const sourceId of syncConfig.imports.allowedSourceIds) {
+    const imported = importedById.get(sourceId);
+    if (!imported) {
+      statsBySource[sourceId] = attachPricingMeta(buildEmptyStats(), pricingConfig);
+      sources.push(addSourceInfo({ id: sourceId, label: sourceId }, 'imported', {
+        status: 'missing',
+      }));
+      continue;
+    }
+    const generatedAt = imported.snapshot.generatedAt;
+    const lastReceivedAt = imported.lastReceivedAt;
+    const staleSinceMs = Date.parse(lastReceivedAt)
+      + syncConfig.settings.intervalMinutes * 60 * 1000;
+    const staleSince = new Date(staleSinceMs).toISOString();
+    const status = now >= staleSinceMs ? 'stale' : 'fresh';
+    statsBySource[sourceId] = statsForContributions(imported.files, pricingConfig);
+    sources.push(addSourceInfo(imported.snapshot.source, 'imported', {
+      status,
+      lastReceivedAt,
+      generatedAt,
+      staleSince,
+      revision: imported.snapshot.revision,
+    }));
+  }
+
+  const combined = {
+    ...statsForContributions(allFiles, pricingConfig),
+    // Preserve the existing local-cache generatedAt contract for callers that
+    // use it as a cache identity. Imported freshness is represented separately
+    // by source metadata and durable snapshot identity.
+    generatedAt: localResponse.generatedAt,
+  };
+  return {
+    ...wrapStatsResponse(combined, {
+      ...localResponse.cache,
+      combinedRevision: buildCombinedRevision({
+        localResponse,
+        pricingConfig,
+        syncConfig,
+        importedById,
+      }),
+    }),
+    instance: {
+      source: publicSync.source,
+      settings: publicSync.settings,
+      capabilities: publicSync.capabilities,
+    },
+    sources,
+    statsBySource,
+  };
 }
 
 /**
