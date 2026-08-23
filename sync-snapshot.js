@@ -65,6 +65,22 @@ function validNullableTimestamp(value) {
   return value === null || validTimestamp(value);
 }
 
+function normalizeWireTimestamp(value) {
+  let epochMilliseconds;
+  if (typeof value === 'string' && /^\d{13}$/.test(value)) {
+    epochMilliseconds = Number(value);
+  } else if (typeof value === 'number' && Number.isSafeInteger(value)) {
+    epochMilliseconds = value;
+  } else if (typeof value === 'string') {
+    epochMilliseconds = Date.parse(value);
+  } else {
+    return null;
+  }
+  if (!Number.isFinite(epochMilliseconds)) return null;
+  const date = new Date(epochMilliseconds);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
 function validCounter(value) {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
@@ -181,10 +197,10 @@ function mapContribution(fileKey, contribution) {
     session: {
       id: typeof session.id === 'string' ? session.id : 'unknown',
       status: typeof session.status === 'string' ? session.status : 'active',
-      archivedAt: session.archivedAt ?? null,
+      archivedAt: normalizeWireTimestamp(session.archivedAt),
     },
-    firstTimestamp: contribution?.firstTimestamp ?? null,
-    lastTimestamp: contribution?.lastTimestamp ?? null,
+    firstTimestamp: normalizeWireTimestamp(contribution?.firstTimestamp),
+    lastTimestamp: normalizeWireTimestamp(contribution?.lastTimestamp),
     buckets: Array.isArray(contribution?.buckets)
       ? contribution.buckets.map((bucket) => ({
           date: bucket?.date ?? null,

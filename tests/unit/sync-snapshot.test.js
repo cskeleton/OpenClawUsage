@@ -116,6 +116,25 @@ describe('source contribution snapshots', () => {
     }
   });
 
+  it('normalizes legacy cache timestamps into receiver-valid wire timestamps', () => {
+    const senderConfig = syncConfig();
+    const receiverConfig = syncConfig({
+      source: { id: 'claw', label: 'claw' },
+      imports: { allowedSourceIds: ['mbp'] },
+    });
+    const cache = cacheSnapshot();
+    cache.files['secret-session.jsonl'].session.archivedAt = String(Date.parse('2026-08-24T12:34:56.789Z'));
+    cache.files['secret-session.jsonl'].firstTimestamp = String(Date.parse('2026-08-24T11:00:00.000Z'));
+    cache.files['secret-session.jsonl'].lastTimestamp = 'legacy timestamp that cannot be converted';
+
+    const snapshot = buildSourceSnapshot(cache, senderConfig);
+    const contribution = snapshot.contributions[0];
+    expect(contribution.session.archivedAt).toBe('2026-08-24T12:34:56.789Z');
+    expect(contribution.firstTimestamp).toBe('2026-08-24T11:00:00.000Z');
+    expect(contribution.lastTimestamp).toBeNull();
+    expect(validateSourceSnapshot(snapshot, receiverConfig)).toBe(true);
+  });
+
   it('rejects unauthorized sources, unknown fields, and invalid counters', () => {
     const config = syncConfig({ source: { id: 'claw', label: 'claw' }, imports: { allowedSourceIds: ['mbp'] } });
     const snapshot = validImportedSnapshot(config);
