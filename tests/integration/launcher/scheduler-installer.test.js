@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { execFileSync } from 'child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
 import { symlinkSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -13,6 +13,18 @@ const disposables = [];
 
 function tempHome() {
   const home = mkdtempSync(join(tmpdir(), 'ocu-sync-home-'));
+  const fakeBin = join(home, 'bin');
+  const managerLog = join(home, 'manager-calls.log');
+  mkdirSync(fakeBin, { recursive: true });
+  for (const command of ['launchctl', 'systemctl']) {
+    const path = join(fakeBin, command);
+    writeFileSync(path, `#!/usr/bin/env bash
+printf '%s ' '${command}' >> "$FAKE_MANAGER_LOG"
+printf '%s\\n' "$*" >> "$FAKE_MANAGER_LOG"
+exit 0
+`);
+    chmodSync(path, 0o700);
+  }
   disposables.push(() => rmSync(home, { recursive: true, force: true }));
   return home;
 }
@@ -21,8 +33,17 @@ function run(script, home, args = []) {
   return execFileSync('bash', [script, ...args], {
     cwd: TEST_DIR,
     encoding: 'utf8',
-    env: { ...process.env, HOME: home },
+    env: {
+      ...process.env,
+      HOME: home,
+      PATH: `${join(home, 'bin')}:${process.env.PATH || ''}`,
+      FAKE_MANAGER_LOG: join(home, 'manager-calls.log'),
+    },
   });
+}
+
+function managerCalls(home) {
+  return readFileSync(join(home, 'manager-calls.log'), 'utf8');
 }
 
 afterEach(() => {
@@ -43,6 +64,8 @@ describe('sync scheduler installers', () => {
     );
     expect(readFileSync(join(unitDir, 'openclaw-usage-sync.service'), 'utf8')).toContain('sync --scheduled');
     expect(readFileSync(join(unitDir, 'openclaw-usage-sync.service'), 'utf8')).not.toMatch(/@(?:REPO_ROOT|NODE_PATH)@/);
+    expect(managerCalls(home)).toMatch(/systemctl --user daemon-reload/);
+    expect(managerCalls(home)).toMatch(/systemctl --user enable --now openclaw-usage-sync\.timer/);
   });
 
   it('installs an absolute-path macOS LaunchAgent and is idempotent', () => {
@@ -62,6 +85,8 @@ describe('sync scheduler installers', () => {
     expect(content).not.toContain(configDir);
     run(SCHEDULER, home, ['--platform', 'darwin', '--interval-minutes', '60']);
     expect(statSync(plist).mode & 0o777).toBe(0o600);
+    expect(managerCalls(home)).toMatch(/launchctl unload .*com\.openclaw\.usage\.sync\.plist/);
+    expect(managerCalls(home)).toMatch(/launchctl load .*com\.openclaw\.usage\.sync\.plist/);
   });
 
   it('escapes repository paths in both generated formats', () => {

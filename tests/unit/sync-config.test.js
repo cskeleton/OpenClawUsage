@@ -123,6 +123,22 @@ describe('sync configuration', () => {
     }
   });
 
+  it('rejects enabling scheduled sync without a target', async () => {
+    const ws = await createTmpWorkspace();
+    disposables.push(ws.cleanup);
+    const configPath = join(ws.configDir, 'openclaw-usage-sync.json');
+    writeFileSync(configPath, JSON.stringify(configFor({
+      settings: { enabled: true, targetId: null, intervalMinutes: 60 },
+    })));
+
+    await expect(loadSyncConfig()).rejects.toThrow(/invalid sync config/i);
+
+    writeFileSync(configPath, JSON.stringify(configFor({
+      settings: { enabled: false, targetId: 'claw', intervalMinutes: 60 },
+    })));
+    await expect(updateSyncSettings({ enabled: true, targetId: null })).rejects.toThrow(/target/i);
+  });
+
   it('updates only public-safe settings and writes a private atomic config', async () => {
     const ws = await createTmpWorkspace();
     disposables.push(ws.cleanup);

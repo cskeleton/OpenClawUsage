@@ -14,6 +14,19 @@ function dynamicMap() {
   return Object.create(null);
 }
 
+const MAX_SAFE_AGGREGATE = Number.MAX_SAFE_INTEGER;
+
+function addAggregate(target, field, value) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new Error(`unsafe statistics aggregate value: ${field}`);
+  }
+  const next = target[field] + value;
+  if (!Number.isFinite(next) || next > MAX_SAFE_AGGREGATE) {
+    throw new Error(`statistics aggregate exceeds safe range: ${field}`);
+  }
+  target[field] = next;
+}
+
 /**
  * Put a source boundary around contribution keys and session display IDs.
  * Imported snapshots intentionally carry no filename; local contributions may
@@ -86,6 +99,9 @@ function costForBucket(bucket, pricingConfig) {
     bucket.model,
     pricingConfig
   );
+  if (!cost || typeof cost.total !== 'number' || !Number.isFinite(cost.total) || cost.total < 0) {
+    throw new Error('unsafe statistics aggregate value: totalCost');
+  }
   return cost.total;
 }
 
@@ -158,13 +174,13 @@ function addToCrossTable(table, date, key, usage, cost, requests) {
   if (!Object.hasOwn(table, date)) table[date] = dynamicMap();
   if (!Object.hasOwn(table[date], key)) table[date][key] = emptyBucket();
   const b = table[date][key];
-  b.input += usage.input;
-  b.output += usage.output;
-  b.cacheRead += usage.cacheRead;
-  b.cacheWrite += usage.cacheWrite;
-  b.totalTokens += usage.totalTokens;
-  b.totalCost += cost;
-  b.requests += requests;
+  addAggregate(b, 'input', usage.input);
+  addAggregate(b, 'output', usage.output);
+  addAggregate(b, 'cacheRead', usage.cacheRead);
+  addAggregate(b, 'cacheWrite', usage.cacheWrite);
+  addAggregate(b, 'totalTokens', usage.totalTokens);
+  addAggregate(b, 'totalCost', cost);
+  addAggregate(b, 'requests', requests);
 }
 
 function sortedObject(obj) {
@@ -203,7 +219,7 @@ export function mergeFileContributions(filesMap, pricingConfig) {
   for (const contribution of Object.values(filesMap)) {
     if (!contribution.hasRecords) continue;
 
-    summary.totalSessions += 1;
+    addAggregate(summary, 'totalSessions', 1);
 
     const sessionStats = {
       id: contribution.session.id,
@@ -235,71 +251,71 @@ export function mergeFileContributions(filesMap, pricingConfig) {
       const cost = costForBucket(bucket, pricingConfig);
       const usage = bucket.usage;
 
-      summary.totalInput += usage.input;
-      summary.totalOutput += usage.output;
-      summary.totalCacheRead += usage.cacheRead;
-      summary.totalCacheWrite += usage.cacheWrite;
-      summary.totalTokens += usage.totalTokens;
-      summary.totalCost += cost;
-      summary.totalRequests += bucket.requests;
+      addAggregate(summary, 'totalInput', usage.input);
+      addAggregate(summary, 'totalOutput', usage.output);
+      addAggregate(summary, 'totalCacheRead', usage.cacheRead);
+      addAggregate(summary, 'totalCacheWrite', usage.cacheWrite);
+      addAggregate(summary, 'totalTokens', usage.totalTokens);
+      addAggregate(summary, 'totalCost', cost);
+      addAggregate(summary, 'totalRequests', bucket.requests);
 
       sessionStats.providers.add(bucket.provider);
       sessionStats.models.add(bucket.model);
-      sessionStats.totalInput += usage.input;
-      sessionStats.totalOutput += usage.output;
-      sessionStats.totalCacheRead += usage.cacheRead;
-      sessionStats.totalCacheWrite += usage.cacheWrite;
-      sessionStats.totalTokens += usage.totalTokens;
-      sessionStats.totalCost += cost;
-      sessionStats.requestCount += bucket.requests;
+      addAggregate(sessionStats, 'totalInput', usage.input);
+      addAggregate(sessionStats, 'totalOutput', usage.output);
+      addAggregate(sessionStats, 'totalCacheRead', usage.cacheRead);
+      addAggregate(sessionStats, 'totalCacheWrite', usage.cacheWrite);
+      addAggregate(sessionStats, 'totalTokens', usage.totalTokens);
+      addAggregate(sessionStats, 'totalCost', cost);
+      addAggregate(sessionStats, 'requestCount', bucket.requests);
 
       if (!Object.hasOwn(byProvider, bucket.provider)) byProvider[bucket.provider] = emptyBucket();
       const p = byProvider[bucket.provider];
-      p.input += usage.input;
-      p.output += usage.output;
-      p.cacheRead += usage.cacheRead;
-      p.cacheWrite += usage.cacheWrite;
-      p.totalTokens += usage.totalTokens;
-      p.totalCost += cost;
-      p.requests += bucket.requests;
+      addAggregate(p, 'input', usage.input);
+      addAggregate(p, 'output', usage.output);
+      addAggregate(p, 'cacheRead', usage.cacheRead);
+      addAggregate(p, 'cacheWrite', usage.cacheWrite);
+      addAggregate(p, 'totalTokens', usage.totalTokens);
+      addAggregate(p, 'totalCost', cost);
+      addAggregate(p, 'requests', bucket.requests);
 
       const modelKey = `${bucket.provider}/${bucket.model}`;
       if (!Object.hasOwn(byModel, modelKey)) {
         byModel[modelKey] = { provider: bucket.provider, model: bucket.model, ...emptyBucket() };
       }
       const m = byModel[modelKey];
-      m.input += usage.input;
-      m.output += usage.output;
-      m.cacheRead += usage.cacheRead;
-      m.cacheWrite += usage.cacheWrite;
-      m.totalTokens += usage.totalTokens;
-      m.totalCost += cost;
-      m.requests += bucket.requests;
+      addAggregate(m, 'input', usage.input);
+      addAggregate(m, 'output', usage.output);
+      addAggregate(m, 'cacheRead', usage.cacheRead);
+      addAggregate(m, 'cacheWrite', usage.cacheWrite);
+      addAggregate(m, 'totalTokens', usage.totalTokens);
+      addAggregate(m, 'totalCost', cost);
+      addAggregate(m, 'requests', bucket.requests);
 
       if (bucket.date) {
         const date = bucket.date;
         if (!Object.hasOwn(byDate, date)) byDate[date] = emptyBucket();
         const d = byDate[date];
-        d.input += usage.input;
-        d.output += usage.output;
-        d.cacheRead += usage.cacheRead;
-        d.cacheWrite += usage.cacheWrite;
-        d.totalTokens += usage.totalTokens;
-        d.totalCost += cost;
-        d.requests += bucket.requests;
+        addAggregate(d, 'input', usage.input);
+        addAggregate(d, 'output', usage.output);
+        addAggregate(d, 'cacheRead', usage.cacheRead);
+        addAggregate(d, 'cacheWrite', usage.cacheWrite);
+        addAggregate(d, 'totalTokens', usage.totalTokens);
+        addAggregate(d, 'totalCost', cost);
+        addAggregate(d, 'requests', bucket.requests);
 
         addToCrossTable(byDateProvider, date, bucket.provider, usage, cost, bucket.requests);
         addToCrossTable(byDateModel, date, modelKey, usage, cost, bucket.requests);
 
         if (!Object.hasOwn(sessionStats.byDate, date)) sessionStats.byDate[date] = emptyBucket();
         const sd = sessionStats.byDate[date];
-        sd.input += usage.input;
-        sd.output += usage.output;
-        sd.cacheRead += usage.cacheRead;
-        sd.cacheWrite += usage.cacheWrite;
-        sd.totalTokens += usage.totalTokens;
-        sd.totalCost += cost;
-        sd.requests += bucket.requests;
+        addAggregate(sd, 'input', usage.input);
+        addAggregate(sd, 'output', usage.output);
+        addAggregate(sd, 'cacheRead', usage.cacheRead);
+        addAggregate(sd, 'cacheWrite', usage.cacheWrite);
+        addAggregate(sd, 'totalTokens', usage.totalTokens);
+        addAggregate(sd, 'totalCost', cost);
+        addAggregate(sd, 'requests', bucket.requests);
 
         addToCrossTable(sessionStats.byDateModel, date, modelKey, usage, cost, bucket.requests);
       }

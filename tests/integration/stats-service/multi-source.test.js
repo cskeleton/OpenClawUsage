@@ -390,12 +390,37 @@ describe('multi-source HTTP and MCP integration', () => {
     unlinkSync(join(ws.configDir, 'openclaw-usage-sync.json'));
     const handlers = createMcpServer().__handlers;
     const stats = await getStats({ waitForRefresh: true });
-    const rawId = stats.statsBySource.local.sessions[0].id.replace(/^local:/, '');
+    const rawId = stats.statsBySource.local.sessions[0].id;
+    expect(rawId).not.toContain(':');
+    expect(stats.sessions[0].id).toBe(rawId);
     const response = await handlers.callTool({
       params: { name: 'get_session_stats', arguments: { sessionId: rawId } },
     });
     expect(response.isError).not.toBe(true);
     expect(JSON.parse(response.content[0].text).id).toBe(rawId);
+  });
+
+  it('does not expose null or non-finite totals when an unsafe import is present', async () => {
+    const ws = await setup();
+    const importPath = join(ws.configDir, 'cache/openclaw-usage/imports/remote.json');
+    const unsafe = importedSnapshot();
+    unsafe.contributions[0].buckets[0].usage.input = 1e308;
+    unsafe.contributions[0].buckets[0].usage.totalTokens = 1e308;
+    writeFileSync(importPath, JSON.stringify(unsafe));
+
+    const app = createApp({ staticDir: join(process.cwd(), 'dist-does-not-exist') });
+    const response = await request(app).get('/api/stats?fresh=1').expect(200);
+    expect(response.body.statsBySource.remote.summary.totalInput).toBe(0);
+    expect(response.body.statsBySource.remote.summary.totalTokens).toBe(0);
+    for (const value of Object.values(response.body.summary)) {
+      if (typeof value === 'number') expect(Number.isFinite(value)).toBe(true);
+    }
+    for (const summary of [response.body.summary, response.body.statsBySource.local.summary, response.body.statsBySource.remote.summary]) {
+      for (const field of ['totalInput', 'totalOutput', 'totalCacheRead', 'totalCacheWrite', 'totalTokens', 'totalCost', 'totalRequests', 'totalSessions']) {
+        expect(summary[field]).not.toBeNull();
+        expect(Number.isFinite(summary[field])).toBe(true);
+      }
+    }
   });
 
   it('fails closed when a raw session ID is ambiguous across sources', async () => {

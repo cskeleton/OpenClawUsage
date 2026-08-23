@@ -883,6 +883,7 @@ function renderSyncActions() {
   const dropdown = document.getElementById('refresh-dropdown');
   if (!dropdown) return;
   dropdown.querySelectorAll('[data-sync-target]').forEach((button) => button.remove());
+  dropdown.querySelectorAll('.refresh-dropdown-separator').forEach((separator) => separator.remove());
   const capabilities = fullData?.instance?.capabilities;
   const targets = Array.isArray(capabilities?.outboundTargets) ? capabilities.outboundTargets : [];
   if (!capabilities?.canSync || targets.length === 0) return;

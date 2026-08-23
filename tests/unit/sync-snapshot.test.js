@@ -18,6 +18,7 @@ import {
   __readBoundedSnapshotFileForTests,
   MAX_SNAPSHOT_BYTES,
   MAX_CONTRIBUTIONS,
+  MAX_SAFE_SNAPSHOT_VALUE,
 } from '../../sync-snapshot.js';
 
 const disposables = [];
@@ -128,6 +129,10 @@ describe('source contribution snapshots', () => {
     const infinite = structuredClone(snapshot);
     infinite.contributions[0].buckets[0].openclawCost.total = Infinity;
     expect(() => validateSourceSnapshot(infinite, config)).toThrow(/finite/i);
+
+    const unsafe = structuredClone(snapshot);
+    unsafe.contributions[0].buckets[0].usage.input = 1e308;
+    expect(() => validateSourceSnapshot(unsafe, config)).toThrow(/safe|aggregate|counter/i);
   });
 
   it('rejects oversized snapshots and contribution arrays before storage', () => {
@@ -140,6 +145,20 @@ describe('source contribution snapshots', () => {
     const tooLarge = structuredClone(snapshot);
     tooLarge.revision = 'x'.repeat(MAX_SNAPSHOT_BYTES);
     expect(() => validateSourceSnapshot(tooLarge, config)).toThrow(/size/i);
+  });
+
+  it('accepts the documented numeric boundary while keeping values finite', () => {
+    const senderConfig = syncConfig();
+    const config = syncConfig({
+      source: { id: 'claw', label: 'claw' },
+      imports: { allowedSourceIds: ['mbp'] },
+    });
+    const bounded = buildSourceSnapshot(cacheSnapshot(), senderConfig);
+    const bucket = bounded.contributions[0].buckets[0];
+    bucket.usage = Object.fromEntries(Object.keys(bucket.usage).map((key) => [key, MAX_SAFE_SNAPSHOT_VALUE]));
+    bucket.openclawCost = Object.fromEntries(Object.keys(bucket.openclawCost).map((key) => [key, MAX_SAFE_SNAPSHOT_VALUE]));
+    bucket.requests = MAX_SAFE_SNAPSHOT_VALUE;
+    expect(validateSourceSnapshot(bounded, config)).toBe(true);
   });
 
   it('atomically stores mode-0600 imports and ignores corrupt files without replacing valid data', async () => {
@@ -161,6 +180,11 @@ describe('source contribution snapshots', () => {
     await expect(loadImportedSnapshots({ syncConfig: config })).resolves.toEqual([snapshot]);
 
     await expect(storeImportedSnapshot({ ...snapshot, version: 2 }, { syncConfig: config })).rejects.toThrow(/version/i);
+    expect(readFileSync(importPath, 'utf8')).toBe(before);
+
+    const unsafe = structuredClone(snapshot);
+    unsafe.contributions[0].buckets[0].usage.input = 1e308;
+    await expect(storeImportedSnapshot(unsafe, { syncConfig: config })).rejects.toThrow(/safe|aggregate|counter/i);
     expect(readFileSync(importPath, 'utf8')).toBe(before);
 
     writeFileSync(join(importDir, 'corrupt.json'), '{not-json', { mode: 0o600 });

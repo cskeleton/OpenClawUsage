@@ -205,6 +205,7 @@ describe('Dashboard multi-source DOM flow', () => {
     expect(document.querySelector('[data-sync-target]')?.textContent).toBe('Sync to claw');
     document.querySelector('[data-locale-control="zh-CN"]').click();
     expect(document.querySelector('[data-sync-target]')?.textContent).toBe('同步到 claw');
+    expect(document.querySelectorAll('.refresh-dropdown-separator')).toHaveLength(1);
     document.querySelector('[data-sync-target]').click();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(globalThis.__lastSyncRequest.options.body).toBe(JSON.stringify({ targetId: 'claw' }));

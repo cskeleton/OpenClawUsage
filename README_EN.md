@@ -124,9 +124,9 @@ Sync sends one complete, versioned JSON envelope rather than a JSONL incremental
 }
 ```
 
-Only the top-level, contribution, session, bucket, `usage`, and `openclawCost` fields shown above are allowed. Counters and costs must be finite and non-negative. `contributionId` is an opaque one-way hash of local file identity; the filename is never exposed. The snapshot retains `openclawCost`, so when the receiver has no matching custom price or custom pricing is disabled, the calculation falls back to the `usage.cost` written by OpenClaw in the session. Final `totalCost` is always calculated while merging on the receiver; the snapshot has no `totalCost` field.
+Only the top-level, contribution, session, bucket, `usage`, and `openclawCost` fields shown above are allowed. Counters and costs must be finite and non-negative, and every numeric value must be no greater than `90,071,992` (so it remains safely accumulable at the maximum contribution/bucket limits). `usage` and `requests` must also be safe integers. `contributionId` is an opaque one-way hash of local file identity; the filename is never exposed. The snapshot retains `openclawCost`, so when the receiver has no matching custom price or custom pricing is disabled, the calculation falls back to the `usage.cost` written by OpenClaw in the session. Final `totalCost` is always calculated while merging on the receiver; the snapshot has no `totalCost` field.
 
-Snapshots must not contain message content, prompts/responses, tool calls, file paths, filenames, file size/mtime, manifests, OpenClaw configuration, pricing configuration, credentials, logs, or any precomputed `totalCost`. The receiver validates size, version, types, authorization, and array limits in memory first. Corrupt, incompatible, unauthorized, or interrupted input fails closed and cannot replace the last successful snapshot.
+Snapshots must not contain message content, prompts/responses, tool calls, file paths, filenames, file size/mtime, manifests, OpenClaw configuration, pricing configuration, credentials, logs, or any precomputed `totalCost`. The receiver validates size, version, types, authorization, numeric safety bounds, and array limits in memory first; snapshots that cannot be safely accumulated are rejected. Corrupt, incompatible, unauthorized, or interrupted input fails closed and cannot replace the last successful snapshot.
 
 ### Sync configuration and the SSH trust boundary
 
@@ -183,6 +183,8 @@ Host claw
 ```
 
 The two policy layers have separate responsibilities: `~/.ssh/config` controls the host, user, port, key, ProxyJump, and other connection details; `policy.allowedSshTargets` controls which aliases the application may use. The Web UI does not store credentials and does not allow arbitrary hosts, users, keys, SSH options, remote paths, or commands. After pre-authorization, Settings can edit only `settings.enabled`, an allowlisted `settings.targetId`, `settings.intervalMinutes` (1–10080 minutes), and the display-only `source.label`.
+
+The scheduled-sync invariant is: when `settings.enabled` is `true`, `settings.targetId` must be an allowlisted target. Config validation and Settings UI both prevent the enabled/no-target combination. To remove a target, disable scheduled sync first. With no sync config file, the legacy single-source behavior is preserved: raw Session UUIDs and contribution keys remain unprefixed; once multi-source configuration is enabled, local and imported sources use source namespaces.
 
 Settings shows this exact security help:
 

@@ -769,11 +769,10 @@ export async function getStats(options = {}) {
   const publicSync = await getPublicSyncConfig({ syncConfig });
   const snapshots = await loadImportedSnapshots({ syncConfig });
   const localSource = syncConfig.source;
-  const localFiles = namespaceFileContributions(
-    memory.files,
-    localSource.id,
-    localSource.label
-  );
+  const hasSyncConfig = existsSync(join(getOpenClawConfigDir(), SYNC_CONFIG_FILENAME));
+  const localFiles = hasSyncConfig || snapshots.length > 0
+    ? namespaceFileContributions(memory.files, localSource.id, localSource.label)
+    : memory.files;
 
   const localStats = {
     ...statsForContributions(localFiles, pricingConfig),

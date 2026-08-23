@@ -21,6 +21,12 @@ export const MAX_SNAPSHOT_BYTES = 10 * 1024 * 1024;
 export const MAX_CONTRIBUTIONS = 10_000;
 export const MAX_BUCKETS_PER_CONTRIBUTION = 10_000;
 export const MAX_SNAPSHOT_TEXT_LENGTH = 512;
+// Every accepted snapshot can contain at most this many numeric bucket values.
+// Keep each value below this bound so a worst-case aggregate remains a safe
+// JavaScript number instead of becoming Infinity or an unsafe integer.
+export const MAX_SAFE_SNAPSHOT_VALUE = Math.floor(
+  Number.MAX_SAFE_INTEGER / (MAX_CONTRIBUTIONS * MAX_BUCKETS_PER_CONTRIBUTION)
+);
 
 const IDENTIFIER_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const STATUSES = new Set(['active', 'reset', 'deleted']);
@@ -63,8 +69,16 @@ function validCounter(value) {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
 
+function validSafeCounter(value) {
+  return Number.isSafeInteger(value) && value >= 0 && value <= MAX_SAFE_SNAPSHOT_VALUE;
+}
+
+function validSafeCost(value) {
+  return validCounter(value) && value <= MAX_SAFE_SNAPSHOT_VALUE;
+}
+
 function validRequestCount(value) {
-  return validCounter(value) && Number.isSafeInteger(value);
+  return validSafeCounter(value);
 }
 
 function invalidSnapshot(message = 'invalid source snapshot') {
@@ -234,11 +248,11 @@ export function buildSourceSnapshot(cacheSnapshot, syncConfig) {
 
 function validateBucket(bucket) {
   if (!assertObject(bucket)) throw invalidSnapshot('invalid source snapshot bucket');
-  if (!assertObject(bucket.usage) || !Object.values(bucket.usage).every(validCounter)) {
-    throw invalidSnapshot('source snapshot counters must be finite and non-negative');
+  if (!assertObject(bucket.usage) || !Object.values(bucket.usage).every(validSafeCounter)) {
+    throw invalidSnapshot('source snapshot counters must be finite, non-negative, and safe to aggregate');
   }
-  if (!assertObject(bucket.openclawCost) || !Object.values(bucket.openclawCost).every(validCounter)) {
-    throw invalidSnapshot('source snapshot costs must be finite and non-negative');
+  if (!assertObject(bucket.openclawCost) || !Object.values(bucket.openclawCost).every(validSafeCost)) {
+    throw invalidSnapshot('source snapshot costs must be finite, non-negative, and safe to aggregate');
   }
   if (
     !hasOnlyKeys(bucket, ['date', 'provider', 'model', 'usage', 'openclawCost', 'requests']) ||

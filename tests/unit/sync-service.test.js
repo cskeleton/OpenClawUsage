@@ -193,6 +193,23 @@ describe('sync transport', () => {
     expect(status.lastAttempt).toBeNull();
     expect(status.failureSince).toBeNull();
   });
+
+  it('rejects an invalid enabled scheduled configuration before attempting SSH', async () => {
+    const ws = await createTmpWorkspace();
+    disposables.push(ws.cleanup);
+    const statusPath = join(ws.configDir, 'run', 'openclaw-usage', 'sync-status.json');
+    const execFile = vi.fn();
+    await expect(syncToTarget(undefined, {
+      scheduled: true,
+      syncConfig: senderConfig({
+        settings: { enabled: true, targetId: null, intervalMinutes: 60 },
+      }),
+      statusPath,
+      execFile,
+    })).rejects.toThrow(/invalid sync config/i);
+    expect(execFile).not.toHaveBeenCalled();
+    expect(existsSync(statusPath)).toBe(false);
+  });
 });
 
 describe('receive-sync transport', () => {

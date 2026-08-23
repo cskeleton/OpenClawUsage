@@ -65,6 +65,17 @@ describe('settings UI API boundary', () => {
     expect(document.querySelector('select[name="targetId"]')).toBeNull();
   });
 
+  it('does not allow scheduled sync to be enabled while no target is selected', () => {
+    renderSettings({
+      source: { id: 'mbp', label: 'MBP' },
+      settings: { enabled: false, targetId: null, intervalMinutes: 60 },
+      capabilities: { canSync: true, outboundTargets: [{ id: 'claw', label: 'claw' }] },
+    });
+    const enabled = document.querySelector('input[name="enabled"]');
+    expect(enabled.disabled).toBe(true);
+    expect(document.querySelector('select[name="targetId"]').value).toBe('');
+  });
+
   it('re-renders the heading after save and status after an action without stale nodes', async () => {
     const initialConfig = {
       source: { id: 'mbp', label: 'My MBP' },

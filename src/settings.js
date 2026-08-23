@@ -78,6 +78,7 @@ export function renderSettings(config, status = {}) {
   const capabilities = config?.capabilities || {};
   const targets = Array.isArray(capabilities.outboundTargets) ? capabilities.outboundTargets : [];
   const hasTargets = capabilities.canSync && targets.length > 0;
+  const hasSelectedTarget = typeof settings.targetId === 'string' && settings.targetId.length > 0;
 
   root.innerHTML = `
     <section class="settings-grid">
@@ -96,7 +97,7 @@ export function renderSettings(config, status = {}) {
             <input name="label" type="text" value="${escapeHtml(source.label)}" maxlength="120" required />
           </label>
           <label class="settings-toggle-field">
-            <input name="enabled" type="checkbox" ${settings.enabled ? 'checked' : ''} />
+            <input name="enabled" type="checkbox" ${settings.enabled ? 'checked' : ''} ${hasTargets && hasSelectedTarget ? '' : 'disabled'} />
             <span>${escapeHtml(t('settings.enabled'))}</span>
           </label>
           ${hasTargets ? `
@@ -152,6 +153,15 @@ function bindSettingsInteractions(config, status, fetchImpl) {
   const root = document.getElementById('settings-content');
   const form = document.getElementById('settings-form');
   if (!root || !form) return;
+
+  const targetControl = form.elements.targetId;
+  const enabledControl = form.elements.enabled;
+  if (targetControl && enabledControl) {
+    targetControl.addEventListener('change', () => {
+      enabledControl.disabled = !targetControl.value;
+      if (enabledControl.disabled) enabledControl.checked = false;
+    });
+  }
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();

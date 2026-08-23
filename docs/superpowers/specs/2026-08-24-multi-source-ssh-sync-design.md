@@ -78,6 +78,7 @@ MBP 示例：
 - `sshAlias`、`targetId`、`source.id` 采用严格标识符格式；不得包含空白、路径分隔符或 shell 元字符。
 - 后端使用 `execFile` 参数数组，不拼接 shell 字符串；远程只调用固定命令 `openclaw-usage receive-sync`。
 - Web UI 仅可修改 `settings.enabled`、从 allowlist 选择 `settings.targetId`、合法同步间隔和展示 label；不得写 policy、SSH alias、凭据、远程路径或命令。
+- `settings.enabled` 为 true 时必须存在 allowlist 中的 `settings.targetId`；配置校验拒绝 enabled/no-target，Settings UI 在未选择 target 时禁用定时开关。
 - `source.id` 一旦已有导出/导入状态就不可通过 Web UI 修改，避免来源身份分裂。
 
 ## 脱敏同步快照
@@ -113,7 +114,7 @@ MBP 示例：
 ## 存储、校验与失败语义
 
 - 导入目录：`$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/imports/`，应用接收写入路径强制目录 `0700`、每来源快照 `0600`；读取已有文件不自动修复权限。
-- 接收端先在内存中完成大小限制、JSON 解析、schema/version/kind/scope、allowlist、来源一致性、字段类型、有限非负数和数组上限校验，再原子替换。
+- 接收端先在内存中完成大小限制、JSON 解析、schema/version/kind/scope、allowlist、来源一致性、字段类型、有限非负数与安全累计边界和数组上限校验，再原子替换。`usage`/`requests` 使用安全整数；每个数值不超过 `floor(Number.MAX_SAFE_INTEGER / (MAX_CONTRIBUTIONS * MAX_BUCKETS_PER_CONTRIBUTION)) = 90,071,992`，确保最大合法快照的聚合不会产生 unsafe/non-finite/null JSON totals。
 - 损坏、版本不兼容、未授权来源或中断传输均不得覆盖上一次成功快照。
 - 成功接收后使共享统计缓存失效；下一次统计请求合并新快照。
 - 导入来源过期或未收到新数据时，继续计入“所有来源”总数，但 UI 显示警告。
@@ -175,7 +176,7 @@ MCP 默认继续返回合并统计；现有工具契约不因来源功能而破�
 ## 文档、兼容与部署
 
 - `README.md` 与 `README_EN.md` 同步说明架构、脱敏字段、SSH alias 配置、Web 设置边界、CLI、调度和故障语义。
-- 未创建同步配置时维持现有单来源行为，来源默认为本机且不显示 outbound 操作。
+- 未创建同步配置且没有 imports 时，`/api/stats` 保留旧的本地 Session UUID 与 contribution key；只有启用同步配置/多来源后才对本地贡献加 source namespace。
 - `claw` 继续监听 `0.0.0.0:3001`，使用 user systemd 管理 Web 服务与可选同步 timer。
 - 本机使用现有 `openclaw-usage` 启动器，并安装 LaunchAgent 调度器。
 - 实施完成后进行 Post-Implementation Sync Audit，将实际接口、路径和偏差回写到本规格。
@@ -187,10 +188,10 @@ MCP 默认继续返回合并统计；现有工具契约不因来源功能而破�
 ### 已实施内容与实现路径
 
 - 配置与权限：`sync-config.js` 读取 `$OPENCLAW_CONFIG_DIR/openclaw-usage-sync.json`（默认 `~/.openclaw/openclaw-usage-sync.json`），缺失时返回禁用的单来源 `local` 默认值；应用写入使用同目录临时文件 + 原子 rename 并强制配置目录 `0700`、文件 `0600`，load 不自动修复手工文件权限。
-- 脱敏导出与接收：`sync-snapshot.js` 只导出本文定义的 envelope、贡献、会话、bucket、`usage`、`openclawCost` 和布尔标记；贡献 ID 为不透明 SHA-256。接收文件为 `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/imports/<sourceId>.json`，应用接收写入路径强制导入目录 `0700`、文件 `0600`，校验在原子替换前完成。
+- 脱敏导出与接收：`sync-snapshot.js` 只导出本文定义的 envelope、贡献、会话、bucket、`usage`、`openclawCost` 和布尔标记；贡献 ID 为不透明 SHA-256。接收文件为 `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/imports/<sourceId>.json`，应用接收写入路径强制导入目录 `0700`、文件 `0600`，校验在原子替换前完成；数值边界按最大贡献/bucket 数量限制，拒绝无法安全累计的快照并保留 last-good。
 - SSH 传输与状态：`sync-service.js` 通过 `execFile('ssh', args)` 使用 allowlist 解析出的 alias 和固定 `openclaw-usage receive-sync`，单次执行无内部重试；状态写入 `$OPENCLAW_CONFIG_DIR/run/openclaw-usage/sync-status.json`，保留 `lastAttempt`、`lastSuccess`、`failureSince`、`targetId` 和安全错误分类。
 - 本地缓存仍由 `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/stats-v1.json` 管理；导入快照不写入本地 JSONL 逐文件缓存，接收成功后使共享统计缓存失效。
-- 汇总与统一定价：`stats-service.js` 在每次组合统计请求加载有效导入快照，将本地/导入贡献按 `${sourceId}:` 命名空间隔离，再以同一个接收端价格配置执行 `mergeFileContributions`。`GET /api/stats` 保留既有字段并增加 `instance`、`sources`、`statsBySource`；`cache.combinedRevision` 是包含本地 revision/source identity/pricing 和每个导入来源状态、接收时间及 canonical snapshot 内容的 SHA-256 身份。
+- 汇总与统一定价：`stats-service.js` 在每次组合统计请求加载有效导入快照，将本地/导入贡献按 `${sourceId}:` 命名空间隔离；缺失同步配置时直接保留 legacy 本地贡献键/Session ID。随后以同一个接收端价格配置执行 `mergeFileContributions`，所有聚合写入都采用 checked add，遇到非 finite 或超出安全范围立即 fail closed。`GET /api/stats` 保留既有字段并增加 `instance`、`sources`、`statsBySource`；`cache.combinedRevision` 是包含本地 revision/source identity/pricing 和每个导入来源状态、接收时间及 canonical snapshot 内容的 SHA-256 身份。
 - Dashboard/Settings：`src/main.js` 从 `GET /api/stats` 响应的 `instance.capabilities` 字段读取同步菜单能力，`src/settings.js` 从 `GET /api/sync/config` 响应的公开 `capabilities` 字段读取设置目标与操作；来源筛选覆盖汇总、图表、Provider/Model、Breakdown 和 Session；`settings.html` 不渲染任意 host/user/key/options/path/command/credential 控件。
 
 ### 实际 HTTP 路由

@@ -264,3 +264,33 @@ describe('filterData with source selection', () => {
     ]);
   });
 });
+
+describe('filterData with reserved provider and model names', () => {
+  it('preserves own JSON rows without mutating Object.prototype', () => {
+    delete Object.prototype.input;
+    const date = '2026-04-15';
+    const dangerous = ['__proto__', 'constructor', 'toString'];
+    const byProvider = JSON.parse(`{"${date}":{${dangerous.map((name) => `"${name}":${JSON.stringify(bucket(10, 1))}`).join(',')}}}`);
+    const byModel = JSON.parse(`{"${date}":{${dangerous.map((name) => `"${name}/model":${JSON.stringify(bucket(10, 1))}`).join(',')}}}`);
+    const data = {
+      byDate: { [date]: bucket(30, 3) },
+      byDateProvider: byProvider,
+      byDateModel: byModel,
+      sessions: [],
+    };
+
+    for (const name of dangerous) {
+      const providerFiltered = filterData(data, { from: date, to: date, provider: name });
+      expect(Object.keys(providerFiltered.byProvider)).toContain(name);
+      expect(Object.keys(providerFiltered.byModel)).toContain(`${name}/model`);
+      expect(providerFiltered.byProvider[name].input).toBe(10);
+
+      const modelFiltered = filterData(data, { from: date, to: date, model: `${name}/model` });
+      expect(Object.keys(modelFiltered.byProvider)).toContain(name);
+      expect(Object.keys(modelFiltered.byModel)).toContain(`${name}/model`);
+      expect(modelFiltered.byModel[`${name}/model`].input).toBe(10);
+    }
+
+    expect(Object.hasOwn(Object.prototype, 'input')).toBe(false);
+  });
+});

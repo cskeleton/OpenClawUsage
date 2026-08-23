@@ -169,9 +169,9 @@ OpenClawUsage 支持 MBP → `claw` 的低频、单向完整快照同步。两�
 }
 ```
 
-允许字段只有上例中的顶层、贡献、会话、bucket、`usage` 和 `openclawCost` 字段；计数与成本必须是有限非负数，`contributionId` 是由本地文件身份单向散列得到的不透明 ID，不暴露文件名。快照保留 `openclawCost`，因此接收端没有匹配的自定义价格或关闭自定义价格时，会回退到 OpenClaw 写入会话的 `usage.cost` 口径；最终 `totalCost` 始终由接收端合并时计算，快照中没有 `totalCost`。
+允许字段只有上例中的顶层、贡献、会话、bucket、`usage` 和 `openclawCost` 字段；计数与成本必须是有限非负数，并且每个数值不超过 `90,071,992`（在最大贡献/ bucket 数量下仍可安全累计）。`usage` 与 `requests` 还必须是安全整数。`contributionId` 是由本地文件身份单向散列得到的不透明 ID，不暴露文件名。快照保留 `openclawCost`，因此接收端没有匹配的自定义价格或关闭自定义价格时，会回退到 OpenClaw 写入会话的 `usage.cost` 口径；最终 `totalCost` 始终由接收端合并时计算，快照中没有 `totalCost`。
 
-快照禁止包含消息正文、prompt/response、工具调用、文件路径、filename、文件 size/mtime、manifest、OpenClaw 配置、价格配置、凭据、日志或任何预计算 `totalCost`。接收端先在内存中做大小、版本、类型、allowlist 和数组上限校验，损坏、版本不兼容、未授权或中断输入都 fail closed，不会替换上一份成功快照。
+快照禁止包含消息正文、prompt/response、工具调用、文件路径、filename、文件 size/mtime、manifest、OpenClaw 配置、价格配置、凭据、日志或任何预计算 `totalCost`。接收端先在内存中做大小、版本、类型、allowlist、数值安全边界和数组上限校验，任何不能安全累计的快照都会被拒绝；损坏、版本不兼容、未授权或中断输入都 fail closed，不会替换上一份成功快照。
 
 ### 同步配置与 SSH 信任边界
 
@@ -228,6 +228,8 @@ Host claw
 ```
 
 这里有两层明确的 policy：`~/.ssh/config` 决定主机、用户、端口、密钥、ProxyJump 等连接细节；`policy.allowedSshTargets` 决定应用允许使用哪些别名。Web 不保存 credential，也不允许填写任意 host、user、key、SSH options、remote path 或 command。预授权完成后，Settings 只允许修改 `settings.enabled`、从 allowlist 选择 `settings.targetId`、`settings.intervalMinutes`（1–10080 分钟）和展示用 `source.label`。
+
+定时同步的配置不变量是：`settings.enabled` 为 `true` 时必须同时有 allowlist 中的 `settings.targetId`；配置校验和 Settings UI 都会阻止 enabled/no-target 组合。需要停用目标时先关闭定时同步，再清除 target。没有同步配置文件时保持旧的单来源行为，原始 Session UUID 和贡献键不会加来源前缀；进入多来源配置后，本地与导入来源使用来源 namespace。
 
 Settings 中显示的安全提示为：
 

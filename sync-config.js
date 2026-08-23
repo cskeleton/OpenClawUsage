@@ -74,6 +74,10 @@ function validateSyncConfig(value) {
     throw invalidConfig();
   }
 
+  if (value.settings.enabled && value.settings.targetId === null) {
+    throw invalidConfig();
+  }
+
   for (const [targetId, target] of Object.entries(value.policy.allowedSshTargets)) {
     if (
       !validIdentifier(targetId) ||
@@ -210,6 +214,10 @@ export async function updateSyncSettings(patch, options = {}) {
   if (Object.hasOwn(patch, 'label')) {
     if (!validLabel(patch.label)) throw new Error('invalid sync label');
     next.source.label = patch.label;
+  }
+
+  if (next.settings.enabled && next.settings.targetId === null) {
+    throw new Error('scheduled sync requires a target');
   }
 
   validateSyncConfig(next);

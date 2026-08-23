@@ -7,6 +7,10 @@ export function emptyBucket() {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, totalCost: 0, requests: 0 };
 }
 
+function dynamicMap() {
+  return Object.create(null);
+}
+
 function emptySummary() {
   return {
     totalInput: 0,
@@ -35,9 +39,9 @@ export function selectSourceData(fullData, sourceId = 'all') {
   const source = (fullData.sources || []).find((item) => item.id === sourceId);
   return {
     summary: emptySummary(),
-    byDate: {},
-    byDateProvider: {},
-    byDateModel: {},
+    byDate: dynamicMap(),
+    byDateProvider: dynamicMap(),
+    byDateModel: dynamicMap(),
     sessions: [],
     generatedAt: null,
     sourceId,
@@ -71,12 +75,12 @@ export function mergeInto(dst, src) {
 }
 
 export function collapseCrossTable(crossTable, from, to) {
-  const result = {};
+  const result = dynamicMap();
   for (const [date, keyMap] of Object.entries(crossTable)) {
     if (from && date < from) continue;
     if (to && date > to) continue;
     for (const [key, stats] of Object.entries(keyMap)) {
-      if (!result[key]) result[key] = emptyBucket();
+      if (!Object.hasOwn(result, key)) result[key] = emptyBucket();
       mergeInto(result[key], stats);
     }
   }
@@ -125,23 +129,23 @@ function inRange(date, from, to) {
  * @param {(key: string) => boolean} matches
  */
 function sliceCrossTable(byDateModel, from, to, matches) {
-  const byDate = {};
-  const byProvider = {};
-  const byModel = {};
+  const byDate = dynamicMap();
+  const byProvider = dynamicMap();
+  const byModel = dynamicMap();
 
   for (const [date, keyMap] of Object.entries(byDateModel || {})) {
     if (!inRange(date, from, to)) continue;
     for (const [key, stats] of Object.entries(keyMap)) {
       if (!matches(key)) continue;
 
-      if (!byDate[date]) byDate[date] = emptyBucket();
+      if (!Object.hasOwn(byDate, date)) byDate[date] = emptyBucket();
       mergeInto(byDate[date], stats);
 
       const provider = providerOfKey(key);
-      if (!byProvider[provider]) byProvider[provider] = emptyBucket();
+      if (!Object.hasOwn(byProvider, provider)) byProvider[provider] = emptyBucket();
       mergeInto(byProvider[provider], stats);
 
-      if (!byModel[key]) {
+      if (!Object.hasOwn(byModel, key)) {
         byModel[key] = { provider, model: modelOfKey(key), ...emptyBucket() };
       }
       mergeInto(byModel[key], stats);
@@ -281,13 +285,13 @@ export function filterData(fullData, filter = {}) {
     // 维度筛选下三张表统一由交叉表切片，保证彼此一致
     ({ byDate, byProvider, byModel } = sliceCrossTable(sourceData.byDateModel || {}, from, to, matches));
   } else {
-    byDate = {};
+    byDate = dynamicMap();
     for (const [date, stats] of Object.entries(sourceData.byDate || {})) {
       if (!inRange(date, from, to)) continue;
       byDate[date] = stats;
     }
     byProvider = collapseCrossTable(sourceData.byDateProvider || {}, from, to);
-    byModel = {};
+    byModel = dynamicMap();
     for (const [key, stats] of Object.entries(collapseCrossTable(sourceData.byDateModel || {}, from, to))) {
       byModel[key] = { provider: providerOfKey(key), model: modelOfKey(key), ...stats };
     }
