@@ -32,6 +32,9 @@ printf '%s\\n' "$*" >> "$FAKE_MANAGER_LOG"
 if [[ "$1" == "verify" ]]; then
   target=''
   for target in "$@"; do :; done
+  if grep -Eq '^WorkingDirectory="' "$target"; then
+    exit 1
+  fi
   case "$target" in
     *.service|*.timer) exit 0 ;;
     *) exit 1 ;;
@@ -127,8 +130,29 @@ describe('sync scheduler installers', () => {
 
     run(SCHEDULER, home, ['--platform', 'linux', '--repo-root', repoAlias, '--interval-minutes', '15']);
     const service = readFileSync(join(home, '.config', 'systemd', 'user', 'openclaw-usage-sync.service'), 'utf8');
-    expect(service).toContain('WorkingDirectory="');
+    expect(service).toContain(`WorkingDirectory=${repoAlias.replaceAll(' ', '\\x20')}`);
+    expect(service).not.toContain('WorkingDirectory="');
     expect(service).toContain('repo & <sync>');
+    expect(service).toContain('ExecStart="');
+  });
+
+  it('escapes systemd scalar paths without changing token quoting', () => {
+    const home = tempHome();
+    const repoAlias = join(home, "repo %\\ '\"");
+    symlinkSync(TEST_DIR, repoAlias, 'dir');
+    const fakeNode = join(home, 'bin', 'node');
+    writeFileSync(fakeNode, '#!/usr/bin/env bash\nexit 0\n');
+    chmodSync(fakeNode, 0o700);
+    run(SCHEDULER, home, ['--platform', 'linux', '--repo-root', repoAlias, '--interval-minutes', '15']);
+    const service = readFileSync(join(home, '.config', 'systemd', 'user', 'openclaw-usage-sync.service'), 'utf8');
+    const expectedWorkingDirectory = repoAlias
+      .replaceAll('\\', '\\\\')
+      .replaceAll(' ', '\\x20')
+      .replaceAll("'", '\\x27')
+      .replaceAll('"', '\\x22')
+      .replaceAll('%', '%%');
+    expect(service).toContain(`WorkingDirectory=${expectedWorkingDirectory}`);
+    expect(service).not.toContain('WorkingDirectory="');
     expect(service).toContain('ExecStart="');
   });
 

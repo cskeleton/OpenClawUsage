@@ -110,7 +110,35 @@ quote_for_sed() {
   printf '%s' "$escaped"
 }
 
-if ! ROOT_ESC="$(quote_for_sed "$REPO_ROOT")"; then exit 1; fi
+systemd_scalar_path() {
+  local value="$1" escaped='' char index
+  if [[ "$value" == *$'\n'* || "$value" == *$'\r'* || "$value" == *$'\t'* ]]; then
+    echo "Error: paths and values must not contain control characters." >&2
+    return 1
+  fi
+  for ((index = 0; index < ${#value}; index += 1)); do
+    char="${value:index:1}"
+    case "$char" in
+      \\) escaped+='\\' ;;
+      ' ') escaped+='\x20' ;;
+      "'") escaped+='\x27' ;;
+      '"') escaped+='\x22' ;;
+      '%') escaped+='%%' ;;
+      *) escaped+="$char" ;;
+    esac
+  done
+  printf '%s' "$escaped"
+}
+
+scalar_path_for_sed() {
+  local escaped
+  if ! escaped="$(systemd_scalar_path "$1")"; then
+    return 1
+  fi
+  sed_escape "$escaped"
+}
+
+if ! ROOT_SCALAR_ESC="$(scalar_path_for_sed "$REPO_ROOT")"; then exit 1; fi
 if ! NODE_ESC="$(quote_for_sed "$NODE_PATH")"; then exit 1; fi
 if ! SERVER_ESC="$(quote_for_sed "$REPO_ROOT/server.js")"; then exit 1; fi
 if ! CLI_ESC="$(quote_for_sed "$REPO_ROOT/scripts/openclaw-usage-cli.js")"; then exit 1; fi
@@ -136,7 +164,7 @@ write_unit() {
     exit 1
   fi
   sed \
-    -e "s|@REPO_ROOT_QUOTED@|$ROOT_ESC|g" \
+    -e "s|@REPO_ROOT_SCALAR@|$ROOT_SCALAR_ESC|g" \
     -e "s|@NODE_PATH_QUOTED@|$NODE_ESC|g" \
     -e "s|@SERVER_PATH_QUOTED@|$SERVER_ESC|g" \
     -e "s|@CLI_PATH_QUOTED@|$CLI_ESC|g" \

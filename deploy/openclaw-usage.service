@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=@REPO_ROOT_QUOTED@
+WorkingDirectory=@REPO_ROOT_SCALAR@
 # Safe loopback defaults; deployments may override these in the environment file.
 Environment=OPENCLAW_USAGE_HOST=@HOST_QUOTED@
 Environment=OPENCLAW_USAGE_PORT=@PORT_QUOTED@
