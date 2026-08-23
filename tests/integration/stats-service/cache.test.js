@@ -14,6 +14,7 @@ import { createTmpWorkspace } from '../../helpers/tmp-workspace.js';
 import { fixturePath } from '../../helpers/fixture-loader.js';
 import {
   getStats,
+  getLocalContributionCache,
   invalidateStatsCache,
   refreshStatsCache,
   resetStatsServiceForTests,
@@ -98,6 +99,20 @@ describe('stats-service persistent cache', () => {
     expect(disk.schemaVersion).toBe(1);
     expect(disk.files).toBeDefined();
     expect(disk.manifest).toBeDefined();
+  });
+
+  it('refuses a local contribution export after an existing-cache refresh fails', async () => {
+    const ws = await setupWorkspace();
+    await expect(getLocalContributionCache()).resolves.toMatchObject({ cacheState: 'fresh' });
+    const sessionPath = join(ws.sessionsDir, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl');
+    writeFileSync(sessionPath, `${readFileSync(sessionPath, 'utf8')}\n`);
+    const aggregator = await import('../../../aggregator.js');
+    const parseSpy = vi.spyOn(aggregator, 'parseSessionJsonlRaw').mockRejectedValue(new Error('injected parse failure'));
+    try {
+      await expect(getLocalContributionCache()).rejects.toThrow(/not fresh/i);
+    } finally {
+      parseSpy.mockRestore();
+    }
   });
 
   it('reuses disk cache after module reset without reparsing unchanged files', async () => {

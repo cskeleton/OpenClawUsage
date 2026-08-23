@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { createServer as createNetServer } from 'net';
 import request from 'supertest';
 import { mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
-import { createApp, resolveListenPort } from '../../../server.js';
+import { createApp, resolveListenHost, resolveListenPort, startServer } from '../../../server.js';
 
 describe('resolveListenPort', () => {
   it('defaults to 3001', () => {
@@ -23,6 +24,57 @@ describe('resolveListenPort', () => {
     expect(() => resolveListenPort('65536')).toThrow(/Invalid OPENCLAW_USAGE_PORT/);
     expect(() => resolveListenPort('abc')).toThrow(/Invalid OPENCLAW_USAGE_PORT/);
     expect(() => resolveListenPort('30.1')).toThrow(/Invalid OPENCLAW_USAGE_PORT/);
+  });
+});
+
+describe('resolveListenHost', () => {
+  it('defaults to loopback and accepts a deployment bind address', () => {
+    expect(resolveListenHost(undefined)).toBe('127.0.0.1');
+    expect(resolveListenHost('')).toBe('127.0.0.1');
+    expect(resolveListenHost('0.0.0.0')).toBe('0.0.0.0');
+    expect(resolveListenHost('::1')).toBe('::1');
+  });
+
+  it('rejects ambiguous or unsafe host values', () => {
+    for (const value of ['localhost', '0.0.0.0; touch /tmp/pwned', '127.0.0.1\n', 'not a host']) {
+      expect(() => resolveListenHost(value)).toThrow(/Invalid OPENCLAW_USAGE_HOST/);
+    }
+  });
+});
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const server = createNetServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const port = server.address().port;
+      server.close((error) => error ? reject(error) : resolve(port));
+    });
+  });
+}
+
+describe('configured listen host is used by the real server', () => {
+  it('binds 0.0.0.0 when requested instead of silently using loopback', async () => {
+    const port = await freePort();
+    const oldPort = process.env.OPENCLAW_USAGE_PORT;
+    const oldHost = process.env.OPENCLAW_USAGE_HOST;
+    process.env.OPENCLAW_USAGE_PORT = String(port);
+    process.env.OPENCLAW_USAGE_HOST = '0.0.0.0';
+    const server = startServer();
+    try {
+      await new Promise((resolve, reject) => {
+        server.once('listening', resolve);
+        server.once('error', reject);
+      });
+      expect(server.address().address).toBe('0.0.0.0');
+      await request(`http://127.0.0.1:${port}`).get('/api/health').expect(200);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+      if (oldPort === undefined) delete process.env.OPENCLAW_USAGE_PORT;
+      else process.env.OPENCLAW_USAGE_PORT = oldPort;
+      if (oldHost === undefined) delete process.env.OPENCLAW_USAGE_HOST;
+      else process.env.OPENCLAW_USAGE_HOST = oldHost;
+    }
   });
 });
 

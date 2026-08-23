@@ -1,0 +1,19 @@
+[Unit]
+Description=OpenClawUsage web service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO_ROOT_QUOTED@
+# Safe loopback defaults; deployments may override these in the environment file.
+Environment=OPENCLAW_USAGE_HOST=@HOST_QUOTED@
+Environment=OPENCLAW_USAGE_PORT=@PORT_QUOTED@
+Environment=OPENCLAW_CONFIG_DIR=@CONFIG_DIR_QUOTED@
+EnvironmentFile=-%h/.config/openclaw-usage/environment
+ExecStart=@NODE_PATH_QUOTED@ @SERVER_PATH_QUOTED@
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

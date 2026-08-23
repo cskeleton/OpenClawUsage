@@ -688,6 +688,32 @@ export async function refreshStatsCache({ full = false } = {}) {
   };
 }
 
+/**
+ * Return the current local, pricing-independent per-file contributions.
+ *
+ * The sync transport calls this after a normal incremental refresh so the
+ * exported wire snapshot is built from the same memory/disk cache used by
+ * Web and MCP. No pricing result, manifest identity, or source path is
+ * included in this narrow boundary.
+ */
+export async function getLocalContributionCache() {
+  await refreshStatsCache({ full: false });
+  if (memory.cacheState !== 'fresh') {
+    throw new Error('local contribution cache is not fresh');
+  }
+  const diskCache = await readDiskCache();
+  const useMemory = !!memory.stats || !!memory.sourceId;
+  const files = useMemory
+    ? memory.files
+    : (diskCache?.files || {});
+  return {
+    files: { ...files },
+    revision: memory.revision || diskCache?.revision || 0,
+    generatedAt: memory.stats?.generatedAt || diskCache?.generatedAt || new Date().toISOString(),
+    cacheState: memory.cacheState,
+  };
+}
+
 /** 测试与诊断用 */
 export function __getMemoryState() {
   return { ...memory, persistenceUnavailable };

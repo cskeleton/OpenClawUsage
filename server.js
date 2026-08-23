@@ -1,4 +1,5 @@
 import express from 'express';
+import { isIP } from 'net';
 import { existsSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
@@ -17,7 +18,25 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PORT = 3001;
-const LISTEN_HOST = '127.0.0.1';
+const DEFAULT_HOST = '127.0.0.1';
+
+/**
+ * Resolve and strictly validate OPENCLAW_USAGE_HOST. Only IP literals are
+ * accepted so deployment configuration cannot inject a socket/path or an
+ * ambiguous hostname; the default remains loopback for local installs.
+ * @param {string|undefined} raw
+ * @returns {string}
+ */
+export function resolveListenHost(raw = process.env.OPENCLAW_USAGE_HOST) {
+  if (raw === undefined || raw === null || String(raw).trim() === '') {
+    return DEFAULT_HOST;
+  }
+  const host = String(raw);
+  if (host.length > 255 || /[\u0000-\u0020\u007f]/.test(host) || isIP(host) === 0) {
+    throw new Error(`Invalid OPENCLAW_USAGE_HOST: ${raw}`);
+  }
+  return host;
+}
 
 /**
  * 解析并校验 OPENCLAW_USAGE_PORT（或回退默认端口）
@@ -276,21 +295,23 @@ export function createApp({ staticDir } = {}) {
  */
 export function startServer() {
   let port;
+  let host;
   try {
     port = resolveListenPort();
+    host = resolveListenHost();
   } catch (err) {
     console.error(err.message);
     process.exit(1);
   }
 
   const app = createApp();
-  const server = app.listen(port, LISTEN_HOST, () => {
-    console.log(`OpenClaw Usage running at http://${LISTEN_HOST}:${port}`);
+  const server = app.listen(port, host, () => {
+    console.log(`OpenClaw Usage running at http://${host}:${port}`);
     console.log(`Scanning sessions from: ${getSessionDir()}`);
   });
 
   server.on('error', (err) => {
-    console.error(`Failed to listen on ${LISTEN_HOST}:${port}:`, err.message);
+    console.error(`Failed to listen on ${host}:${port}:`, err.message);
     process.exit(1);
   });
 

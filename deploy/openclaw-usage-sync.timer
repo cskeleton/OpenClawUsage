@@ -1,0 +1,11 @@
+[Unit]
+Description=OpenClawUsage low-frequency source sync timer
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=60min
+Persistent=false
+Unit=openclaw-usage-sync.service
+
+[Install]
+WantedBy=timers.target

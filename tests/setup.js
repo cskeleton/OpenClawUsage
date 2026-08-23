@@ -1,6 +1,6 @@
 import { afterEach, beforeEach } from 'vitest';
 
-const ENV_KEYS = ['OPENCLAW_CONFIG_DIR', 'OPENCLAW_DIR'];
+const ENV_KEYS = ['OPENCLAW_CONFIG_DIR', 'OPENCLAW_DIR', 'OPENCLAW_USAGE_HOST', 'OPENCLAW_USAGE_PORT'];
 const saved = {};
 
 beforeEach(() => {

@@ -22,6 +22,11 @@ import { dirname, join, resolve } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { randomBytes } from 'crypto';
 import { resolveListenPort } from '../server.js';
+import {
+  syncToTarget,
+  receiveSync,
+  getSyncStatus,
+} from '../sync-service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -44,6 +49,9 @@ Commands:
   stop               Stop the managed background server
   status             Report running state (exit 0 only when running)
   build              Run npm run build in the repository root
+  sync [targetId]    Push one sanitized snapshot to an allowlisted target
+  receive-sync       Receive one sanitized snapshot from stdin
+  sync-status        Print the last sync attempt/success/failure as JSON
   help               Show this help
 
 Environment:
@@ -55,6 +63,7 @@ State files (under $OPENCLAW_CONFIG_DIR):
   run/openclaw-usage/serve.json
   run/openclaw-usage/lifecycle.lock
   logs/openclaw-usage/serve.log
+  run/openclaw-usage/sync-status.json
   cache/openclaw-usage/stats-v1.json
 `;
 
@@ -920,6 +929,49 @@ export function cmdBuild() {
   }
 }
 
+function safeCliFailure(error, fallback) {
+  const code = typeof error?.code === 'string' && /^[A-Z0-9_]+$/.test(error.code)
+    ? error.code
+    : null;
+  return code ? { ok: false, error: fallback, code } : { ok: false, error: fallback };
+}
+
+/** Run one outbound sync without retries and print safe JSON only. */
+export async function cmdSync({ targetId, scheduled = false, syncFn = syncToTarget, print = (line) => console.log(line) } = {}) {
+  try {
+    const result = scheduled ? await syncFn(targetId, { scheduled: true }) : await syncFn(targetId);
+    print(JSON.stringify(result));
+    return 0;
+  } catch (error) {
+    print(JSON.stringify(safeCliFailure(error, 'sync failed')));
+    return 1;
+  }
+}
+
+/** Receive one stdin snapshot and print a deterministic safe result. */
+export async function cmdReceiveSync({ input = process.stdin, receiveFn = receiveSync, print = (line) => console.log(line) } = {}) {
+  try {
+    const result = await receiveFn(input);
+    print(JSON.stringify(result));
+    return 0;
+  } catch (error) {
+    print(JSON.stringify(safeCliFailure(error, 'receive-sync failed')));
+    return 1;
+  }
+}
+
+/** Print only the persisted/public sync status projection. */
+export async function cmdSyncStatus({ statusFn = getSyncStatus, print = (line) => console.log(line) } = {}) {
+  try {
+    const result = await statusFn();
+    print(JSON.stringify(result));
+    return 0;
+  } catch (error) {
+    print(JSON.stringify(safeCliFailure(error, 'sync-status failed')));
+    return 1;
+  }
+}
+
 export function cmdHelp() {
   const paths = getLauncherPaths();
   process.stdout.write(MARKER_HELP);
@@ -973,6 +1025,36 @@ export async function main(argv = process.argv.slice(2)) {
       return 1;
     }
     return cmdBuild();
+  }
+
+  if (cmd === 'sync') {
+    const scheduled = rest.includes('--scheduled');
+    const unsupportedFlags = rest.filter((arg) => arg.startsWith('-') && arg !== '--scheduled');
+    const targetArgs = rest.filter((arg) => arg !== '--scheduled');
+    if (unsupportedFlags.length || targetArgs.length > 1 || (scheduled && rest[rest.length - 1] !== '--scheduled')) {
+      console.error(`Unexpected arguments: ${rest.join(' ')}`);
+      process.stdout.write(MARKER_HELP);
+      return 1;
+    }
+    return cmdSync({ targetId: targetArgs[0], scheduled });
+  }
+
+  if (cmd === 'receive-sync') {
+    if (rest.length) {
+      console.error(`Unexpected arguments: ${rest.join(' ')}`);
+      process.stdout.write(MARKER_HELP);
+      return 1;
+    }
+    return cmdReceiveSync();
+  }
+
+  if (cmd === 'sync-status') {
+    if (rest.length) {
+      console.error(`Unexpected arguments: ${rest.join(' ')}`);
+      process.stdout.write(MARKER_HELP);
+      return 1;
+    }
+    return cmdSyncStatus();
   }
 
   console.error(`Unknown command: ${cmd}`);

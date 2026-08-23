@@ -1,0 +1,9 @@
+[Unit]
+Description=OpenClawUsage one-shot source sync
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO_ROOT_QUOTED@
+Environment=OPENCLAW_CONFIG_DIR=@CONFIG_DIR_QUOTED@
+EnvironmentFile=-%h/.config/openclaw-usage/environment
+ExecStart=@NODE_PATH_QUOTED@ @CLI_PATH_QUOTED@ sync --scheduled
