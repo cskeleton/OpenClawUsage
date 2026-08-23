@@ -1,7 +1,9 @@
 # 多来源 SSH 同步与统一统计设计
 
 **日期**：2026-08-24
-**状态**：待实施
+**状态**：已实施（2026-08-24 Post-Implementation Sync Audit）
+
+> 历史记录：本文最初以“待实施”状态作为 Task 1–5 的设计事实源；以下审计在实现完成后补充实际接口、路径与有意澄清，不删除原始安全要求和验收标准。
 
 ## 背景
 
@@ -39,7 +41,7 @@
 
 ## 配置文件
 
-路径：`$OPENCLAW_CONFIG_DIR/openclaw-usage-sync.json`，默认 `~/.openclaw/openclaw-usage-sync.json`。目录权限目标 `0700`，文件权限目标 `0600`，写入采用同目录临时文件加原子重命名。
+路径：`$OPENCLAW_CONFIG_DIR/openclaw-usage-sync.json`，默认 `~/.openclaw/openclaw-usage-sync.json`。目录/文件权限目标分别为 `0700`/`0600`；应用写入路径通过同目录临时文件、原子重命名和 `chmod` 强制这些权限。`loadSyncConfig` 只校验内容，不会自动修复手工创建文件的权限；手工配置必须在写入 JSON 后显式执行 `OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-$HOME/.openclaw}"`、`mkdir -p "$OPENCLAW_CONFIG_DIR"`、`chmod 700 "$OPENCLAW_CONFIG_DIR"` 和 `chmod 600 "$OPENCLAW_CONFIG_DIR/openclaw-usage-sync.json"`。
 
 MBP 示例：
 
@@ -110,7 +112,7 @@ MBP 示例：
 
 ## 存储、校验与失败语义
 
-- 导入目录：`$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/imports/`，目录 `0700`，每来源快照 `0600`。
+- 导入目录：`$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/imports/`，应用接收写入路径强制目录 `0700`、每来源快照 `0600`；读取已有文件不自动修复权限。
 - 接收端先在内存中完成大小限制、JSON 解析、schema/version/kind/scope、allowlist、来源一致性、字段类型、有限非负数和数组上限校验，再原子替换。
 - 损坏、版本不兼容、未授权来源或中断传输均不得覆盖上一次成功快照。
 - 成功接收后使共享统计缓存失效；下一次统计请求合并新快照。
@@ -151,7 +153,7 @@ MCP 默认继续返回合并统计；现有工具契约不因来源功能而破�
 
 ### Settings
 
-新增统一设置页，代码在两端完全相同，字段由 `instance.capabilities` 决定。页面展示当前 source、可选择的预授权 target、启用状态、间隔、最近同步结果，以及“测试连接/立即同步”等可用操作。
+新增统一设置页，代码在两端完全相同。Dashboard 从 `GET /api/stats` 响应的 `instance.capabilities` 字段读取来源筛选和同步能力；Settings 从 `GET /api/sync/config` 响应的公开 `capabilities` 字段决定字段与操作。页面展示当前 source、可选择的预授权 target、启用状态、间隔、最近同步结果，以及“测试连接/立即同步”等可用操作。
 
 必须显示以下帮助说明：
 
@@ -177,6 +179,54 @@ MCP 默认继续返回合并统计；现有工具契约不因来源功能而破�
 - `claw` 继续监听 `0.0.0.0:3001`，使用 user systemd 管理 Web 服务与可选同步 timer。
 - 本机使用现有 `openclaw-usage` 启动器，并安装 LaunchAgent 调度器。
 - 实施完成后进行 Post-Implementation Sync Audit，将实际接口、路径和偏差回写到本规格。
+
+## Post-Implementation Sync Audit（2026-08-24）
+
+本节将设计与当前实现逐项对齐，实际实现是本文在后续维护中的事实源。
+
+### 已实施内容与实现路径
+
+- 配置与权限：`sync-config.js` 读取 `$OPENCLAW_CONFIG_DIR/openclaw-usage-sync.json`（默认 `~/.openclaw/openclaw-usage-sync.json`），缺失时返回禁用的单来源 `local` 默认值；应用写入使用同目录临时文件 + 原子 rename 并强制配置目录 `0700`、文件 `0600`，load 不自动修复手工文件权限。
+- 脱敏导出与接收：`sync-snapshot.js` 只导出本文定义的 envelope、贡献、会话、bucket、`usage`、`openclawCost` 和布尔标记；贡献 ID 为不透明 SHA-256。接收文件为 `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/imports/<sourceId>.json`，应用接收写入路径强制导入目录 `0700`、文件 `0600`，校验在原子替换前完成。
+- SSH 传输与状态：`sync-service.js` 通过 `execFile('ssh', args)` 使用 allowlist 解析出的 alias 和固定 `openclaw-usage receive-sync`，单次执行无内部重试；状态写入 `$OPENCLAW_CONFIG_DIR/run/openclaw-usage/sync-status.json`，保留 `lastAttempt`、`lastSuccess`、`failureSince`、`targetId` 和安全错误分类。
+- 本地缓存仍由 `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/stats-v1.json` 管理；导入快照不写入本地 JSONL 逐文件缓存，接收成功后使共享统计缓存失效。
+- 汇总与统一定价：`stats-service.js` 在每次组合统计请求加载有效导入快照，将本地/导入贡献按 `${sourceId}:` 命名空间隔离，再以同一个接收端价格配置执行 `mergeFileContributions`。`GET /api/stats` 保留既有字段并增加 `instance`、`sources`、`statsBySource`；`cache.combinedRevision` 是包含本地 revision/source identity/pricing 和每个导入来源状态、接收时间及 canonical snapshot 内容的 SHA-256 身份。
+- Dashboard/Settings：`src/main.js` 从 `GET /api/stats` 响应的 `instance.capabilities` 字段读取同步菜单能力，`src/settings.js` 从 `GET /api/sync/config` 响应的公开 `capabilities` 字段读取设置目标与操作；来源筛选覆盖汇总、图表、Provider/Model、Breakdown 和 Session；`settings.html` 不渲染任意 host/user/key/options/path/command/credential 控件。
+
+### 实际 HTTP 路由
+
+同步相关 API 的准确路径如下；写请求继续受 same-origin/loopback Origin 与 JSON Content-Type guard 保护。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| GET | `/api/sync/config` | 返回公开 source/settings/capabilities；不返回 alias、policy、路径或凭据 |
+| GET | `/api/sync/status` | 返回发送端公开状态与 allowlisted target 的 ID/label |
+| PUT | `/api/sync/settings` | 仅接收 `enabled`、`targetId`、`intervalMinutes`、`label` |
+| POST | `/api/sync/run` | 仅接收可选 `{ "targetId": "..." }`，手动发送完整快照 |
+| POST | `/api/sync/test` | 仅接收 `{ "targetId": "..." }`，执行固定 probe，不导出/存储贡献 |
+
+`GET /api/stats` 的组合响应增加 `instance`、`sources`、`statsBySource`，`GET /api/refresh`、MCP 统计和已有定价路由保持兼容。
+
+### Probe、保留字与状态规则
+
+- `testSyncTarget` 发送的固定 probe envelope 是 `{ "version": 1, "kind": "openclaw-usage-sync-probe", "scope": "transport-only" }`；接收端识别后只返回成功，不创建导入文件。
+- `all` 在 `sync-config.js` 中保留，不能作为 `source.id` 或 `imports.allowedSourceIds`；Dashboard 的 `all` 仅是汇总筛选值。allowlist target ID 仍通过配置解析，不接受任意 SSH 输入。
+- 发送端的状态字段精确为 `lastAttempt`、`lastSuccess`、`failureSince`；失败不会覆盖既有 last-success，连续失败复用首次 `failureSince`，成功清除 `failureSince`。
+- 接收端对已收到来源用导入文件的 `lastReceivedAt`（最后成功原子替换时间）计算 `lastReceivedAt + intervalMinutes`；未配置 interval 的远端数据不被信任，实际复用接收端 settings。配置但没有快照的来源为 `missing`，过期来源为 `stale`；二者仍出现在 `sources[]`，并继续计入 All。
+
+### 调度器与部署实现
+
+- `scripts/install-local-launcher.sh` 安装 `~/bin/openclaw-usage`，CLI 帮助的同步命令为 `sync [targetId]`、`receive-sync`、`sync-status`；`sync --scheduled` 读取 `settings.enabled`，手动 `sync [targetId]` 不受该开关限制。
+- `scripts/install-sync-scheduler.sh` 在 macOS 生成 `~/Library/LaunchAgents/com.openclaw.usage.sync.plist`（`StartInterval`，默认 60 分钟）；Linux 转调 `scripts/install-systemd-user-service.sh` 生成 `~/.config/systemd/user/openclaw-usage-sync.service` 与 `.timer`，默认 `OnBootSec=5min`、`OnUnitActiveSec=<interval>min`、`Persistent=false`。`--sync-only` 仅安装同步单元，不接管 Web 生命周期。
+- `deploy/openclaw-usage.service`、`deploy/openclaw-usage-sync.service`、`deploy/openclaw-usage-sync.timer` 是由 installer 填充绝对路径的 user-systemd 模板；Web 默认 `127.0.0.1:3001`，可在用户接受的 LAN/ZeroTier 边界显式安装 `--host 0.0.0.0 --port 3001`，服务无认证，不得公网暴露。
+
+### 有意澄清与实现偏差
+
+1. **导入过期 interval**：快照 envelope 不携带可被远端伪造的期望 interval；stale 计算复用接收端 `settings.intervalMinutes`，以 `lastReceivedAt` 为起点。这是对“接收端判断过期”的安全化具体化。
+2. **组合数据的生命周期**：实现采用每请求合并有效导入快照；导入内容保留在独立 imports 目录，不写进本地 `stats-v1.json`，通过 `cache.combinedRevision` 和成功接收后的失效通知保证替换/删除可见。这与“共享缓存失效”目标一致，但不把跨来源数据伪装为本地 JSONL 文件贡献。
+3. **Linux 部署范围**：实现的是 user systemd unit/timer（`~/.config/systemd/user`），不是 system-wide unit；`--sync-only` 使调度器与 Web 服务生命周期保持独立。
+4. **接收时间字段**：`sources[].lastReceivedAt` 使用接收文件 mtime 的 ISO 表示，快照中的 `generatedAt` 单独保留；若文件在枚举后被替换/删除，当前已验证快照仍以其 `generatedAt` 作保守回退。
+5. **连接测试**：Web “测试连接”是 transport-only probe，不会生成或替换来源贡献；真正的完整快照替换只发生在 `sync`/`/api/sync/run`。
 
 ## 验收标准
 

@@ -74,6 +74,155 @@ The tool monitors and parses the local OpenClaw persistence directory:
 
 See the [design specification](docs/superpowers/specs/2026-08-01-persistent-incremental-stats-cache.md) for behavior, cache structure, and acceptance criteria.
 
+## 🔄 Multi-source SSH sync and unified pricing
+
+OpenClawUsage supports low-frequency, one-way full-snapshot sync from an MBP to `claw`. Both machines run the same Web UI and capability-driven code: the MBP can view its own data independently, while `claw` can combine local, MBP, and other configured sources. The receiver applies its own pricing configuration to every source, so changing prices on `claw` reprices all sources without another sync.
+
+### Sanitized snapshot boundary
+
+Sync sends one complete, versioned JSON envelope rather than a JSONL incremental patch. Its top-level fields are fixed:
+
+```json
+{
+  "version": 1,
+  "kind": "openclaw-usage-source-contributions",
+  "scope": "local-only",
+  "source": { "id": "mbp", "label": "MBP" },
+  "revision": "opaque-revision",
+  "generatedAt": "2026-08-24T12:00:00.000Z",
+  "contributions": [
+    {
+      "contributionId": "opaque-sha256-id",
+      "session": { "id": "session-id", "status": "active", "archivedAt": null },
+      "firstTimestamp": "2026-08-24T11:00:00.000Z",
+      "lastTimestamp": "2026-08-24T12:00:00.000Z",
+      "buckets": [
+        {
+          "date": "2026-08-24",
+          "provider": "provider",
+          "model": "model",
+          "usage": {
+            "input": 10,
+            "output": 20,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 30
+          },
+          "openclawCost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          },
+          "requests": 1
+        }
+      ],
+      "hasRecords": true
+    }
+  ]
+}
+```
+
+Only the top-level, contribution, session, bucket, `usage`, and `openclawCost` fields shown above are allowed. Counters and costs must be finite and non-negative. `contributionId` is an opaque one-way hash of local file identity; the filename is never exposed. The snapshot retains `openclawCost`, so when the receiver has no matching custom price or custom pricing is disabled, the calculation falls back to the `usage.cost` written by OpenClaw in the session. Final `totalCost` is always calculated while merging on the receiver; the snapshot has no `totalCost` field.
+
+Snapshots must not contain message content, prompts/responses, tool calls, file paths, filenames, file size/mtime, manifests, OpenClaw configuration, pricing configuration, credentials, logs, or any precomputed `totalCost`. The receiver validates size, version, types, authorization, and array limits in memory first. Corrupt, incompatible, unauthorized, or interrupted input fails closed and cannot replace the last successful snapshot.
+
+### Sync configuration and the SSH trust boundary
+
+The sync configuration is fixed at `$OPENCLAW_CONFIG_DIR/openclaw-usage-sync.json` (default `~/.openclaw/openclaw-usage-sync.json`). Application write paths enforce a `0700` config directory and `0600` file using a same-directory temporary file followed by an atomic rename. Loading validates content only; it does not repair permissions on a manually created file, and invalid configuration is never silently replaced. After copying and writing the JSON example, explicitly run:
+
+```bash
+OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-$HOME/.openclaw}"
+mkdir -p "$OPENCLAW_CONFIG_DIR"
+chmod 700 "$OPENCLAW_CONFIG_DIR"
+chmod 600 "$OPENCLAW_CONFIG_DIR/openclaw-usage-sync.json"
+```
+
+These are minimal copyable configuration examples.
+
+MBP (sender):
+
+```json
+{
+  "version": 1,
+  "source": { "id": "mbp", "label": "MBP" },
+  "policy": {
+    "allowedSshTargets": {
+      "claw": { "label": "claw", "sshAlias": "claw" }
+    }
+  },
+  "settings": { "enabled": true, "targetId": "claw", "intervalMinutes": 60 },
+  "imports": { "allowedSourceIds": [] }
+}
+```
+
+`claw` (receiver):
+
+```json
+{
+  "version": 1,
+  "source": { "id": "claw", "label": "claw" },
+  "policy": { "allowedSshTargets": {} },
+  "settings": { "enabled": false, "targetId": null, "intervalMinutes": 60 },
+  "imports": { "allowedSourceIds": ["mbp"] }
+}
+```
+
+The source ID `all` is reserved and cannot be used as `source.id` or in `imports.allowedSourceIds`; it denotes the Dashboard aggregate filter. `source.id`, target IDs, and `sshAlias` must use strict identifiers. Sync accepts only an allowlisted `targetId`, resolves it to the fixed `sshAlias`, and invokes the fixed remote command `openclaw-usage receive-sync` through an argument array; it never constructs a shell command.
+
+The second SSH policy layer is the local `~/.ssh/config`, for example:
+
+```sshconfig
+Host claw
+  HostName 192.0.2.20
+  User your-user
+  Port 22
+  IdentityFile ~/.ssh/id_ed25519
+  # Keep ProxyJump and other connection details here as well
+```
+
+The two policy layers have separate responsibilities: `~/.ssh/config` controls the host, user, port, key, ProxyJump, and other connection details; `policy.allowedSshTargets` controls which aliases the application may use. The Web UI does not store credentials and does not allow arbitrary hosts, users, keys, SSH options, remote paths, or commands. After pre-authorization, Settings can edit only `settings.enabled`, an allowlisted `settings.targetId`, `settings.intervalMinutes` (1–10080 minutes), and the display-only `source.label`.
+
+Settings shows this exact security help:
+
+> SSH connections are managed by the local `~/.ssh/config`. This page can only select SSH aliases pre-authorized in `$OPENCLAW_CONFIG_DIR/openclaw-usage-sync.json`. It does not store credentials or allow arbitrary hosts, SSH options, remote paths, or commands.
+
+### CLI, scheduling, and deployment
+
+The sync-related lines in `openclaw-usage help` are an exact CLI contract:
+
+```text
+  sync [targetId]    Push one sanitized snapshot to an allowlisted target
+  receive-sync       Receive one sanitized snapshot from stdin
+  sync-status        Print the last sync attempt/success/failure as JSON
+```
+
+When omitted, `sync` uses `settings.targetId`; `receive-sync` reads exactly one snapshot from stdin; `sync-status` prints only the safe public status projection. Web manual actions map to `POST /api/sync/run` and `POST /api/sync/test`; Settings maps to `GET /api/sync/config`, `GET /api/sync/status`, and `PUT /api/sync/settings`. These routes are available for Web/API use and do not need to be presented as ordinary-user CLI commands. Manual sync remains available even when scheduled sync is disabled.
+
+The default interval is 60 minutes and one run does not retry. After a failure, the next scheduler tick or a manual run is required. On macOS, `./scripts/install-sync-scheduler.sh` installs a LaunchAgent at `~/Library/LaunchAgents/com.openclaw.usage.sync.plist`; on Linux, the same installer creates user systemd service/timer units under `~/.config/systemd/user/`. The timer uses `Persistent=false`, so offline or sleep periods do not create a retry storm. The installer embeds absolute local `node` and CLI paths in the LaunchAgent/systemd scheduler. Scheduled runs call `openclaw-usage sync --scheduled` and reread `settings.enabled` each time; disabled scheduled runs skip, while manual `openclaw-usage sync [targetId]` remains available. Only the remote non-interactive SSH receiver must resolve `openclaw-usage` in its PATH. If the remote side reports `openclaw-usage: command not found`, fix the remote PATH/launcher installation instead of exposing a command or path in Web settings.
+
+Status is stored at `$OPENCLAW_CONFIG_DIR/run/openclaw-usage/sync-status.json` and contains `lastAttempt`, `lastSuccess`, `failureSince`, `targetId`, and a safe error classification. Imported snapshots live at `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/imports/<sourceId>.json`; the local stats cache remains `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/stats-v1.json`. For an imported source, `lastReceivedAt` is the last successful replacement time and expiry is `lastReceivedAt + intervalMinutes`, using the receiver's interval setting. Configured-but-not-yet-received sources remain listed as missing; stale and missing sources remain in the All aggregate and are visibly flagged by the Dashboard.
+
+To deploy the Web service on `claw`, an explicit example is:
+
+```bash
+./scripts/install-systemd-user-service.sh --host 0.0.0.0 --port 3001 --config-dir "$OPENCLAW_CONFIG_DIR"
+```
+
+`--host 0.0.0.0 --port 3001` is suitable only for a user-accepted home-LAN/ZeroTier boundary. The service has no authentication and must never be exposed to the public Internet. The default installation still binds to `127.0.0.1`.
+
+### Dashboard and troubleshooting
+
+The Dashboard Source filter scopes summary cards, all charts, Provider/Model options, Breakdown, and the Session table; `All` uses combined statistics and the Session table includes a Source column. The Dashboard reads sync capabilities from the `instance.capabilities` field in the `GET /api/stats` response; Settings reads targets and actions from the public `capabilities` field in the `GET /api/sync/config` response. Both machines share the same UI and capability contract instead of guessing a role from the machine name.
+
+Common issues:
+
+- SSH alias failures: first run `ssh claw` in a terminal to verify `~/.ssh/config`, network reachability, and keys, then check the sender allowlist. Web Settings never edits SSH configuration.
+- Remote `openclaw-usage` not found: the remote login PATH may omit `~/bin`; install/reinstall the local launcher on the remote and fix its PATH.
+- MBP offline: `claw` retains the last-good snapshot and retries only on the next scheduler tick or manual run; All is not cleared, and the source status becomes stale/missing.
+- Invalid snapshot: the receiver rejects it and preserves the last successful file; it never replaces good data with empty or corrupt content. Inspect the safe receiver error classification and fix the sender/configuration.
+
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -150,7 +299,7 @@ Add the following to your OpenClaw or Claude Desktop MCP config:
   "mcpServers": {
     "openclaw-usage": {
       "command": "node",
-      "args": ["/Users/gc/Dev/MyProject/OpenClawUsage/mcp-server.js"]
+      "args": ["<repository-root>/mcp-server.js"]
     }
   }
 }
@@ -193,7 +342,7 @@ The pricing config file (`openclaw-usage-pricing.json`) uses **dynamic path dete
 | Priority | Source | Example |
 |----------|--------|---------|
 | 1️⃣ | `OPENCLAW_DIR` environment variable | `OPENCLAW_DIR=/custom/path` |
-| 2️⃣ | `agents.defaults.workspace` in `openclaw.json` | `/Users/gc/gcDora` → stored under `gcDora` dir |
+| 2️⃣ | `agents.defaults.workspace` in `openclaw.json` | `$OPENCLAW_WORKSPACE` → stored under that workspace |
 | 3️⃣ | Fallback `~/.openclaw/` | Default fallback |
 
 > ⚠️ The table above applies **only to the pricing config file**. **Sessions and models.json** are always read from `$OPENCLAW_CONFIG_DIR` (default `~/.openclaw`) and do **not** follow the workspace.
@@ -218,10 +367,10 @@ On startup, the tool automatically handles path compatibility and migration:
 
 #### Example
 
-If `openclaw.json` has `"workspace": "/Users/gc/gcDora"`, the pricing config is stored at:
+If `openclaw.json` has `"workspace": "$OPENCLAW_WORKSPACE"`, the pricing config is stored at:
 
 ```
-/Users/gc/gcDora/openclaw-usage-pricing.json
+$OPENCLAW_WORKSPACE/openclaw-usage-pricing.json
 ```
 
 Instead of under `~/.openclaw/`. This keeps the pricing config bound to the OpenClaw workspace, making it easy to manage via dotfiles or share across machines.

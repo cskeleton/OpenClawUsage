@@ -47,7 +47,7 @@
 | 优先级 | 来源 | 示例 |
 |--------|------|------|
 | 1️⃣ | `OPENCLAW_DIR` 环境变量 | `OPENCLAW_DIR=/自定义/path` |
-| 2️⃣ | `openclaw.json` 中的 `agents.defaults.workspace` 配置 | `/Users/gc/gcDora` → 存到 `gcDora` 目录 |
+| 2️⃣ | `openclaw.json` 中的 `agents.defaults.workspace` 配置 | `$OPENCLAW_WORKSPACE` → 存到该 workspace 目录 |
 | 3️⃣ | 回退 `~/.openclaw/` | 默认 fallback |
 
 > ⚠️ 上表只决定**定价配置文件**的位置；**sessions 与 models.json** 始终读取 `$OPENCLAW_CONFIG_DIR`（默认 `~/.openclaw`），**不跟随 workspace**。
@@ -72,10 +72,10 @@
 
 ### 示例
 
-假设 `openclaw.json` 配置了 `"workspace": "/Users/gc/gcDora"`，则价格配置实际存储在：
+假设 `openclaw.json` 配置了 `"workspace": "$OPENCLAW_WORKSPACE"`，则价格配置实际存储在：
 
 ```
-/Users/gc/gcDora/openclaw-usage-pricing.json
+$OPENCLAW_WORKSPACE/openclaw-usage-pricing.json
 ```
 
 而非 `~/.openclaw/` 下。这确保了配置与 OpenClaw 工作空间绑定，便于多机器共享或通过 dotfiles 管理。
@@ -118,6 +118,155 @@
 - **MCP**：`refresh_stats_cache` 默认增量，可选 `full: true` 全量重建；价格相关工具不触发统计聚合。
 
 完整行为、缓存结构与验收标准见[设计规格](docs/superpowers/specs/2026-08-01-persistent-incremental-stats-cache.md)。
+
+## 🔄 多来源 SSH 同步与统一统计
+
+OpenClawUsage 支持 MBP → `claw` 的低频、单向完整快照同步。两端运行同一套 Web UI 和能力驱动（capability-driven）代码：MBP 可以独立查看本机，`claw` 可以把本机与 MBP 等来源合并查看。接收端使用自己的价格配置重新计算所有来源；修改 `claw` 的价格后不需要重新同步。
+
+### 脱敏快照边界
+
+同步传输的是一个完整、版本化的 JSON envelope，不是 JSONL 增量补丁。顶层字段是固定的：
+
+```json
+{
+  "version": 1,
+  "kind": "openclaw-usage-source-contributions",
+  "scope": "local-only",
+  "source": { "id": "mbp", "label": "MBP" },
+  "revision": "opaque-revision",
+  "generatedAt": "2026-08-24T12:00:00.000Z",
+  "contributions": [
+    {
+      "contributionId": "opaque-sha256-id",
+      "session": { "id": "session-id", "status": "active", "archivedAt": null },
+      "firstTimestamp": "2026-08-24T11:00:00.000Z",
+      "lastTimestamp": "2026-08-24T12:00:00.000Z",
+      "buckets": [
+        {
+          "date": "2026-08-24",
+          "provider": "provider",
+          "model": "model",
+          "usage": {
+            "input": 10,
+            "output": 20,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 30
+          },
+          "openclawCost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          },
+          "requests": 1
+        }
+      ],
+      "hasRecords": true
+    }
+  ]
+}
+```
+
+允许字段只有上例中的顶层、贡献、会话、bucket、`usage` 和 `openclawCost` 字段；计数与成本必须是有限非负数，`contributionId` 是由本地文件身份单向散列得到的不透明 ID，不暴露文件名。快照保留 `openclawCost`，因此接收端没有匹配的自定义价格或关闭自定义价格时，会回退到 OpenClaw 写入会话的 `usage.cost` 口径；最终 `totalCost` 始终由接收端合并时计算，快照中没有 `totalCost`。
+
+快照禁止包含消息正文、prompt/response、工具调用、文件路径、filename、文件 size/mtime、manifest、OpenClaw 配置、价格配置、凭据、日志或任何预计算 `totalCost`。接收端先在内存中做大小、版本、类型、allowlist 和数组上限校验，损坏、版本不兼容、未授权或中断输入都 fail closed，不会替换上一份成功快照。
+
+### 同步配置与 SSH 信任边界
+
+同步配置固定在 `$OPENCLAW_CONFIG_DIR/openclaw-usage-sync.json`（默认 `~/.openclaw/openclaw-usage-sync.json`）。应用写入路径会强制配置目录 `0700`、文件 `0600`，并使用同目录临时文件再原子重命名；读取只校验内容，不会自动修复手工创建文件的权限，读取到无效配置时也不会静默覆盖。复制 JSON 示例并写入文件后，请显式执行：
+
+```bash
+OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-$HOME/.openclaw}"
+mkdir -p "$OPENCLAW_CONFIG_DIR"
+chmod 700 "$OPENCLAW_CONFIG_DIR"
+chmod 600 "$OPENCLAW_CONFIG_DIR/openclaw-usage-sync.json"
+```
+
+以下是可直接复制的最小配置示例。
+
+MBP（发送端）：
+
+```json
+{
+  "version": 1,
+  "source": { "id": "mbp", "label": "MBP" },
+  "policy": {
+    "allowedSshTargets": {
+      "claw": { "label": "claw", "sshAlias": "claw" }
+    }
+  },
+  "settings": { "enabled": true, "targetId": "claw", "intervalMinutes": 60 },
+  "imports": { "allowedSourceIds": [] }
+}
+```
+
+`claw`（接收端）：
+
+```json
+{
+  "version": 1,
+  "source": { "id": "claw", "label": "claw" },
+  "policy": { "allowedSshTargets": {} },
+  "settings": { "enabled": false, "targetId": null, "intervalMinutes": 60 },
+  "imports": { "allowedSourceIds": ["mbp"] }
+}
+```
+
+来源 ID `all` 是保留字，不能作为 `source.id` 或 `imports.allowedSourceIds`；它只表示 Dashboard 的汇总筛选。`source.id`、target ID 和 `sshAlias` 都必须是严格标识符。同步请求只接受 allowlist 中的 `targetId`，后端解析到固定 `sshAlias`，以参数数组调用固定远程命令 `openclaw-usage receive-sync`，不会拼接 shell 字符串。
+
+SSH 连接的第二层配置由本机 `~/.ssh/config` 管理，例如：
+
+```sshconfig
+Host claw
+  HostName 192.0.2.20
+  User your-user
+  Port 22
+  IdentityFile ~/.ssh/id_ed25519
+  # ProxyJump / 其他连接细节也只放在这里
+```
+
+这里有两层明确的 policy：`~/.ssh/config` 决定主机、用户、端口、密钥、ProxyJump 等连接细节；`policy.allowedSshTargets` 决定应用允许使用哪些别名。Web 不保存 credential，也不允许填写任意 host、user、key、SSH options、remote path 或 command。预授权完成后，Settings 只允许修改 `settings.enabled`、从 allowlist 选择 `settings.targetId`、`settings.intervalMinutes`（1–10080 分钟）和展示用 `source.label`。
+
+Settings 中显示的安全提示为：
+
+> SSH 连接由本机 `~/.ssh/config` 管理。本页面只能选择已在 `$OPENCLAW_CONFIG_DIR/openclaw-usage-sync.json` 中预先允许的 SSH 别名，不保存凭据，也不能配置任意主机、SSH 参数、远程路径或命令。
+
+### CLI、定时与部署
+
+`openclaw-usage help` 的同步相关帮助保持如下精确命令契约：
+
+```text
+  sync [targetId]    Push one sanitized snapshot to an allowlisted target
+  receive-sync       Receive one sanitized snapshot from stdin
+  sync-status        Print the last sync attempt/success/failure as JSON
+```
+
+`sync` 未传 target 时使用 `settings.targetId`；`receive-sync` 只从 stdin 接收一个快照；`sync-status` 只打印安全的公开状态。网页手动操作对应 `POST /api/sync/run` 和 `POST /api/sync/test`，设置对应 `GET /api/sync/config`、`GET /api/sync/status`、`PUT /api/sync/settings`；这些 API 供 Web/API 使用，不要求普通用户直接调用。所有手动同步都仍可运行，不受定时开关限制。
+
+默认同步间隔为 60 分钟且一次运行不重试；失败后等待下一次调度或人工执行。macOS 使用 `./scripts/install-sync-scheduler.sh` 安装 LaunchAgent（`~/Library/LaunchAgents/com.openclaw.usage.sync.plist`）；Linux 使用同一安装器生成 user systemd service/timer（`~/.config/systemd/user/`），timer 使用 `Persistent=false`，不会因离线或休眠补发重试风暴。安装器会把本机 `node` 与 CLI 的绝对路径写入 LaunchAgent/systemd scheduler；定时执行 `openclaw-usage sync --scheduled`，每次运行都会读取 `settings.enabled`；关闭后跳过，手动 `openclaw-usage sync [targetId]` 仍可用。只有 remote non-interactive SSH receiver 需要在 PATH 中找到 `openclaw-usage`；远端如果报 `openclaw-usage: command not found`，请修正远端 PATH/安装器，而不是把命令或路径交给 Web 配置。
+
+状态文件位于 `$OPENCLAW_CONFIG_DIR/run/openclaw-usage/sync-status.json`，包含 `lastAttempt`、`lastSuccess`、`failureSince`、`targetId` 和安全错误分类。导入快照位于 `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/imports/<sourceId>.json`；统计缓存仍是 `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/stats-v1.json`。导入来源的 `lastReceivedAt` 由接收文件的最后成功写入时间决定，过期时间为 `lastReceivedAt + intervalMinutes`（使用接收端设置的 interval）；配置了但尚未收到的来源仍会列出为 missing，stale/missing 来源仍计入 All 汇总，Dashboard 会显示警告。
+
+如需在 `claw` 上部署 Web 服务，可显式运行：
+
+```bash
+./scripts/install-systemd-user-service.sh --host 0.0.0.0 --port 3001 --config-dir "$OPENCLAW_CONFIG_DIR"
+```
+
+`--host 0.0.0.0 --port 3001` 只适用于用户已经接受的家庭 LAN/ZeroTier 边界；该服务没有认证，绝不能直接暴露到公网。默认安装仍绑定 `127.0.0.1`。
+
+### Dashboard 与故障排查
+
+Dashboard 的 Source 筛选会同时作用于汇总卡片、所有图表、Provider/Model 选项、Breakdown 和 Session 表格；`All` 使用合并统计，Session 表格显示 Source 列。Dashboard 从 `GET /api/stats` 响应的 `instance.capabilities` 字段读取同步能力；Settings 从 `GET /api/sync/config` 响应的 `capabilities` 读取目标与操作，两端页面和能力保持一致，不按机器名猜测角色。
+
+常见问题：
+
+- SSH alias 不通：先在终端用 `ssh claw` 验证 `~/.ssh/config`、网络和密钥，再检查发送端 allowlist；Web 不会替你修 SSH 配置。
+- 远端找不到 `openclaw-usage`：远端登录环境的 PATH 可能没有 `~/bin`，请在远端安装/重装本机 launcher 并修正 PATH。
+- MBP 离线：`claw` 保留上一份 last-good 快照，下一次调度或手动同步再尝试，不会清空 All；来源状态会显示 stale/missing。
+- 无效快照：接收端拒绝并保留上一份成功文件，不会用空数据或损坏内容替换它；检查接收端的安全错误分类后修复配置或发送环境。
 
 ## 🚀 快速开始
 
@@ -195,7 +344,7 @@ npm run mcp
   "mcpServers": {
     "openclaw-usage": {
       "command": "node",
-      "args": ["/Users/gc/Dev/MyProject/OpenClawUsage/mcp-server.js"]
+      "args": ["<repository-root>/mcp-server.js"]
     }
   }
 }
