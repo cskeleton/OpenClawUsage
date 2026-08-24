@@ -127,9 +127,9 @@ function renderSummaryCards(summary) {
       valueClass: 'gradient-emerald',
     },
     {
-      icon: '💾', label: t('dashboard.summaryCacheWrite'),
-      value: formatNumber(summary.totalCacheWrite),
-      sub: t('dashboard.summaryCacheRead', { count: formatNumber(summary.totalCacheRead) }),
+      icon: '💾', label: t('dashboard.summaryCacheRead'),
+      value: formatNumber(summary.totalCacheRead),
+      sub: t('dashboard.summaryCacheWrite', { count: formatNumber(summary.totalCacheWrite) }),
       valueClass: 'gradient-rose',
     },
     {
@@ -213,6 +213,77 @@ function renderSourceStatus() {
       <strong>${escapeHtml(source.label || source.id)}</strong>
       <span>${escapeHtml(sourceStatusLabel(source.status))}: ${escapeHtml(details)}</span>
     </span>`;
+  }).join('');
+}
+
+function renderSourceOverview(filter) {
+  const container = document.getElementById('source-overview');
+  const rowsContainer = document.getElementById('source-overview-rows');
+  if (!container || !rowsContainer || !fullData) return;
+
+  const sources = Array.isArray(fullData.sources) ? fullData.sources : [];
+  const visible = filterSource === 'all' && sources.length >= 2;
+  container.hidden = !visible;
+  if (!visible) {
+    rowsContainer.innerHTML = '';
+    return;
+  }
+
+  const rows = sources.map((source) => {
+    const filtered = filterData(fullData, {
+      from: filter.from,
+      to: filter.to,
+      provider: filter.provider,
+      model: filter.model,
+      source: source.id,
+    });
+    const summary = filtered.summary || {};
+    return {
+      source,
+      summary: {
+        totalTokens: Number(summary.totalTokens) || 0,
+        totalCost: Number(summary.totalCost) || 0,
+        totalRequests: Number(summary.totalRequests) || 0,
+        totalSessions: Number(summary.totalSessions) || 0,
+      },
+    };
+  });
+  const totalTokens = rows.reduce((sum, row) => sum + row.summary.totalTokens, 0);
+
+  rowsContainer.innerHTML = rows.map(({ source, summary }) => {
+    const status = ['stale', 'missing'].includes(source.status) ? source.status : 'fresh';
+    const label = source.label || source.id;
+    const share = formatPercent(summary.totalTokens, totalTokens);
+    const shareWidth = totalTokens > 0 ? (summary.totalTokens / totalTokens) * 100 : 0;
+    return `
+      <button type="button" class="source-overview-row source-overview-status-${status}" data-source-overview-id="${escapeAttr(source.id)}" aria-label="${escapeAttr(t('dashboard.sourceOverviewSelect', { label }))}">
+        <span class="source-overview-name">
+          <strong>${escapeHtml(label)}</strong>
+          <span class="source-overview-status" role="status">${escapeHtml(sourceStatusLabel(status))}</span>
+        </span>
+        <span class="source-overview-metric">
+          <span class="source-overview-value source-overview-tokens">${escapeHtml(formatNumber(summary.totalTokens))}</span>
+          <span class="source-overview-label">${escapeHtml(t('dashboard.sourceOverviewTokens'))}</span>
+        </span>
+        <span class="source-overview-metric source-overview-share-metric">
+          <span class="source-overview-value source-overview-share">${escapeHtml(share)}</span>
+          <span class="source-overview-label">${escapeHtml(t('dashboard.sourceOverviewShare'))}</span>
+          <span class="source-overview-share-bar" aria-hidden="true"><span style="width:${shareWidth}%"></span></span>
+        </span>
+        <span class="source-overview-metric">
+          <span class="source-overview-value source-overview-cost">${escapeHtml(formatCost(summary.totalCost))}</span>
+          <span class="source-overview-label">${escapeHtml(t('dashboard.sourceOverviewCost'))}</span>
+        </span>
+        <span class="source-overview-metric">
+          <span class="source-overview-value source-overview-requests">${escapeHtml(summary.totalRequests.toLocaleString())}</span>
+          <span class="source-overview-label">${escapeHtml(t('dashboard.sourceOverviewRequests'))}</span>
+        </span>
+        <span class="source-overview-metric">
+          <span class="source-overview-value source-overview-sessions">${escapeHtml(summary.totalSessions.toLocaleString())}</span>
+          <span class="source-overview-label">${escapeHtml(t('dashboard.sourceOverviewSessions'))}</span>
+        </span>
+      </button>
+    `;
   }).join('');
 }
 
@@ -599,6 +670,13 @@ function rerender(resetPage = false) {
   applyFilter(filter, resetPage);
 }
 
+function selectSource(sourceId) {
+  filterSource = sourceId || 'all';
+  filterProvider = '';
+  filterModel = '';
+  rerender(true);
+}
+
 function applyDateRange(rangeKey, resetPage = true) {
   if (!fullData) return;
 
@@ -635,6 +713,7 @@ function applyFilter(filter, resetPage = true) {
   const filteredData = filterData(fullData, filter);
 
   renderSummaryCards(filteredData.summary);
+  renderSourceOverview(filter);
   renderDimensionSummary(filteredData);
   renderBreakdownTable(filteredData);
   destroyCharts();
@@ -732,12 +811,14 @@ function bindEventsOnce() {
   });
 
   document.getElementById('source-filter').addEventListener('change', (e) => {
-    filterSource = e.target.value || 'all';
     // A source change must not carry a dimension that was only valid for the
     // previous source. Date, search, status and page size remain unchanged.
-    filterProvider = '';
-    filterModel = '';
-    rerender(true);
+    selectSource(e.target.value);
+  });
+
+  document.getElementById('source-overview').addEventListener('click', (e) => {
+    const row = e.target.closest('[data-source-overview-id]');
+    if (row) selectSource(row.dataset.sourceOverviewId);
   });
 
   document.getElementById('provider-filter').addEventListener('change', (e) => {

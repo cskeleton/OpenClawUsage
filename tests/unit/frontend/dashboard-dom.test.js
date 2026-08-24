@@ -26,8 +26,8 @@ function bucket(input, output = 10) {
   return {
     input,
     output,
-    cacheRead: 0,
-    cacheWrite: 0,
+    cacheRead: input / 2,
+    cacheWrite: input / 4,
     totalTokens: input + output,
     totalCost: input / 100,
     requests: 1,
@@ -94,6 +94,8 @@ function combinedStats(local, remote, today, yesterday) {
       all.byDate[date] ||= bucket(0, 0);
       all.byDate[date].input += stats.input;
       all.byDate[date].output += stats.output;
+      all.byDate[date].cacheRead += stats.cacheRead;
+      all.byDate[date].cacheWrite += stats.cacheWrite;
       all.byDate[date].totalTokens += stats.totalTokens;
       all.byDate[date].totalCost += stats.totalCost;
       all.byDate[date].requests += stats.requests;
@@ -214,5 +216,50 @@ describe('Dashboard multi-source DOM flow', () => {
     document.getElementById('refresh-btn').click();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(document.querySelector('[data-sync-target]')).toBeNull();
+  });
+
+  it('renders cache hierarchy and filter-aware source overview drill-down', async () => {
+    const stats = makeStats();
+    await loadDashboard([stats]);
+
+    const cacheCard = document.querySelector('#summary-cards .stat-card:nth-child(4)');
+    expect(cacheCard.querySelector('.stat-label').textContent).toBe('Cache Read');
+    expect(cacheCard.querySelector('.stat-value').textContent).toBe('3.9K');
+    expect(cacheCard.querySelector('.stat-sub').textContent).toBe('Write: 1.9K');
+
+    const overview = document.getElementById('source-overview');
+    expect(overview.hidden).toBe(false);
+    expect(overview.textContent).toContain('Source overview');
+    expect(overview.textContent).toContain('Local');
+    expect(overview.textContent).toContain('MBP');
+    expect(overview.textContent).toContain('Other');
+    expect(overview.textContent).toContain('Stale');
+    expect(overview.textContent).toContain('Missing');
+
+    const row = (id) => overview.querySelector(`[data-source-overview-id="${id}"]`);
+    expect(row('local').querySelector('.source-overview-tokens').textContent).toBe('110');
+    expect(row('local').querySelector('.source-overview-cost').textContent).toBe('$1.00');
+    expect(row('local').querySelector('.source-overview-requests').textContent).toBe('1');
+    expect(row('local').querySelector('.source-overview-sessions').textContent).toBe('1');
+    expect(row('local').querySelector('.source-overview-share').textContent).toBe('1.4%');
+    expect(row('remote').querySelector('.source-overview-tokens').textContent).toBe('7.8K');
+    expect(row('remote').querySelector('.source-overview-share').textContent).toBe('98.6%');
+    expect(row('missing').querySelector('.source-overview-tokens').textContent).toBe('0');
+    expect(row('missing').querySelector('.source-overview-cost').textContent).toBe('$0.000000');
+
+    const provider = document.getElementById('provider-filter');
+    provider.value = 'anthropic';
+    provider.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(row('local').querySelector('.source-overview-tokens').textContent).toBe('0');
+    expect(row('remote').querySelector('.source-overview-tokens').textContent).toBe('7.8K');
+    expect(row('remote').querySelector('.source-overview-share').textContent).toBe('100.0%');
+
+    document.querySelector('#page-buttons [data-page="2"]').click();
+    row('remote').click();
+    expect(document.getElementById('source-filter').value).toBe('remote');
+    expect(provider.value).toBe('');
+    expect(document.getElementById('model-filter').value).toBe('');
+    expect(overview.hidden).toBe(true);
+    expect(document.getElementById('pagination-info').textContent).toContain('1-10');
   });
 });
