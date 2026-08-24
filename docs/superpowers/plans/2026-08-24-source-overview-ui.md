@@ -45,16 +45,17 @@
 
 - [ ] **Step 2: Add failing DOM tests for the source overview**
 
-  Assert that the All sources view with the existing three-source fixture:
-  renders the section and all source labels; shows stale/missing status copy;
-  displays hand-derived tokens, cost, requests, sessions, and token share for
-  at least the `local` and `remote` rows; displays zeros for `missing`; changes
-  row metrics when Provider/Model/date filters change; translates the dynamic
-  heading after locale switching; and selecting a row changes the source
-  selector, hides the overview, clears Provider/Model, and resets pagination.
-  Add a fixture variant with one configured source and assert the section is
-  hidden. Run the focused test and record that it fails for missing/reversed UI,
-  not for test setup.
+  Keep one compact focused flow against the existing three-source fixture. It
+  must assert the All sources rows and stale/missing status copy, hand-derived
+  tokens/cost/requests/sessions and token share for populated rows, zero data
+  for `missing`, current-filter-aware metrics and shares, and selecting a row
+  changes the source selector, hides the overview, clears Provider/Model, and
+  resets pagination. Use distinct non-zero cache values in the same flow for
+  the Cache Read/Write hierarchy. Do not build dedicated locale, responsive,
+  or single-source test matrices; cover those with implementation review,
+  existing i18n/visibility mechanisms, and manual browser verification. Run
+  the focused test and record that it fails for missing/reversed UI, not for
+  test setup.
 
 - [ ] **Step 3: Implement the cache hierarchy and localized copy**
 

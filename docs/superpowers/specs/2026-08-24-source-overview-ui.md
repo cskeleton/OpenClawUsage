@@ -50,8 +50,12 @@ snapshot schema, sync behavior, pricing, or chart datasets.
 ## Verification
 
 - DOM tests cover the Cache Read/Write hierarchy using distinct non-zero values.
-- DOM tests cover visibility, all configured source rows, current-filter-aware
-  metrics and token shares, zero data for missing sources, status text, click
-  drill-down, and locale switching.
+- The focused DOM flow covers the All sources rows and status text, zero data
+  for missing sources, current-filter-aware metrics and token shares, and
+  click drill-down. It intentionally does not create a full locale, responsive,
+  or single-source test matrix.
+- Responsive layout, locale rerendering, and single-source visibility are
+  covered by implementation review, the existing i18n/visibility mechanisms,
+  and manual browser verification.
 - Run the focused frontend DOM test, full test suite, production build, and
   `git diff --check`.
