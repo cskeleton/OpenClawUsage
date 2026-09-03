@@ -306,12 +306,6 @@ const TIMELINE_COLORS = {
   output: { border: '#34d399' },
 };
 
-/** UTC 小时键 "YYYY-MM-DDTHH" → 本地 "HH:00" */
-function hourLabel(hourKey) {
-  const d = new Date(`${hourKey}:00:00Z`);
-  return `${String(d.getHours()).padStart(2, '0')}:00`;
-}
-
 /**
  * @param {Record<string, object>} byDate 日级桶（UTC 日期键）
  * @param {'tokens'|'cost'} metric 展示 Token 分量还是每日费用
@@ -328,16 +322,27 @@ function renderTimelineChart(byDate, metric = 'tokens', byHour = null) {
   }
   clearEmptyChart(ctx);
 
-  // 单日范围且有小时数据 → 横轴按小时拆分（标签转本地时区）
+  // 单日范围且有小时数据 → 横轴按小时拆分，固定铺开本地 0–23 点（无数据的小时补 0），
+  // 避免少量数据点挤在左轴上
   const hourly = dates.length === 1 && byHour && Object.keys(byHour).length > 0;
-  const hourKeys = hourly ? Object.keys(byHour).sort() : [];
-  const buckets = hourly ? hourKeys.map((h) => byHour[h]) : dates.map((d) => byDate[d]);
-  const labels = hourly
-    ? hourKeys.map(hourLabel)
-    : dates.map((d) => {
-        const dt = new Date(d);
-        return `${dt.getMonth() + 1}/${dt.getDate()}`;
-      });
+  let buckets;
+  let labels;
+  if (hourly) {
+    const zeroBucket = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalCost: 0 };
+    const byLocalHour = new Array(24).fill(null);
+    for (const [key, bucket] of Object.entries(byHour)) {
+      const d = new Date(`${key}:00:00Z`);
+      if (Number.isFinite(d.getTime())) byLocalHour[d.getHours()] = bucket;
+    }
+    buckets = byLocalHour.map((b) => b ?? zeroBucket);
+    labels = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, '0')}:00`);
+  } else {
+    buckets = dates.map((d) => byDate[d]);
+    labels = dates.map((d) => {
+      const dt = new Date(d);
+      return `${dt.getMonth() + 1}/${dt.getDate()}`;
+    });
+  }
 
   // 标题随粒度切换（data-i18n 一并换键，语言切换时由 i18n 重刷）
   const title = ctx.closest('.chart-container')?.querySelector('h3[data-i18n]');
