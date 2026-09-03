@@ -124,7 +124,7 @@ describe('stats-service persistent cache (SQLite source)', () => {
     expect(data.cache.state).toBe('fresh');
     expect(existsSync(getCacheFilePath())).toBe(true);
     const disk = JSON.parse(readFileSync(getCacheFilePath(), 'utf-8'));
-    expect(disk.schemaVersion).toBe(2);
+    expect(disk.schemaVersion).toBe(3);
     expect(disk.files).toBeDefined();
     expect(disk.manifest.sessions).toBeDefined();
     expect(disk.manifest.archives).toBeDefined();

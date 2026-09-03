@@ -6,8 +6,10 @@ import { getSqlitePath } from './sqlite-source.js';
 
 /** 缓存结构与解析语义版本；不兼容变更须递增。
  *  v2：数据源切换为 SQLite 会话（贡献键 `sqlite:` / `sqlite-archive:` / `legacy:`），
- *      manifest 换为 SQLite 身份四元组，旧 JSONL 贡献一次性冻结迁移。 */
-export const CACHE_SCHEMA_VERSION = 2;
+ *      manifest 换为 SQLite 身份四元组，旧 JSONL 贡献一次性冻结迁移。
+ *  v3：贡献 bucket 改为 UTC 小时粒度（合并输出新增 `byHourModel`），
+ *      需全量重建贡献；legacy 冻结贡献会在重建时从 stats-v1.json 重新迁移。 */
+export const CACHE_SCHEMA_VERSION = 3;
 
 const CACHE_SUBDIR = 'cache/openclaw-usage';
 const CACHE_FILENAME = 'stats-v2.json';

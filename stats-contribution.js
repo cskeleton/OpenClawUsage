@@ -5,8 +5,10 @@ import { calculateCostFromUsage } from './pricing.js';
  * 逐文件贡献（`files`）结构不变、仅合并输出新增字段时递增本值：
  * 读盘时形状不匹配则从 `files` 重新合并，无需重新解析 JSONL。
  * v2：session 增加 `byDateModel`（日期 × provider/model 交叉表）
+ * v3：贡献 bucket 按 UTC 小时分桶；合并输出新增 `byHourModel`（小时 × provider/model），
+ *     `byDate` 等日级表由小时 bucket 上卷（bucket.date 截前 10 位）
  */
-export const STATS_SHAPE_VERSION = 2;
+export const STATS_SHAPE_VERSION = 3;
 
 function dynamicMap() {
   return Object.create(null);
@@ -117,7 +119,8 @@ export function buildContributionFromRecords(session, records) {
   let lastTimestamp = null;
 
   for (const rec of records) {
-    const date = rec.timestamp ? rec.timestamp.substring(0, 10) : null;
+    // UTC 小时粒度（"YYYY-MM-DDTHH"）：日级聚合由 mergeFileContributions 上卷
+    const date = rec.timestamp ? rec.timestamp.substring(0, 13) : null;
     const key = `${date ?? ''}\0${rec.provider}\0${rec.model}`;
     if (!Object.hasOwn(bucketMap, key)) {
       bucketMap[key] = {
@@ -208,6 +211,7 @@ export function mergeFileContributions(filesMap, pricingConfig) {
   const byDate = dynamicMap();
   const byDateProvider = dynamicMap();
   const byDateModel = dynamicMap();
+  const byHourModel = dynamicMap();
   const sessions = [];
 
   for (const contribution of Object.values(filesMap)) {
@@ -284,7 +288,12 @@ export function mergeFileContributions(filesMap, pricingConfig) {
       addAggregate(m, 'requests', bucket.requests);
 
       if (bucket.date) {
-        const date = bucket.date;
+        // bucket.date 为 UTC 小时键（"YYYY-MM-DDTHH"）；日级表统一上卷到前 10 位
+        const date = bucket.date.slice(0, 10);
+        // 旧快照的日级 bucket（无 'T'）不进小时表，避免污染单日按小时视图
+        if (bucket.date.length > 10) {
+          addToCrossTable(byHourModel, bucket.date, modelKey, usage, cost, bucket.requests);
+        }
         if (!Object.hasOwn(byDate, date)) byDate[date] = emptyBucket();
         const d = byDate[date];
         addAggregate(d, 'input', usage.input);
@@ -332,6 +341,7 @@ export function mergeFileContributions(filesMap, pricingConfig) {
     byDate: sortedObject(byDate),
     byDateProvider: sortedObject(byDateProvider),
     byDateModel: sortedObject(byDateModel),
+    byHourModel: sortedObject(byHourModel),
     sessions,
     generatedAt: new Date().toISOString(),
   };
@@ -358,6 +368,7 @@ export function buildEmptyStats() {
     byDate: dynamicMap(),
     byDateProvider: dynamicMap(),
     byDateModel: dynamicMap(),
+    byHourModel: dynamicMap(),
     sessions: [],
     generatedAt: new Date().toISOString(),
   };

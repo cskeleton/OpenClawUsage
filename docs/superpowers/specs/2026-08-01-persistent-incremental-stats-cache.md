@@ -234,3 +234,11 @@
 3. 更新 HTTP、MCP 和前端刷新交互。
 4. 运行完整测试、构建和真实数据性能复测。
 5. 执行 Post-Implementation Sync Audit：将实际缓存结构、接口差异、失败语义、测试结果和性能数据回写本规格，使其恢复为单一事实源，并将状态改为「已实施」。（已完成，见上文「实施摘要」与「实现偏差与说明」。审查修复轮次 2026-08-01：落实同进程 full 排队与跨进程锁优先/wait-for-lock。验收审查修复轮次 2026-08-01：等锁后校验最新 manifest、full 不被吞、空 memory.manifest 回落磁盘基线、唯一可写探针、磁盘命中免 remmerge、`forceFresh` 真刷新；最终修复轮次增加等待前后 revision 前进校验，拒绝把旧 full 快照误当成本轮结果；并同步 README / README_EN / AGENTS.md。）
+
+## 附录：schema v3（2026-09-04，UTC 小时粒度）
+
+- 贡献 bucket 的 `date` 从日级（`YYYY-MM-DD`）改为 UTC 小时级（`YYYY-MM-DDTHH`），`CACHE_SCHEMA_VERSION` 2 → 3，旧磁盘缓存整体失效并全量重建；legacy 冻结贡献按既有路径从 `stats-v1.json` 重新迁移。
+- 合并输出新增 `byHourModel`（小时 × provider/model 交叉表）；`byDate` / `byDateProvider` / `byDateModel` / session 级日表仍由小时 bucket 上卷（`date.slice(0, 10)`），形状不变。`STATS_SHAPE_VERSION` 2 → 3。
+- 旧快照的日级 bucket（无 `T`）不进 `byHourModel`，避免污染单日按小时视图；重新同步后自然获得小时粒度。
+- `sync-snapshot.js` 的 bucket 校验放行小时键：`/^\d{4}-\d{2}-\d{2}(T\d{2})?$/`。
+- 前端：`filterData` 新增 `byHour`（`sliceHourTable`，按 from/to 日区间与 provider/model matcher 切片）；单日范围且存在小时数据时趋势图按小时渲染（小时键为 UTC，标签转本地时区）。

@@ -272,7 +272,8 @@ function validateBucket(bucket) {
   }
   if (
     !hasOnlyKeys(bucket, ['date', 'provider', 'model', 'usage', 'openclawCost', 'requests']) ||
-    (bucket.date !== null && !/^\d{4}-\d{2}-\d{2}$/.test(bucket.date)) ||
+    // 允许日级（旧快照）或 UTC 小时级（"YYYY-MM-DDTHH"，v3 起）桶键
+    (bucket.date !== null && !/^\d{4}-\d{2}-\d{2}(T\d{2})?$/.test(bucket.date)) ||
     !safeText(bucket.provider) ||
     !safeText(bucket.model) ||
     !hasOnlyKeys(bucket.usage, ['input', 'output', 'cacheRead', 'cacheWrite', 'totalTokens']) ||
