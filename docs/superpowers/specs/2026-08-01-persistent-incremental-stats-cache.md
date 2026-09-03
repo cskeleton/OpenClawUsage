@@ -242,3 +242,11 @@
 - 旧快照的日级 bucket（无 `T`）不进 `byHourModel`，避免污染单日按小时视图；重新同步后自然获得小时粒度。
 - `sync-snapshot.js` 的 bucket 校验放行小时键：`/^\d{4}-\d{2}-\d{2}(T\d{2})?$/`。
 - 前端：`filterData` 新增 `byHour`（`sliceHourTable`，按 from/to 日区间与 provider/model matcher 切片）；单日范围且存在小时数据时趋势图按小时渲染（小时键为 UTC，标签转本地时区）。
+
+## 附录 2：按查看者时区归日（2026-09-04）
+
+- 归日口径从「UTC 日」改为「查看者时区日」：`mergeFileContributions(files, pricing, { tzOffsetMinutes })` 将 UTC 小时桶按偏移归日（`normalizeTzOffsetMinutes` 校验 ±14h，非法回落 UTC）；`byHourModel` 保持 UTC 小时键不变。
+- `GET /api/stats?tzOffset=<分钟>`（UTC+X 约定，即 `-getTimezoneOffset()`），缺省 0 向后兼容；本地/导入/合并三路与 `statsBySource` 统一按该偏移归日，跨机器快照在查看侧口径一致。汇总合计与时区无关。
+- 内存/磁盘缓存的 `stats` 始终保持 UTC 合并（内部缓存），时区只在 `getStats` 的每次重合并时应用，不进缓存指纹。
+- 前端：`fetchStats` 自动带浏览器时区；`sliceHourTable` 用浏览器本地日匹配小时键，与服务端口径一致；趋势图小时标签转本地时区。
+- 已知边界：legacy 日级桶无小时信息，保留原 UTC 日；半/三刻钟时区（+5:30/+5:45 等）日界线切开小时桶，边界最多 1 小时归属误差；全天偏移时区（含 UTC+8）精确。

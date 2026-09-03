@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildContributionFromRecords, mergeFileContributions } from '../../stats-contribution.js';
+import { buildContributionFromRecords, mergeFileContributions, normalizeTzOffsetMinutes } from '../../stats-contribution.js';
 
 function contribution(input) {
   return {
@@ -84,5 +84,40 @@ describe('hour-granular buckets', () => {
 
     expect(stats.byDate['2026-08-24']).toMatchObject({ input: 100 });
     expect(stats.byHourModel).toEqual({});
+  });
+
+  it('rolls hour buckets into viewer-timezone days', () => {
+    const files = {
+      one: buildContributionFromRecords(
+        { id: 's', status: 'active', archivedAt: null },
+        [
+          // UTC 9/3 16:30 = UTC+8 的 9/4 00:30；UTC 9/3 15:30 = UTC+8 的 9/3 23:30
+          usageRecord('2026-09-03T15:30:00.000Z', 100),
+          usageRecord('2026-09-03T16:30:00.000Z', 200),
+        ],
+      ),
+    };
+
+    const utc = mergeFileContributions(files, { enabled: false, pricing: {} });
+    expect(Object.keys(utc.byDate)).toEqual(['2026-09-03']);
+
+    const plus8 = mergeFileContributions(files, { enabled: false, pricing: {} }, { tzOffsetMinutes: 480 });
+    expect(Object.keys(plus8.byDate)).toEqual(['2026-09-03', '2026-09-04']);
+    expect(plus8.byDate['2026-09-03']).toMatchObject({ input: 100 });
+    expect(plus8.byDate['2026-09-04']).toMatchObject({ input: 200 });
+    // 小时表保持 UTC 键不变，仅日级归日受时区影响
+    expect(Object.keys(plus8.byHourModel)).toEqual(['2026-09-03T15', '2026-09-03T16']);
+
+    const minus5 = mergeFileContributions(files, { enabled: false, pricing: {} }, { tzOffsetMinutes: -300 });
+    expect(Object.keys(minus5.byDate)).toEqual(['2026-09-03']);
+  });
+
+  it('normalizes invalid timezone offsets back to UTC', () => {
+    expect(normalizeTzOffsetMinutes(480)).toBe(480);
+    expect(normalizeTzOffsetMinutes('480')).toBe(480);
+    expect(normalizeTzOffsetMinutes(841)).toBe(0);
+    expect(normalizeTzOffsetMinutes(-841)).toBe(0);
+    expect(normalizeTzOffsetMinutes('abc')).toBe(0);
+    expect(normalizeTzOffsetMinutes(undefined)).toBe(0);
   });
 });

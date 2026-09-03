@@ -35,6 +35,7 @@ import {
   mergeFileContributions,
   buildEmptyStats,
   namespaceFileContributions,
+  normalizeTzOffsetMinutes,
   STATS_SHAPE_VERSION,
 } from './stats-contribution.js';
 
@@ -799,8 +800,11 @@ function buildCombinedRevision({ localResponse, pricingConfig, syncConfig, impor
   return createHash('sha256').update(JSON.stringify(identity)).digest('hex');
 }
 
-function statsForContributions(files, pricingConfig) {
-  return attachPricingMeta(mergeFileContributions(files, pricingConfig), pricingConfig);
+function statsForContributions(files, pricingConfig, tzOffsetMinutes = 0) {
+  return attachPricingMeta(
+    mergeFileContributions(files, pricingConfig, { tzOffsetMinutes }),
+    pricingConfig
+  );
 }
 
 /**
@@ -810,6 +814,8 @@ function statsForContributions(files, pricingConfig) {
  * without polluting the local stats-v2 cache with foreign identities.
  */
 export async function getStats(options = {}) {
+  // 查看者时区偏移（分钟，UTC+X）：只影响日级归日，不影响 UTC 小时键与汇总合计
+  const tzOffsetMinutes = normalizeTzOffsetMinutes(options.tzOffsetMinutes);
   const localResponse = await getLocalStats(options);
   const pricingConfig = await loadPricingConfig();
   const syncConfig = await loadSyncConfig();
@@ -822,7 +828,7 @@ export async function getStats(options = {}) {
     : memory.files;
 
   const localStats = {
-    ...statsForContributions(localFiles, pricingConfig),
+    ...statsForContributions(localFiles, pricingConfig, tzOffsetMinutes),
     generatedAt: localResponse.generatedAt,
   };
   const allFiles = Object.create(null);
@@ -870,7 +876,7 @@ export async function getStats(options = {}) {
       + syncConfig.settings.intervalMinutes * 60 * 1000;
     const staleSince = new Date(staleSinceMs).toISOString();
     const status = now >= staleSinceMs ? 'stale' : 'fresh';
-    statsBySource[sourceId] = statsForContributions(imported.files, pricingConfig);
+    statsBySource[sourceId] = statsForContributions(imported.files, pricingConfig, tzOffsetMinutes);
     sources.push(addSourceInfo(imported.snapshot.source, 'imported', {
       status,
       lastReceivedAt,
@@ -881,7 +887,7 @@ export async function getStats(options = {}) {
   }
 
   const combined = {
-    ...statsForContributions(allFiles, pricingConfig),
+    ...statsForContributions(allFiles, pricingConfig, tzOffsetMinutes),
     // Preserve the existing local-cache generatedAt contract for callers that
     // use it as a cache identity. Imported freshness is represented separately
     // by source metadata and durable snapshot identity.

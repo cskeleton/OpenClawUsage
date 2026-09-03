@@ -188,13 +188,44 @@ function sortedObject(obj) {
   return out;
 }
 
+const MAX_TZ_OFFSET_MINUTES = 14 * 60;
+
+/**
+ * 归一化查看者时区偏移（分钟，UTC 加该偏移得本地时间）。
+ * 非法或超界值回落 0（UTC），保证归日结果始终确定。
+ * @param {unknown} value
+ * @returns {number}
+ */
+export function normalizeTzOffsetMinutes(value) {
+  const n = typeof value === 'string' ? Number(value) : value;
+  if (!Number.isFinite(n)) return 0;
+  const rounded = Math.round(n);
+  return Math.abs(rounded) > MAX_TZ_OFFSET_MINUTES ? 0 : rounded;
+}
+
+/**
+ * UTC 小时键（"YYYY-MM-DDTHH"）按查看者时区归日。
+ * 偏移为 0 或键无法解析时取原 UTC 日；legacy 日级桶不经过此函数。
+ */
+function localDayOfHourKey(hourKey, tzOffsetMinutes) {
+  const utcDay = hourKey.slice(0, 10);
+  if (!tzOffsetMinutes) return utcDay;
+  const ms = Date.parse(`${hourKey}:00:00Z`);
+  if (!Number.isFinite(ms)) return utcDay;
+  return new Date(ms + tzOffsetMinutes * 60000).toISOString().slice(0, 10);
+}
+
 /**
  * 合并逐文件贡献并应用当前定价，生成完整统计
  * @param {Record<string, object>} filesMap contributionKey -> contribution
  * @param {object} pricingConfig
+ * @param {{ tzOffsetMinutes?: number }} [options]
+ *   查看者时区偏移（UTC+X 分钟）：小时级 bucket 按该偏移归日；
+ *   缺省 0（UTC）。`byHourModel` 始终保持 UTC 小时键，由展示层自行本地化。
  * @returns {object}
  */
-export function mergeFileContributions(filesMap, pricingConfig) {
+export function mergeFileContributions(filesMap, pricingConfig, { tzOffsetMinutes = 0 } = {}) {
+  const tz = normalizeTzOffsetMinutes(tzOffsetMinutes);
   const summary = {
     totalInput: 0,
     totalOutput: 0,
@@ -288,9 +319,11 @@ export function mergeFileContributions(filesMap, pricingConfig) {
       addAggregate(m, 'requests', bucket.requests);
 
       if (bucket.date) {
-        // bucket.date 为 UTC 小时键（"YYYY-MM-DDTHH"）；日级表统一上卷到前 10 位
-        const date = bucket.date.slice(0, 10);
-        // 旧快照的日级 bucket（无 'T'）不进小时表，避免污染单日按小时视图
+        // bucket.date 为 UTC 小时键（"YYYY-MM-DDTHH"）：日级表按查看者时区归日；
+        // 旧快照的日级 bucket（无 'T'）无小时信息，保留原 UTC 日，且不进小时表
+        const date = bucket.date.length > 10
+          ? localDayOfHourKey(bucket.date, tz)
+          : bucket.date;
         if (bucket.date.length > 10) {
           addToCrossTable(byHourModel, bucket.date, modelKey, usage, cost, bucket.requests);
         }

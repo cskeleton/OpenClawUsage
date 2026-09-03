@@ -291,7 +291,8 @@ export function createApp({ staticDir } = {}) {
   app.get('/api/stats', async (req, res) => {
     try {
       const waitForRefresh = req.query.fresh === '1' || req.query.fresh === 'true';
-      const data = await getStats({ waitForRefresh });
+      // tzOffset：查看者时区偏移（分钟，UTC+X），缺省按 UTC 归日
+      const data = await getStats({ waitForRefresh, tzOffsetMinutes: req.query.tzOffset });
       res.json(data);
     } catch (err) {
       console.error('Error aggregating stats:', err);

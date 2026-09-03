@@ -634,8 +634,11 @@ function updateGeneratedAt(data) {
 }
 
 async function fetchStats({ fresh = false } = {}) {
-  const url = fresh ? '/api/stats?fresh=1' : '/api/stats';
-  const res = await fetch(url);
+  // 归日口径跟随浏览器时区：tzOffset 为「UTC+X」分钟数（与 getTimezoneOffset 符号相反）
+  const tzOffset = -new Date().getTimezoneOffset();
+  const params = new URLSearchParams({ tzOffset: String(tzOffset) });
+  if (fresh) params.set('fresh', '1');
+  const res = await fetch(`/api/stats?${params}`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }

@@ -122,9 +122,17 @@ function inRange(date, from, to) {
   return true;
 }
 
+/** UTC 小时键 "YYYY-MM-DDTHH" → 浏览器本地日 "YYYY-MM-DD"（与服务端 tzOffset 归日口径一致） */
+function localDayOfHourKey(hourKey) {
+  const d = new Date(`${hourKey}:00:00Z`);
+  if (!Number.isFinite(d.getTime())) return hourKey.slice(0, 10);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 /**
  * 由「UTC 小时 × provider/model」交叉表切出 byHour（小时 → 合计桶）。
- * from/to 为 YYYY-MM-DD，与小时键的日部分比较；matches 为空时不按维度过滤。
+ * from/to 为本地日 YYYY-MM-DD，小时键先转本地日再比较；matches 为空时不按维度过滤。
  * @param {Record<string, Record<string, object>>} byHourModel
  * @param {string|null} from
  * @param {string|null} to
@@ -133,7 +141,7 @@ function inRange(date, from, to) {
 export function sliceHourTable(byHourModel, from = null, to = null, matches = null) {
   const byHour = dynamicMap();
   for (const [hour, keyMap] of Object.entries(byHourModel || {})) {
-    if (!inRange(hour.slice(0, 10), from, to)) continue;
+    if (!inRange(localDayOfHourKey(hour), from, to)) continue;
     for (const [key, stats] of Object.entries(keyMap)) {
       if (matches && !matches(key)) continue;
       if (!Object.hasOwn(byHour, hour)) byHour[hour] = emptyBucket();

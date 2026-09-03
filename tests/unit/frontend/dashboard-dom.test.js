@@ -137,8 +137,8 @@ async function loadDashboard(statsResponses) {
   localStorage.setItem('openclaw-locale', 'en-US');
   const stats = [...statsResponses];
   globalThis.fetch = vi.fn(async (url, options) => {
-    if (url === '/api/stats') return new Response(JSON.stringify(stats.shift() || statsResponses.at(-1)), { status: 200 });
-    if (url === '/api/stats?fresh=1') return new Response(JSON.stringify(stats.shift() || statsResponses.at(-1)), { status: 200 });
+    // /api/stats 可能携带 tzOffset / fresh 查询参数，按路径前缀匹配
+    if (typeof url === 'string' && url.startsWith('/api/stats')) return new Response(JSON.stringify(stats.shift() || statsResponses.at(-1)), { status: 200 });
     if (url === '/api/refresh') return new Response(JSON.stringify({ ok: true }), { status: 200 });
     if (url === '/api/sync/run') {
       globalThis.__lastSyncRequest = { url, options };
