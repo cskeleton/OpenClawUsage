@@ -42,6 +42,7 @@ export function selectSourceData(fullData, sourceId = 'all') {
     byDate: dynamicMap(),
     byDateProvider: dynamicMap(),
     byDateModel: dynamicMap(),
+    byHourModel: dynamicMap(),
     sessions: [],
     generatedAt: null,
     sourceId,
@@ -119,6 +120,27 @@ function inRange(date, from, to) {
   if (from && date < from) return false;
   if (to && date > to) return false;
   return true;
+}
+
+/**
+ * 由「UTC 小时 × provider/model」交叉表切出 byHour（小时 → 合计桶）。
+ * from/to 为 YYYY-MM-DD，与小时键的日部分比较；matches 为空时不按维度过滤。
+ * @param {Record<string, Record<string, object>>} byHourModel
+ * @param {string|null} from
+ * @param {string|null} to
+ * @param {((key: string) => boolean)|null} [matches]
+ */
+export function sliceHourTable(byHourModel, from = null, to = null, matches = null) {
+  const byHour = dynamicMap();
+  for (const [hour, keyMap] of Object.entries(byHourModel || {})) {
+    if (!inRange(hour.slice(0, 10), from, to)) continue;
+    for (const [key, stats] of Object.entries(keyMap)) {
+      if (matches && !matches(key)) continue;
+      if (!Object.hasOwn(byHour, hour)) byHour[hour] = emptyBucket();
+      mergeInto(byHour[hour], stats);
+    }
+  }
+  return byHour;
 }
 
 /**
@@ -274,7 +296,10 @@ export function filterData(fullData, filter = {}) {
   const matches = buildKeyMatcher({ provider, model });
 
   if (!from && !to && !matches) {
-    return source === 'all' ? fullData : sourceData;
+    const base = source === 'all' ? fullData : sourceData;
+    // 无小时表（旧快照）时保持原有对象身份契约
+    if (!base.byHourModel) return base;
+    return { ...base, byHour: sliceHourTable(base.byHourModel) };
   }
 
   let byDate;
@@ -298,6 +323,7 @@ export function filterData(fullData, filter = {}) {
   }
 
   const summary = summarizeByDate(byDate);
+  const byHour = sliceHourTable(sourceData.byHourModel, from, to, matches);
 
   const sessions = [];
   for (const s of sourceData.sessions || []) {
@@ -313,6 +339,7 @@ export function filterData(fullData, filter = {}) {
     byProvider,
     byModel,
     byDate,
+    byHour,
     byDateProvider: sourceData.byDateProvider,
     byDateModel: sourceData.byDateModel,
     sessions,

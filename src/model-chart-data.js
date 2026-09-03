@@ -57,12 +57,14 @@ function normalizedTokenTotal(row) {
   return (row.totalInput / Number.MAX_VALUE) + (row.output / Number.MAX_VALUE);
 }
 
-export function buildModelChartRows(byModel, { mergeDateCheckpoints = true } = {}) {
+export function buildModelChartRows(byModel, { mergeDateCheckpoints = true, mergeProviders = false } = {}) {
   const rows = new Map();
 
   for (const [sourceKey, entry] of Object.entries(byModel ?? {})) {
     const model = typeof entry?.model === 'string' ? entry.model : '';
-    const key = mergeDateCheckpoints ? stripDateCheckpoint(model) : sourceKey;
+    let key = mergeDateCheckpoints ? stripDateCheckpoint(model) : sourceKey;
+    // 合并 provider：只保留最后一段模型名（模型串本身可能带 "provider/" 路由前缀）
+    if (mergeProviders) key = key.slice(key.lastIndexOf('/') + 1);
     const label = key;
     const row = rows.get(key) ?? createRow(key, label);
 
@@ -77,9 +79,12 @@ export function buildModelChartRows(byModel, { mergeDateCheckpoints = true } = {
     rows.set(key, row);
   }
 
-  return [...rows.values()].sort((left, right) => (
-    normalizedTokenTotal(right) - normalizedTokenTotal(left)
-    || left.label.localeCompare(right.label)
-    || left.key.localeCompare(right.key)
-  ));
+  return [...rows.values()]
+    // 完全为 0 的行（无输入也无输出）没有展示价值，直接过滤
+    .filter((row) => row.totalInput > 0 || row.output > 0)
+    .sort((left, right) => (
+      normalizedTokenTotal(right) - normalizedTokenTotal(left)
+      || left.label.localeCompare(right.label)
+      || left.key.localeCompare(right.key)
+    ));
 }

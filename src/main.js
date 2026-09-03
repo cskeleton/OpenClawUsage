@@ -947,7 +947,7 @@ function bindEventsOnce() {
     refreshTable();
   });
 
-  document.querySelectorAll('#model-log-scale, #model-merge-checkpoints').forEach((control) => {
+  document.querySelectorAll('#model-log-scale, #model-merge-checkpoints, #model-merge-providers').forEach((control) => {
     control.addEventListener('change', rerenderChartsOnly);
   });
 }

@@ -294,3 +294,35 @@ describe('filterData with reserved provider and model names', () => {
     expect(Object.hasOwn(Object.prototype, 'input')).toBe(false);
   });
 });
+
+describe('sliceHourTable / byHour', () => {
+  const hourlyData = {
+    ...fullData,
+    byHourModel: {
+      '2026-04-15T08': { 'openai/gpt-4o': bucket(60, 20), 'anthropic/claude-sonnet-4': bucket(40, 10) },
+      '2026-04-15T09': { 'openai/gpt-4o': bucket(100, 30) },
+      '2026-04-16T01': { 'openai/gpt-4o': bucket(200, 100) },
+    },
+  };
+
+  it('aggregates hour buckets across models for a single-day range', () => {
+    const r = filterData(hourlyData, { from: '2026-04-15', to: '2026-04-15' });
+    expect(Object.keys(r.byHour).sort()).toEqual(['2026-04-15T08', '2026-04-15T09']);
+    expect(r.byHour['2026-04-15T08']).toMatchObject({ input: 100, output: 30 });
+  });
+
+  it('respects the model matcher when slicing hours', () => {
+    const r = filterData(hourlyData, {
+      from: '2026-04-15', to: '2026-04-16', model: 'openai/gpt-4o',
+    });
+    expect(r.byHour['2026-04-15T08']).toMatchObject({ input: 60, output: 20 });
+    expect(Object.keys(r.byHour).sort()).toEqual([
+      '2026-04-15T08', '2026-04-15T09', '2026-04-16T01',
+    ]);
+  });
+
+  it('attaches byHour on the unfiltered path when byHourModel exists', () => {
+    const r = filterData(hourlyData, {});
+    expect(Object.keys(r.byHour)).toHaveLength(3);
+  });
+});

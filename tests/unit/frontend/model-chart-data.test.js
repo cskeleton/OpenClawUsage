@@ -93,18 +93,62 @@ describe('buildModelChartRows', () => {
       input: NaN, cacheRead: Infinity, cacheWrite: null, output: undefined,
       totalTokens: NaN, totalCost: Infinity, requests: null,
     };
-    const source = { 'provider-a/invalid-numbers': invalid };
+    const valid = {
+      provider: 'provider-a', model: 'valid-model',
+      input: 10, cacheRead: 0, cacheWrite: 0, output: 5,
+      totalTokens: 15, totalCost: 0.1, requests: 1,
+    };
+    const source = {
+      'provider-a/invalid-numbers': invalid,
+      'provider-a/valid-model': valid,
+    };
 
-    expect(buildModelChartRows(source)).toEqual([{
-      key: 'invalid-numbers', label: 'invalid-numbers',
-      input: 0, output: 0, cacheRead: 0, cacheWrite: 0,
-      totalInput: 0, totalTokens: 0, totalCost: 0, requests: 0,
-    }]);
+    // 非法数字清洗后全 0 的行被过滤；源数据保持原样
+    expect(buildModelChartRows(source).map((row) => row.key)).toEqual(['valid-model']);
     expect(invalid).toEqual({
       provider: 'provider-a', model: 'invalid-numbers',
       input: NaN, cacheRead: Infinity, cacheWrite: null, output: undefined,
       totalTokens: NaN, totalCost: Infinity, requests: null,
     });
+  });
+
+  it('drops rows that are entirely zero', () => {
+    const rows = buildModelChartRows({
+      'provider-a/zero-model': {
+        provider: 'provider-a', model: 'zero-model',
+        input: 0, cacheRead: 0, cacheWrite: 0, output: 0,
+        totalTokens: 0, totalCost: 0, requests: 0,
+      },
+      'provider-a/live-model': {
+        provider: 'provider-a', model: 'live-model',
+        input: 1, cacheRead: 0, cacheWrite: 0, output: 0,
+        totalTokens: 1, totalCost: 0, requests: 1,
+      },
+    });
+
+    expect(rows.map((row) => row.key)).toEqual(['live-model']);
+  });
+
+  it('merges routing-prefixed model names when mergeProviders is on', () => {
+    const rows = buildModelChartRows({
+      'bohe/bohe/deepseek-v4-flash': {
+        provider: 'bohe', model: 'bohe/deepseek-v4-flash',
+        input: 100, cacheRead: 0, cacheWrite: 0, output: 10,
+        totalTokens: 110, totalCost: 0.5, requests: 1,
+      },
+      'agy/agy/deepseek-v4-flash-0731': {
+        provider: 'agy', model: 'agy/deepseek-v4-flash-0731',
+        input: 50, cacheRead: 0, cacheWrite: 0, output: 5,
+        totalTokens: 55, totalCost: 0.2, requests: 1,
+      },
+    }, { mergeProviders: true });
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        key: 'deepseek-v4-flash', label: 'deepseek-v4-flash',
+        input: 150, output: 15, requests: 2,
+      }),
+    ]);
   });
 
   it('keeps accumulated and derived metrics finite after numeric overflow', () => {

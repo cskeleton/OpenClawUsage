@@ -298,11 +298,26 @@ function getTooltipConfig() {
 }
 
 // ---- Timeline Chart ----
+
+/** 趋势图配色：缓存命中=靛蓝、未命中输入=琥珀（虚线）、输出=翠绿（右轴），三色尽量远离 */
+const TIMELINE_COLORS = {
+  cacheRead: { border: '#6366f1', fill: 'rgba(99, 102, 241, 0.10)' },
+  input: { border: '#f59e0b' },
+  output: { border: '#34d399' },
+};
+
+/** UTC 小时键 "YYYY-MM-DDTHH" → 本地 "HH:00" */
+function hourLabel(hourKey) {
+  const d = new Date(`${hourKey}:00:00Z`);
+  return `${String(d.getHours()).padStart(2, '0')}:00`;
+}
+
 /**
- * @param {Record<string, object>} byDate
+ * @param {Record<string, object>} byDate 日级桶（UTC 日期键）
  * @param {'tokens'|'cost'} metric 展示 Token 分量还是每日费用
+ * @param {Record<string, object>|null} [byHour] UTC 小时桶；仅当 byDate 恰为单日时启用按小时视图
  */
-function renderTimelineChart(byDate, metric = 'tokens') {
+function renderTimelineChart(byDate, metric = 'tokens', byHour = null) {
   const ctx = document.getElementById('chart-timeline');
   if (!ctx) return;
 
@@ -313,22 +328,37 @@ function renderTimelineChart(byDate, metric = 'tokens') {
   }
   clearEmptyChart(ctx);
 
-  const labels = dates.map((d) => {
-    const dt = new Date(d);
-    return `${dt.getMonth() + 1}/${dt.getDate()}`;
-  });
+  // 单日范围且有小时数据 → 横轴按小时拆分（标签转本地时区）
+  const hourly = dates.length === 1 && byHour && Object.keys(byHour).length > 0;
+  const hourKeys = hourly ? Object.keys(byHour).sort() : [];
+  const buckets = hourly ? hourKeys.map((h) => byHour[h]) : dates.map((d) => byDate[d]);
+  const labels = hourly
+    ? hourKeys.map(hourLabel)
+    : dates.map((d) => {
+        const dt = new Date(d);
+        return `${dt.getMonth() + 1}/${dt.getDate()}`;
+      });
+
+  // 标题随粒度切换（data-i18n 一并换键，语言切换时由 i18n 重刷）
+  const title = ctx.closest('.chart-container')?.querySelector('h3[data-i18n]');
+  if (title) {
+    const key = hourly ? 'dashboard.chartTimelineHourly' : 'dashboard.chartTimeline';
+    title.dataset.i18n = key;
+    title.textContent = t(key);
+  }
 
   const isCost = metric === 'cost';
+  const hidePoints = buckets.length > 30;
   const datasets = isCost
     ? [
         {
           label: t('dashboard.metricCost'),
-          data: dates.map((d) => byDate[d].totalCost),
+          data: buckets.map((b) => b.totalCost),
           borderColor: COLORS.amber.border,
           backgroundColor: 'rgba(251, 191, 36, 0.12)',
           fill: true,
           tension: 0.4,
-          pointRadius: dates.length > 30 ? 0 : 2,
+          pointRadius: hidePoints ? 0 : 2,
           pointHoverRadius: 6,
           borderWidth: 2,
         },
@@ -337,12 +367,12 @@ function renderTimelineChart(byDate, metric = 'tokens') {
         {
           // 命中缓存的输入（左轴）
           label: 'Cache Read Tokens',
-          data: dates.map((d) => byDate[d].cacheRead),
-          borderColor: COLORS.cyan.border,
-          backgroundColor: 'rgba(34, 211, 238, 0.08)',
+          data: buckets.map((b) => b.cacheRead),
+          borderColor: TIMELINE_COLORS.cacheRead.border,
+          backgroundColor: TIMELINE_COLORS.cacheRead.fill,
           fill: true,
           tension: 0.4,
-          pointRadius: dates.length > 30 ? 0 : 2,
+          pointRadius: hidePoints ? 0 : 2,
           pointHoverRadius: 6,
           borderWidth: 2,
           yAxisID: 'y',
@@ -350,13 +380,12 @@ function renderTimelineChart(byDate, metric = 'tokens') {
         {
           // 未命中缓存的输入（左轴）
           label: 'Input Tokens',
-          data: dates.map((d) => byDate[d].input),
-          borderColor: COLORS.sky.border,
-          backgroundColor: 'rgba(56, 189, 248, 0.06)',
-          fill: true,
+          data: buckets.map((b) => b.input),
+          borderColor: TIMELINE_COLORS.input.border,
+          fill: false,
           tension: 0.4,
           borderDash: [5, 4],
-          pointRadius: dates.length > 30 ? 0 : 2,
+          pointRadius: hidePoints ? 0 : 2,
           pointHoverRadius: 6,
           borderWidth: 2,
           yAxisID: 'y',
@@ -364,17 +393,25 @@ function renderTimelineChart(byDate, metric = 'tokens') {
         {
           // 输出量级远小于输入，挂到右侧独立纵轴
           label: 'Output Tokens',
-          data: dates.map((d) => byDate[d].output),
-          borderColor: COLORS.emerald.border,
-          backgroundColor: 'rgba(52, 211, 153, 0.10)',
-          fill: true,
+          data: buckets.map((b) => b.output),
+          borderColor: TIMELINE_COLORS.output.border,
+          fill: false,
           tension: 0.4,
-          pointRadius: dates.length > 30 ? 0 : 2,
+          pointRadius: hidePoints ? 0 : 2,
           pointHoverRadius: 6,
           borderWidth: 2,
           yAxisID: 'y1',
         },
       ];
+
+  // 右轴（输出）上限收敛：至少盖住输出峰值的 1.25 倍，且不小于左轴峰值的 1/100，
+  // 让输出曲线保持在图表下部约一半以内，不与输入曲线争夺视觉权重
+  let y1SuggestedMax;
+  if (!isCost) {
+    const leftPeak = buckets.reduce((m, b) => Math.max(m, b.cacheRead || 0, b.input || 0), 0);
+    const outputPeak = buckets.reduce((m, b) => Math.max(m, b.output || 0), 0);
+    y1SuggestedMax = Math.max(outputPeak * 1.25, leftPeak / 100, 1);
+  }
 
   chartInstances.timeline = new Chart(ctx, {
     type: 'line',
@@ -388,6 +425,10 @@ function renderTimelineChart(byDate, metric = 'tokens') {
         tooltip: {
           ...getTooltipConfig(),
           callbacks: {
+            // 按小时视图时标题补日期前缀，避免只看得到钟点
+            title: (items) => (hourly && items.length
+              ? `${dates[0].slice(5).replace('-', '/')} ${items[0].label}`
+              : items[0]?.label ?? ''),
             label: (ctx) => (isCost
               ? `${ctx.dataset.label}: ${formatCostValue(ctx.parsed.y)}`
               : `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()}`),
@@ -406,7 +447,8 @@ function renderTimelineChart(byDate, metric = 'tokens') {
           y1: {
             beginAtZero: true,
             position: 'right',
-            ticks: { callback: formatTickValue, color: COLORS.emerald.border },
+            suggestedMax: y1SuggestedMax,
+            ticks: { callback: formatTickValue, color: TIMELINE_COLORS.output.border },
             grid: { drawOnChartArea: false },
           },
         }),
@@ -466,16 +508,17 @@ function renderModelChart(byModel) {
   const ctx = document.getElementById('chart-model');
   if (!ctx) return;
 
-  const models = Object.keys(byModel);
-  if (models.length === 0) {
+  const useLogScale = document.getElementById('model-log-scale')?.checked || false;
+  const mergeDateCheckpoints = document.getElementById('model-merge-checkpoints')?.checked ?? true;
+  const mergeProviders = document.getElementById('model-merge-providers')?.checked || false;
+  // 全 0 行已在 buildModelChartRows 内过滤；过滤后为空同样走空态
+  const rows = buildModelChartRows(byModel, { mergeDateCheckpoints, mergeProviders });
+  if (rows.length === 0) {
     renderEmptyChart(ctx, t('dashboard.chartEmptyModel'));
     return;
   }
   clearEmptyChart(ctx);
 
-  const useLogScale = document.getElementById('model-log-scale')?.checked || false;
-  const mergeDateCheckpoints = document.getElementById('model-merge-checkpoints')?.checked ?? true;
-  const rows = buildModelChartRows(byModel, { mergeDateCheckpoints });
   const labels = rows.map((row) => row.label);
   const datasets = buildModelDatasets(rows);
 
@@ -535,7 +578,7 @@ export async function renderCharts(data, { timelineMetric = 'tokens' } = {}) {
 
   setChartDefaults();
 
-  renderTimelineChart(data.byDate, timelineMetric);
+  renderTimelineChart(data.byDate, timelineMetric, data.byHour);
   renderProviderChart(data.byProvider);
   renderModelChart(data.byModel);
 }
