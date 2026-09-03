@@ -2,13 +2,17 @@ import { createHash, randomBytes } from 'crypto';
 import { mkdir, readFile, writeFile, rename, unlink } from 'fs/promises';
 import { join } from 'path';
 import { getOpenClawConfigDir } from './openclaw-config.js';
+import { getSqlitePath } from './sqlite-source.js';
 
-/** 缓存结构与解析语义版本；不兼容变更须递增 */
-export const CACHE_SCHEMA_VERSION = 1;
+/** 缓存结构与解析语义版本；不兼容变更须递增。
+ *  v2：数据源切换为 SQLite 会话（贡献键 `sqlite:` / `sqlite-archive:` / `legacy:`），
+ *      manifest 换为 SQLite 身份四元组，旧 JSONL 贡献一次性冻结迁移。 */
+export const CACHE_SCHEMA_VERSION = 2;
 
 const CACHE_SUBDIR = 'cache/openclaw-usage';
-const CACHE_FILENAME = 'stats-v1.json';
-const LOCK_FILENAME = 'stats-v1.lock';
+const CACHE_FILENAME = 'stats-v2.json';
+const LEGACY_CACHE_FILENAME = 'stats-v1.json';
+const LOCK_FILENAME = 'stats-v2.lock';
 const LOCK_STALE_MS = 120_000;
 
 /**
@@ -27,6 +31,14 @@ export function getCacheFilePath() {
 }
 
 /**
+ * 旧版（JSONL 时代）缓存路径，仅供冻结历史迁移读取
+ * @returns {string}
+ */
+export function getLegacyCacheFilePath() {
+  return join(getCacheDir(), LEGACY_CACHE_FILENAME);
+}
+
+/**
  * @returns {string}
  */
 export function getLockFilePath() {
@@ -34,12 +46,14 @@ export function getLockFilePath() {
 }
 
 /**
- * 由 Session 根目录生成 sourceId（API 仅暴露哈希）
- * @param {string} sessionDir
+ * 由数据源根生成 sourceId（API 仅暴露哈希）。
+ * v2 输入为 SQLite 数据库路径；与 v1（sessions 目录路径）天然不同，
+ * 迫使旧磁盘快照失效并走全量重建。
+ * @param {string} sqlitePath
  * @returns {string}
  */
-export function computeSourceId(sessionDir) {
-  const normalized = sessionDir.replace(/\\/g, '/');
+export function computeSourceId(sqlitePath) {
+  const normalized = sqlitePath.replace(/\\/g, '/');
   return createHash('sha256').update(normalized).digest('hex').slice(0, 16);
 }
 
@@ -67,22 +81,12 @@ export function fingerprintsEqual(a, b) {
 }
 
 /**
- * @param {Record<string, { size: number, mtimeMs: number }>} a
- * @param {Record<string, { size: number, mtimeMs: number }>} b
+ * @param {Record<string, object>} a
+ * @param {Record<string, object>} b
  * @returns {boolean}
  */
 export function manifestsEqual(a, b) {
-  const keysA = Object.keys(a || {});
-  const keysB = Object.keys(b || {});
-  if (keysA.length !== keysB.length) return false;
-  for (const key of keysA) {
-    const left = a[key];
-    const right = b[key];
-    if (!right || left.size !== right.size || left.mtimeMs !== right.mtimeMs) {
-      return false;
-    }
-  }
-  return true;
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 /**
@@ -217,6 +221,22 @@ export async function readDiskCache() {
 }
 
 /**
+ * 读取旧版（JSONL 时代）v1 缓存，仅供冻结历史迁移。
+ * 缺失或损坏时返回 null；不做任何写回。
+ * @returns {Promise<object|null>}
+ */
+export async function readLegacyDiskCache() {
+  try {
+    const raw = await readFile(getLegacyCacheFilePath(), 'utf-8');
+    const cache = JSON.parse(raw);
+    if (cache.schemaVersion !== 1) return null;
+    return cache;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 原子写入缓存 JSON
  * @param {object} cache
  * @returns {Promise<void>}
@@ -224,7 +244,7 @@ export async function readDiskCache() {
 export async function writeDiskCacheAtomic(cache) {
   const cacheDir = getCacheDir();
   await mkdir(cacheDir, { recursive: true, mode: 0o700 });
-  const tmpPath = join(cacheDir, `stats-v1.${process.pid}.${Date.now()}.tmp`);
+  const tmpPath = join(cacheDir, `stats-v2.${process.pid}.${Date.now()}.tmp`);
   try {
     await writeFile(tmpPath, JSON.stringify(cache), { mode: 0o600 });
     await rename(tmpPath, getCacheFilePath());

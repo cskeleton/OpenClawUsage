@@ -1,7 +1,9 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
+import { DatabaseSync } from 'node:sqlite';
 import { createTmpWorkspace } from '../../helpers/tmp-workspace.js';
+import { fixturePath } from '../../helpers/fixture-loader.js';
 
 const disposables = [];
 afterEach(async () => {
@@ -9,31 +11,58 @@ afterEach(async () => {
 });
 
 describe('createTmpWorkspace', () => {
-  it('creates sessions & workspace directories and injects env vars', async () => {
+  it('creates agent & workspace directories and injects env vars', async () => {
     const ws = await createTmpWorkspace();
     disposables.push(ws.cleanup);
 
-    expect(existsSync(ws.sessionsDir)).toBe(true);
     expect(existsSync(ws.agentDir)).toBe(true);
+    expect(existsSync(ws.sessionsDir)).toBe(true);
     expect(process.env.OPENCLAW_CONFIG_DIR).toBe(ws.configDir);
     expect(process.env.OPENCLAW_DIR).toBe(ws.workspaceDir);
+    expect(ws.dbPath).toBe(join(ws.agentDir, 'openclaw-agent.sqlite'));
   });
 
-  it('writeSession writes files to sessions dir with given name', async () => {
+  it('execSql creates minimal schema and inserts rows', async () => {
     const ws = await createTmpWorkspace();
     disposables.push(ws.cleanup);
 
-    ws.writeSession('a.jsonl', '{"type":"message"}\n');
-    expect(readFileSync(join(ws.sessionsDir, 'a.jsonl'), 'utf-8')).toBe('{"type":"message"}\n');
+    ws.execSql(`
+      INSERT INTO transcript_events VALUES
+        ('s1', 1, '{"type":"message"}', 1782801600000);
+      INSERT INTO session_windows VALUES
+        ('s1', 'k1', 'done', 1782801600000, 1782801600000, 1782801600000);
+    `);
+
+    const db = new DatabaseSync(ws.dbPath, { readOnly: true });
+    try {
+      expect(db.prepare('SELECT COUNT(*) c FROM transcript_events').get().c).toBe(1);
+      expect(db.prepare('SELECT status FROM session_windows WHERE session_id = ?').get('s1').status).toBe('done');
+    } finally {
+      db.close();
+    }
   });
 
-  it('writeModelsJson writes models.json under agents/main/agent/', async () => {
+  it('copyFixtureDb copies the real redacted sample', async () => {
     const ws = await createTmpWorkspace();
     disposables.push(ws.cleanup);
 
-    ws.writeModelsJson({ providers: {} });
-    const path = join(ws.agentDir, 'models.json');
-    expect(JSON.parse(readFileSync(path, 'utf-8'))).toEqual({ providers: {} });
+    ws.copyFixtureDb(fixturePath('db', 'openclaw-agent.sqlite'));
+    const db = new DatabaseSync(ws.dbPath, { readOnly: true });
+    try {
+      expect(db.prepare('SELECT COUNT(*) c FROM transcript_events').get().c).toBeGreaterThan(0);
+      expect(db.prepare('SELECT COUNT(*) c FROM session_transcript_archives').get().c).toBe(9);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('writeModelsJson writes openclaw.json under config root', async () => {
+    const ws = await createTmpWorkspace();
+    disposables.push(ws.cleanup);
+
+    ws.writeModelsJson({ models: { providers: {} } });
+    const path = join(ws.configDir, 'openclaw.json');
+    expect(JSON.parse(readFileSync(path, 'utf-8'))).toEqual({ models: { providers: {} } });
   });
 
   it('writePricingConfig writes openclaw-usage-pricing.json under workspace', async () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { readdirSync, copyFileSync } from 'fs';
+import { readFileSync } from 'fs';
 import { join } from 'path';
 import { createTmpWorkspace } from '../../helpers/tmp-workspace.js';
 import { fixturePath } from '../../helpers/fixture-loader.js';
@@ -14,10 +14,8 @@ beforeEach(async () => {
   const ws = await createTmpWorkspace();
   disposables.push(ws.cleanup);
 
-  for (const name of readdirSync(fixturePath('sessions-real'))) {
-    copyFileSync(fixturePath('sessions-real', name), join(ws.sessionsDir, name));
-  }
-  copyFileSync(fixturePath('models', 'models.real.json'), join(ws.agentDir, 'models.json'));
+  ws.copyFixtureDb(fixturePath('db', 'openclaw-agent.sqlite'));
+  ws.writeModelsJson(JSON.parse(readFileSync(fixturePath('models', 'models.real.json'), 'utf-8')));
 
   await ws.writePricingConfig({
     version: '1.0',
@@ -99,8 +97,8 @@ describe('MCP callTool', () => {
   });
 
   it('get_pricing_config and update_pricing_config do not call getStats', async () => {
-    const agg = await import('../../../aggregator.js');
-    const parseSpy = vi.spyOn(agg, 'parseSessionJsonlRaw');
+    const sqliteSource = await import('../../../sqlite-source.js');
+    const parseSpy = vi.spyOn(sqliteSource, 'buildSqliteContributions');
     resetStatsServiceForTests();
 
     await call('get_pricing_config');

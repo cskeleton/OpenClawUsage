@@ -1,5 +1,3 @@
-import { statSync } from 'fs';
-import { parseSessionJsonlRaw } from './aggregator.js';
 import { calculateCostFromUsage } from './pricing.js';
 
 /**
@@ -29,9 +27,9 @@ function addAggregate(target, field, value) {
 
 /**
  * Put a source boundary around contribution keys and session display IDs.
- * Imported snapshots intentionally carry no filename; local contributions may
- * retain their filename because it is already local data and is used by the
- * existing dashboard. The returned map never mutates the cache or snapshot.
+ * Imported snapshots intentionally carry no local contribution keys; local
+ * contributions may retain their key because it is already local data. The
+ * returned map never mutates the cache or snapshot.
  */
 export function namespaceFileContributions(
   filesMap,
@@ -47,7 +45,6 @@ export function namespaceFileContributions(
     if (typeof session.id === 'string') {
       session.id = `${prefix}${session.id}`;
     }
-    if (imported) delete session.filename;
     output[`${prefix}${key}`] = {
       ...contribution,
       session,
@@ -106,15 +103,14 @@ function costForBucket(bucket, pricingConfig) {
 }
 
 /**
- * 从单个 Session 文件构建与定价无关的逐文件贡献
- * @param {string} filepath
- * @param {{ sessionId: string, status: string, archivedAt: string|null, filename: string }} meta
- * @returns {Promise<object>}
+ * 从原始用量记录流构建与定价无关的会话贡献。
+ * 记录来源可以是 SQLite transcript_events 或解压后的归档 blob，
+ * 形状与旧 JSONL 解析输出一致。
+ * @param {{ id: string, status: string, archivedAt: string|null }} session
+ * @param {Array<{ provider: string, model: string, usage: object, openclawCost: object, timestamp: string|null }>} records
+ * @returns {object}
  */
-export async function buildFileContribution(filepath, meta) {
-  const st = statSync(filepath);
-  const records = await parseSessionJsonlRaw(filepath);
-
+export function buildContributionFromRecords(session, records) {
   /** @type {Record<string, object>} */
   const bucketMap = dynamicMap();
   let firstTimestamp = null;
@@ -154,12 +150,10 @@ export async function buildFileContribution(filepath, meta) {
 
   return {
     session: {
-      id: meta.sessionId,
-      status: meta.status,
-      archivedAt: meta.archivedAt,
-      filename: meta.filename,
+      id: session.id,
+      status: session.status,
+      archivedAt: session.archivedAt,
     },
-    identity: { size: st.size, mtimeMs: st.mtimeMs },
     buckets: Object.values(bucketMap),
     hasRecords: records.length > 0,
     firstTimestamp,
@@ -193,7 +187,7 @@ function sortedObject(obj) {
 
 /**
  * 合并逐文件贡献并应用当前定价，生成完整统计
- * @param {Record<string, object>} filesMap filename -> contribution
+ * @param {Record<string, object>} filesMap contributionKey -> contribution
  * @param {object} pricingConfig
  * @returns {object}
  */
@@ -225,9 +219,6 @@ export function mergeFileContributions(filesMap, pricingConfig) {
       id: contribution.session.id,
       status: contribution.session.status,
       archivedAt: contribution.session.archivedAt,
-      ...(contribution.session.filename !== undefined
-        ? { filename: contribution.session.filename }
-        : {}),
       ...(typeof contribution.sourceId === 'string'
         ? { sourceId: contribution.sourceId, sourceLabel: contribution.sourceLabel }
         : {}),

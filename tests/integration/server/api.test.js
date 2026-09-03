@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
-import { readdirSync, copyFileSync } from 'fs';
-import { join } from 'path';
+import { readFileSync } from 'fs';
 import { createTmpWorkspace } from '../../helpers/tmp-workspace.js';
 import { fixturePath } from '../../helpers/fixture-loader.js';
 import { createApp } from '../../../server.js';
@@ -15,11 +14,9 @@ beforeEach(async () => {
   const ws = await createTmpWorkspace();
   disposables.push(ws.cleanup);
 
-  // Copy real sessions + models so stats produce non-trivial data
-  for (const name of readdirSync(fixturePath('sessions-real'))) {
-    copyFileSync(fixturePath('sessions-real', name), join(ws.sessionsDir, name));
-  }
-  copyFileSync(fixturePath('models', 'models.real.json'), join(ws.agentDir, 'models.json'));
+  // Copy real session db + models catalog so stats produce non-trivial data
+  ws.copyFixtureDb(fixturePath('db', 'openclaw-agent.sqlite'));
+  ws.writeModelsJson(JSON.parse(readFileSync(fixturePath('models', 'models.real.json'), 'utf-8')));
 
   // Write a pricing config to isolate from user's legacy pricing file
   await ws.writePricingConfig({

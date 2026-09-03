@@ -64,7 +64,7 @@ State files (under $OPENCLAW_CONFIG_DIR):
   run/openclaw-usage/lifecycle.lock
   logs/openclaw-usage/serve.log
   run/openclaw-usage/sync-status.json
-  cache/openclaw-usage/stats-v1.json
+  cache/openclaw-usage/stats-v2.json
 `;
 
 /**
@@ -91,7 +91,7 @@ export function getLauncherPaths(configDir = getConfigDir()) {
     serveStatePath: join(runDir, 'serve.json'),
     lockPath: join(runDir, 'lifecycle.lock'),
     logPath: join(logDir, 'serve.log'),
-    statsCachePath: join(cacheDir, 'stats-v1.json'),
+    statsCachePath: join(cacheDir, 'stats-v2.json'),
     repoRoot: REPO_ROOT,
     serverEntry: SERVER_ENTRY,
   };

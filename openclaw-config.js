@@ -13,11 +13,13 @@ export function getOpenClawConfigDir() {
 }
 
 /**
- * agents/main/agent/models.json 的绝对路径（不检查存在性）
+ * agents/main/agent/openclaw.json 的绝对路径（不检查存在性）。
+ * OpenClaw 2026.8.2 起模型目录位于 openclaw.json 的 models.providers；
+ * 旧版 agents/main/agent/models.json 不再生成。
  * @returns {string}
  */
-export function getAgentModelsJsonPath() {
-  return pathJoin(getOpenClawConfigDir(), 'agents', 'main', 'agent', 'models.json');
+export function getOpenClawJsonPath() {
+  return pathJoin(getOpenClawConfigDir(), 'openclaw.json');
 }
 
 /**
@@ -51,11 +53,11 @@ function normalizeCostFromModel(m) {
 }
 
 /**
- * 从 models.json 读取全部可用模型（唯一目录源）
+ * 从 openclaw.json 读取全部可用模型（唯一目录源）
  * @returns {Promise<Array<{ provider: string, model: string, displayName: string, cost: object|null, contextWindow: number|null, maxTokens: number|null, sources: string[] }>>}
  */
-async function listAllModelsFromModelsJson() {
-  const p = getAgentModelsJsonPath();
+async function listAllModelsFromOpenClawJson() {
+  const p = getOpenClawJsonPath();
   let raw;
   try {
     raw = await readFile(p, 'utf-8');
@@ -71,7 +73,9 @@ async function listAllModelsFromModelsJson() {
     return [];
   }
 
-  const providers = config?.providers || config?.models?.providers;
+  // 2026.8.2 起目录在 openclaw.json 的 models.providers；
+  // 兼容 models.providers 与顶层 providers 两种形态
+  const providers = config?.models?.providers || config?.providers;
   if (!providers || typeof providers !== 'object') return [];
 
   const rows = [];
@@ -91,7 +95,7 @@ async function listAllModelsFromModelsJson() {
         cost: normalizeCostFromModel(m),
         contextWindow: typeof m.contextWindow === 'number' ? m.contextWindow : null,
         maxTokens: typeof m.maxTokens === 'number' ? m.maxTokens : null,
-        sources: ['modelsJson'],
+        sources: ['openclawJson'],
       });
     }
   }
@@ -105,11 +109,11 @@ async function listAllModelsFromModelsJson() {
 }
 
 /**
- * 内置价参考表：models.json 中带有效 input/output 单价的模型（与「缺少价格」互为补集）
+ * 内置价参考表：openclaw.json 中带有效 input/output 单价的模型（与「缺少价格」互为补集）
  * @returns {Promise<Array<{ provider: string, model: string, displayName: string, cost: object, contextWindow: number|null, maxTokens: number|null }>>}
  */
 export async function listOpenClawPricedModels() {
-  const all = await listAllModelsFromModelsJson();
+  const all = await listAllModelsFromOpenClawJson();
   return all
     .filter((row) => hasMeaningfulCost(row.cost))
     .map((row) => {
@@ -126,10 +130,10 @@ export async function listOpenClawPricedModels() {
 }
 
 /**
- * models.json 中未声明有效 input/output 单价的模型
+ * openclaw.json 中未声明有效 input/output 单价的模型
  * @returns {Promise<Array<{ provider: string, model: string, displayName: string, cost: object|null, contextWindow: number|null, maxTokens: number|null, sources: string[] }>>}
  */
 export async function listUnpricedModels() {
-  const all = await listAllModelsFromModelsJson();
+  const all = await listAllModelsFromOpenClawJson();
   return all.filter((row) => !hasMeaningfulCost(row.cost));
 }

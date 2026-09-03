@@ -262,4 +262,45 @@ describe('Dashboard multi-source DOM flow', () => {
     expect(overview.hidden).toBe(true);
     expect(document.getElementById('pagination-info').textContent).toContain('1-10');
   });
+
+  it('renders all session status badges including SQLite-era done', async () => {
+    const stats = makeStats();
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const dayBucket = {
+      input: 50, output: 50, cacheRead: 0, cacheWrite: 0,
+      totalTokens: 100, totalCost: 0.1, requests: 1,
+    };
+    stats.sessions = ['active', 'done', 'reset', 'deleted'].map((status, index) => ({
+      id: `0000000${index}-0000-0000-0000-00000000000${index}`,
+      sourceId: 'local',
+      sourceLabel: 'Local',
+      status,
+      providers: ['anthropic'],
+      models: ['anthropic/claude-sonnet-5'],
+      totalTokens: 100,
+      totalInput: 50,
+      totalOutput: 50,
+      totalCost: 0.1,
+      requestCount: 1,
+      lastTimestamp: '2026-09-03T00:00:00.000Z',
+      byDate: { [today]: dayBucket },
+      byDateModel: {},
+    }));
+    await loadDashboard([stats]);
+
+    const badges = [...document.querySelectorAll('#sessions-tbody .status-badge')];
+    expect(badges).toHaveLength(4);
+    expect(badges[0].className).toContain('status-active');
+    expect(badges[1].className).toContain('status-done');
+    expect(badges[1].textContent).toContain('Done');
+    expect(badges[2].className).toContain('status-reset');
+    expect(badges[3].className).toContain('status-deleted');
+
+    const statusFilter = document.getElementById('status-filter');
+    expect([...statusFilter.options].map((o) => o.value)).toEqual(['all', 'active', 'done', 'reset', 'deleted']);
+    statusFilter.value = 'done';
+    statusFilter.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(document.querySelectorAll('#sessions-tbody tr')).toHaveLength(1);
+  });
 });

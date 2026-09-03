@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import { createServer as createNetServer } from 'net';
-import { existsSync, readdirSync, copyFileSync, mkdirSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { spawn, execFileSync } from 'child_process';
@@ -50,10 +50,8 @@ async function prepareFixtureWorkspace() {
     await ws.cleanup();
   });
 
-  for (const name of readdirSync(fixturePath('sessions-real'))) {
-    copyFileSync(fixturePath('sessions-real', name), join(ws.sessionsDir, name));
-  }
-  copyFileSync(fixturePath('models', 'models.real.json'), join(ws.agentDir, 'models.json'));
+  ws.copyFixtureDb(fixturePath('db', 'openclaw-agent.sqlite'));
+  ws.writeModelsJson(JSON.parse(readFileSync(fixturePath('models', 'models.real.json'), 'utf-8')));
   await ws.writePricingConfig({
     version: '1.0',
     enabled: true,

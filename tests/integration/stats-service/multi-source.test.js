@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import {
-  copyFileSync,
   mkdirSync,
   readFileSync,
   unlinkSync,
@@ -10,7 +9,6 @@ import {
 } from 'fs';
 import { join } from 'path';
 import { createTmpWorkspace } from '../../helpers/tmp-workspace.js';
-import { fixturePath } from '../../helpers/fixture-loader.js';
 import { createApp } from '../../../server.js';
 import { createMcpServer } from '../../../mcp-server.js';
 import {
@@ -66,10 +64,32 @@ function importedSnapshot(provider = 'openai') {
 async function setup({ withImport = true, missingImport = false } = {}) {
   const ws = await createTmpWorkspace();
   disposables.push(ws.cleanup);
-  copyFileSync(fixturePath('sessions-synth', 'edge-matrix.jsonl'), join(ws.sessionsDir, 'same-session.jsonl'));
-  // parseSessionFile requires a UUID prefix; keep the semantic collision in the
-  // session ID carried by the imported contribution instead.
-  copyFileSync(fixturePath('sessions-synth', 'edge-matrix.jsonl'), join(ws.sessionsDir, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl'));
+  // 本地 SQLite 会话：id 与导入快照携带的会话语义冲突（same-session），
+  // 用于验证 namespacing 是否保持两侧不重合
+  ws.execSql(`
+    INSERT INTO transcript_events VALUES
+      ('same-session', 1, '${JSON.stringify({
+        type: 'message',
+        timestamp: '2026-04-15T10:00:00.000Z',
+        message: {
+          role: 'assistant', provider: 'openai', model: 'gpt-4o',
+          usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        },
+      })}', 1782801600000);
+    INSERT INTO session_windows VALUES
+      ('same-session', 'agent:main:main', 'done', 1782801600000, 1782801600000, 1782801600000);
+    INSERT INTO transcript_events VALUES
+      ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 1, '${JSON.stringify({
+        type: 'message',
+        timestamp: '2026-04-16T10:00:00.000Z',
+        message: {
+          role: 'assistant', provider: 'openai', model: 'gpt-4o',
+          usage: { input: 7, output: 3, cacheRead: 0, cacheWrite: 0, totalTokens: 10, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        },
+      })}', 1782801700000);
+    INSERT INTO session_windows VALUES
+      ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'agent:main:tui-x', 'done', 1782801700000, 1782801700000, 1782801700000);
+  `);
   writeFileSync(join(ws.workspaceDir, 'openclaw-usage-pricing.json'), JSON.stringify({
     version: '1.0', enabled: true, updated: '2026-04-20T00:00:00.000Z',
     pricing: { 'openai/gpt-4o': { input: 1, output: 2 } },

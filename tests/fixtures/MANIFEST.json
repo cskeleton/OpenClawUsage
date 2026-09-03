@@ -1,34 +1,165 @@
 {
-  "extractedAt": "2026-04-20T10:09:57.143Z",
+  "extractedAt": "2026-09-03T14:56:06.327Z",
   "sessions": [
     {
-      "name": "6ab08280-092f-4667-803f-319ae4ab75af.jsonl",
-      "bytes": 145610,
-      "lineCount": 570
+      "id": "000e863e-800d-45cf-8d68-5582533c13d5",
+      "events": 40
     },
     {
-      "name": "77e32406-f4f0-4240-99e4-abee7a005c46.jsonl",
-      "bytes": 11819,
-      "lineCount": 48
+      "id": "f5d37beb-ef68-4418-90d8-4912cf44f68e",
+      "events": 40
     },
     {
-      "name": "047a6658-dedb-4ded-8b03-4c0027422404.jsonl.reset.2026-04-19T18-08-36.871Z",
-      "bytes": 41887,
-      "lineCount": 166
+      "id": "b3b8bce4-1c9d-414b-bf79-a29e9b57789a",
+      "events": 40
     },
     {
-      "name": "0631f771-085f-4689-bc25-65cf2545f658.jsonl.reset.2026-04-15T13-05-48.786Z",
-      "bytes": 6204,
-      "lineCount": 27
+      "id": "5574ff62-d4d9-41e6-b248-3b4ae8ca7d83",
+      "events": 40
     },
     {
-      "name": "5e87b1b7-7b40-48bf-bc2b-3adad7abd692.checkpoint.b0ede0ab-913f-4293-a041-9f74786a9d0f.jsonl",
-      "bytes": 35471,
-      "lineCount": 143
+      "id": "e4dd216b-5b1e-4a7a-b6bf-8c60f4b94ba9",
+      "events": 40
+    },
+    {
+      "id": "bf9ccd5d-5254-483a-9ff1-0987f772373a",
+      "events": 40
+    },
+    {
+      "id": "4c6ba038-0f2f-419e-8f2c-a92d9035d5a9",
+      "events": 40
+    },
+    {
+      "id": "3df1527e-8eb6-42fc-b453-a48925490f07",
+      "events": 40
+    },
+    {
+      "id": "fd24e6a4-4b82-403a-b870-5200d2064c8d",
+      "events": 40
+    },
+    {
+      "id": "e59bac1f-1630-49fb-9310-9c3dcf69d821",
+      "events": 36
+    },
+    {
+      "id": "30e56b2b-0e5c-48da-a062-580327109fde",
+      "events": 35
+    },
+    {
+      "id": "1101aebe-06f8-4694-82bc-48176da18f5f",
+      "events": 17
+    },
+    {
+      "id": "30947d9e-ade1-4a30-9169-bfdd3e1d836e",
+      "events": 15
+    },
+    {
+      "id": "af3d2497-0e2d-4906-baa9-45ffc1fa35b1",
+      "events": 15
+    },
+    {
+      "id": "research-qwen-max-high-20260811",
+      "events": 12
+    },
+    {
+      "id": "research-qwen-max-medium-20260811",
+      "events": 12
+    },
+    {
+      "id": "3f5a0152-f1f1-4958-b50f-c05d6df72b69",
+      "events": 6
+    },
+    {
+      "id": "4c3910c1-acd6-4060-bc3f-6c46559f6aee",
+      "events": 6
+    },
+    {
+      "id": "522340a6-642a-42d7-a809-da651a15f67e",
+      "events": 6
+    },
+    {
+      "id": "6d64805d-9902-41b6-b4c4-b9b7fea5c3f9",
+      "events": 6
+    },
+    {
+      "id": "9fd9b927-fc24-403c-abf1-84b2ed472d34",
+      "events": 6
+    },
+    {
+      "id": "c3cbf32a-f938-4b89-953a-8ed85cb6e746",
+      "events": 6
+    },
+    {
+      "id": "ce94187e-089c-4f32-9275-7d6df799f7fb",
+      "events": 6
+    },
+    {
+      "id": "model-run-d75e4850-771b-4336-81ef-54ce84deef72",
+      "events": 5
+    },
+    {
+      "id": "research-bohe-auth-20260811",
+      "events": 6
+    },
+    {
+      "id": "research-bohe-k3-off-20260811",
+      "events": 6
+    },
+    {
+      "id": "research-qwen-max-off-20260811",
+      "events": 6
     }
   ],
-  "modelsJson": {
-    "source": "~/.openclaw/agents/main/agent/models.json",
+  "archives": [
+    {
+      "sessionId": "64696d4e-b882-4d6d-941b-150f730ffb38",
+      "generation": "c046954dc9144e67a651ad96241e11cb",
+      "reason": "deleted"
+    },
+    {
+      "sessionId": "98e83bda-ce0d-49f0-91c2-d4a2da487ab2",
+      "generation": "444dd273f93b4d90bc0e812b624701cf",
+      "reason": "deleted"
+    },
+    {
+      "sessionId": "a84b6062-32ba-4643-80bf-94369d157912",
+      "generation": "9a6ffe595cef4ce181926b29173225b9",
+      "reason": "deleted"
+    },
+    {
+      "sessionId": "fe893ebf-7fa8-45c3-b6c6-c25717ca70bd",
+      "generation": "1422bae5f079400191f173af6d628e55",
+      "reason": "deleted"
+    },
+    {
+      "sessionId": "4074373e-5d0a-4114-937d-6f69894c2a83",
+      "generation": "4faaa34518644e268c67b061c593bafd",
+      "reason": "deleted"
+    },
+    {
+      "sessionId": "7a22a5bf-203e-41e4-a836-9586c4d5d0a8",
+      "generation": "4aa9ae45a02b4faf9af4f25e6c968123",
+      "reason": "deleted"
+    },
+    {
+      "sessionId": "8a69bbdc-41e9-46a8-b163-7d8ed75db79b",
+      "generation": "a0958c83831347dcbd05b25238bc0036",
+      "reason": "deleted"
+    },
+    {
+      "sessionId": "685d2ce7-5c04-442d-91aa-4d4ca4155773",
+      "generation": "deb16da83ff2480e8d522bb07a69e9c5",
+      "reason": "deleted"
+    },
+    {
+      "sessionId": "fe3eb636-95ca-48a3-9ace-325abb80fde5",
+      "generation": "7560562c28b64469b87308219d3d5d80",
+      "reason": "deleted"
+    }
+  ],
+  "models": {
+    "source": "~/.openclaw/openclaw.json",
+    "shape": "openclaw.json models.providers",
     "redactedKeys": [
       "apiKey",
       "apiSecret",

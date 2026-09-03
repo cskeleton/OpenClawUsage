@@ -7,7 +7,7 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'html'],
       include: [
-        'aggregator.js',
+        'sqlite-source.js',
         'pricing.js',
         'openclaw-config.js',
         'stats-service.js',

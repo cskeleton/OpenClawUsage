@@ -29,7 +29,7 @@ export const MAX_SAFE_SNAPSHOT_VALUE = Math.floor(
 );
 
 const IDENTIFIER_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-const STATUSES = new Set(['active', 'reset', 'deleted']);
+const STATUSES = new Set(['active', 'done', 'reset', 'deleted']);
 const IMPORT_SUBDIR = 'cache/openclaw-usage/imports';
 
 function clone(value) {

@@ -98,13 +98,13 @@ export function createMcpServer() {
       },
       {
         name: "refresh_stats_cache",
-        description: "主动刷新统计缓存；默认增量检查并只解析变化文件 / Refresh stats cache; default incremental (changed files only), use full:true for full rebuild.",
+        description: "主动刷新统计缓存；默认增量检查并只解析变化会话 / Refresh stats cache; default incremental (changed sessions only), use full:true for full rebuild.",
         inputSchema: {
           type: "object",
           properties: {
             full: {
               type: "boolean",
-              description: "If true, ignore per-file cache and re-read all session files",
+              description: "If true, ignore per-session cache and re-read all sessions",
               default: false,
             },
           },

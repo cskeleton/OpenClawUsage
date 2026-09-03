@@ -3,10 +3,11 @@ import { createHash } from 'crypto';
 import { existsSync, statSync } from 'fs';
 import { unlink } from 'fs/promises';
 import {
-  getSessionDir,
-  parseSessionFile,
-  scanSessionManifest,
-} from './aggregator.js';
+  getSqlitePath,
+  scanSqliteManifest,
+  buildSqliteContributions,
+  listSqliteSessionIds,
+} from './sqlite-source.js';
 import { getOpenClawConfigDir } from './openclaw-config.js';
 import {
   getPublicSyncConfig,
@@ -26,11 +27,11 @@ import {
   releaseLock,
   waitForLockRelease,
   readDiskCache,
+  readLegacyDiskCache,
   writeDiskCacheAtomic,
   getLockFilePath,
 } from './stats-cache-store.js';
 import {
-  buildFileContribution,
   mergeFileContributions,
   buildEmptyStats,
   namespaceFileContributions,
@@ -87,28 +88,26 @@ function wrapStatsResponse(stats, cacheMeta) {
 }
 
 /**
- * 1 秒内复用文件清单检查结果
+ * 1 秒内复用数据库清单检查结果
  */
-async function getManifestCoalesced(sessionDir) {
+async function getManifestCoalesced() {
   const now = Date.now();
   if (
     lastManifestScan &&
-    lastManifestScan.sessionDir === sessionDir &&
     now - lastManifestScan.at < MANIFEST_SCAN_COALESCE_MS
   ) {
     return lastManifestScan.result;
   }
-  return rescanManifest(sessionDir);
+  return rescanManifest();
 }
 
 /**
- * 强制重新扫描文件清单（刷新路径与等锁结束后使用），并刷新合并窗口
- * @param {string} sessionDir
- * @returns {{ exists: boolean, manifest: Record<string, { size: number, mtimeMs: number }> }}
+ * 强制重新扫描数据库清单（刷新路径与等锁结束后使用）
+ * @returns {{ exists: boolean, identity?: object, sessions: object, archives: object }}
  */
-function rescanManifest(sessionDir) {
-  const result = scanSessionManifest(sessionDir);
-  lastManifestScan = { at: Date.now(), sessionDir, result };
+function rescanManifest() {
+  const result = scanSqliteManifest();
+  lastManifestScan = { at: Date.now(), result };
   return result;
 }
 
@@ -124,55 +123,47 @@ function loadMemoryFromDiskCache(diskCache) {
 }
 
 /**
- * 比较 manifest 差异
+ * 比较 manifest 差异（sessions 与 archives 两个维度合并为单一贡献键集合）
+ * @param {{ sessions: object, archives: object }} oldManifest
+ * @param {{ sessions: object, archives: object }} newManifest
  */
 function diffManifest(oldManifest, newManifest) {
+  const oldKeys = manifestKeyMap(oldManifest);
+  const newKeys = manifestKeyMap(newManifest);
+
   const added = [];
   const changed = [];
   const removed = [];
 
-  for (const [name, identity] of Object.entries(newManifest)) {
-    const old = oldManifest[name];
+  for (const [name, identity] of Object.entries(newKeys)) {
+    const old = oldKeys[name];
     if (!old) {
       added.push(name);
-    } else if (old.size !== identity.size || old.mtimeMs !== identity.mtimeMs) {
+    } else if (JSON.stringify(old) !== JSON.stringify(identity)) {
       changed.push(name);
     }
   }
 
-  for (const name of Object.keys(oldManifest)) {
-    if (!newManifest[name]) removed.push(name);
+  for (const name of Object.keys(oldKeys)) {
+    if (!newKeys[name]) removed.push(name);
   }
 
   return { added, changed, removed };
 }
 
 /**
- * 读取文件当前身份
+ * 把 manifest 的 sessions/archives 归一为「贡献键 → 身份」映射。
+ * 活跃会话键 `sqlite:<sessionId>`；归档键 `sqlite-archive:<sessionId>@<generation>`。
  */
-function fileIdentity(sessionDir, filename) {
-  const filepath = join(sessionDir, filename);
-  const st = statSync(filepath);
-  return { size: st.size, mtimeMs: st.mtimeMs };
-}
-
-/**
- * 解析单个文件并校验身份稳定性（最多重试一次）
- */
-async function parseFileStable(sessionDir, filename) {
-  const filepath = join(sessionDir, filename);
-  const meta = parseSessionFile(filename);
-  if (!meta) return null;
-
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const before = fileIdentity(sessionDir, filename);
-    const contribution = await buildFileContribution(filepath, meta);
-    const after = fileIdentity(sessionDir, filename);
-    if (before.size === after.size && before.mtimeMs === after.mtimeMs) {
-      return contribution;
-    }
+function manifestKeyMap(manifest) {
+  const out = Object.create(null);
+  for (const [sessionId, identity] of Object.entries(manifest?.sessions || {})) {
+    out[`sqlite:${sessionId}`] = identity;
   }
-  throw new Error(`文件 ${filename} 在解析期间持续变化`);
+  for (const [key, identity] of Object.entries(manifest?.archives || {})) {
+    out[`sqlite-archive:${key}`] = identity;
+  }
+  return out;
 }
 
 /**
@@ -230,12 +221,43 @@ function pickIncrementalBaseline(sourceId, diskCache) {
 }
 
 /**
+ * 从 v1（JSONL 时代）磁盘缓存冻结历史贡献。
+ * 仅迁移有记录、且会话 id 不与 SQLite 活跃/归档重合的贡献（防双计）；
+ * 迁移后的贡献键统一加 `legacy:` 前缀，不再参与变更检测。
+ * @returns {Promise<Record<string, object>>}
+ */
+async function buildLegacyContributions() {
+  const legacyCache = await readLegacyDiskCache();
+  if (!legacyCache || !legacyCache.files) return {};
+
+  const sqliteIds = listSqliteSessionIds();
+  const out = Object.create(null);
+  for (const [filename, contribution] of Object.entries(legacyCache.files)) {
+    if (!contribution?.hasRecords) continue;
+    if (sqliteIds && sqliteIds.has(contribution.session?.id)) continue;
+    out[`legacy:${filename}`] = {
+      session: {
+        id: contribution.session.id,
+        status: contribution.session.status,
+        archivedAt: contribution.session.archivedAt,
+      },
+      identity: { frozen: true },
+      buckets: contribution.buckets,
+      hasRecords: true,
+      firstTimestamp: contribution.firstTimestamp,
+      lastTimestamp: contribution.lastTimestamp,
+    };
+  }
+  return out;
+}
+
+/**
  * 解析/合并贡献并发布到进程内内存
  * @returns {Promise<{ filesMap: object, stats: object, revision: number, now: string, manifest: object }>}
  */
-async function buildSnapshot({ full, sessionDir, sourceId, manifest, pricingConfig, fp }) {
+async function buildSnapshot({ full, sourceId, manifest, pricingConfig, fp }) {
   const diskCache = await readDiskCache();
-  // 全量刷新丢弃全部逐文件贡献；增量刷新复用同源基线
+  // 全量刷新丢弃全部逐会话贡献；增量刷新复用同源基线
   const baseline = full ? { files: {}, manifest: {} } : pickIncrementalBaseline(sourceId, diskCache);
   const filesMap = baseline.files;
 
@@ -243,18 +265,23 @@ async function buildSnapshot({ full, sessionDir, sourceId, manifest, pricingConf
   for (const name of diff.removed) {
     delete filesMap[name];
   }
-  // 防御：基线 files 与 manifest 不一致时清掉已不存在的残留贡献
+  // 防御：基线 files 含 manifest 之外的残留贡献时清理，但冻结的 legacy 贡献除外
+  const currentKeys = manifestKeyMap(manifest);
   for (const name of Object.keys(filesMap)) {
-    if (!manifest[name]) delete filesMap[name];
+    if (!name.startsWith('legacy:') && !currentKeys[name]) delete filesMap[name];
   }
 
-  const toParse = [...diff.added, ...diff.changed];
+  if (diff.added.length > 0 || diff.changed.length > 0) {
+    const sessionDiff = splitDiff(diff, 'sqlite:');
+    const archiveDiff = splitDiff(diff, 'sqlite-archive:');
+    const { contributions } = await buildSqliteContributions(sessionDiff, archiveDiff);
+    Object.assign(filesMap, contributions);
+  }
 
-  for (const filename of toParse) {
-    const contribution = await parseFileStable(sessionDir, filename);
-    if (contribution) {
-      filesMap[filename] = contribution;
-    }
+  // 首次构建（或全量后基线为空）时冻结 v1 历史贡献
+  if (!Object.keys(filesMap).some((key) => key.startsWith('legacy:'))) {
+    const legacy = await buildLegacyContributions();
+    Object.assign(filesMap, legacy);
   }
 
   const stats = attachPricingMeta(mergeFileContributions(filesMap, pricingConfig), pricingConfig);
@@ -273,10 +300,18 @@ async function buildSnapshot({ full, sessionDir, sourceId, manifest, pricingConf
 }
 
 /**
- * Session 目录不存在时的处理：有旧结果则标记陈旧，否则发布空统计
+ * 从合并 diff 中按前缀拆出各维度的会话/归档键
+ */
+function splitDiff(diff, prefix) {
+  const pick = (list) => list.filter((k) => k.startsWith(prefix)).map((k) => k.slice(prefix.length));
+  return { added: pick(diff.added), changed: pick(diff.changed), removed: pick(diff.removed) };
+}
+
+/**
+ * 数据库不存在时的处理：有旧结果则标记陈旧，否则发布空统计（含冻结历史）
  * @returns {boolean} 是否已完成处理
  */
-function handleMissingSessionDir(sourceId, pricingConfig, fp) {
+function handleMissingDatabase(sourceId, pricingConfig, fp) {
   if (memory.stats) {
     memory.cacheState = 'stale';
     return true;
@@ -301,7 +336,14 @@ function handleMissingSessionDir(sourceId, pricingConfig, fp) {
  */
 function canAdoptDiskSnapshot(diskCache, { sourceId, manifest, full, revisionBeforeWait = -1 }) {
   if (!diskCache || diskCache.sourceId !== sourceId) return false;
-  if (!manifestsEqual(diskCache.manifest, manifest)) return false;
+  // 数据库 schema 身份（dev/ino/schema_version）不同视为不同源快照，必须自行重建
+  if (JSON.stringify(diskCache.manifest?.identity) !== JSON.stringify(manifest?.identity)) {
+    return false;
+  }
+  if (!manifestsEqual(
+    manifestKeyMap(diskCache.manifest),
+    manifestKeyMap(manifest)
+  )) return false;
   if (full) {
     if (diskCache.buildMode !== 'full') return false;
     // buildMode 只能说明快照曾经由 full 产生；revision 必须在本次等待期间前进，
@@ -321,20 +363,27 @@ function canAdoptDiskSnapshot(diskCache, { sourceId, manifest, full, revisionBef
 async function executeRefresh({ full = false } = {}) {
   const pricingConfig = await loadPricingConfig();
   const fp = buildPricingFingerprint(pricingConfig);
-  const sessionDir = getSessionDir();
-  const sourceId = computeSourceId(sessionDir);
-  let scan = rescanManifest(sessionDir);
+  const sourceId = computeSourceId(getSqlitePath());
+  let scan = rescanManifest();
 
   if (!scan.exists) {
-    handleMissingSessionDir(sourceId, pricingConfig, fp);
+    handleMissingDatabase(sourceId, pricingConfig, fp);
     return;
+  }
+
+  // OpenClaw 升级改表（schema_version 变化）时强制全量重建
+  const schemaChanged =
+    !!memory.manifest?.identity &&
+    JSON.stringify(memory.manifest.identity) !== JSON.stringify(scan.identity);
+  if (schemaChanged && !full) {
+    full = true;
   }
 
   const writable = await isCacheWritable();
   if (!writable) {
     persistenceUnavailable = true;
     console.warn('[stats-service] 缓存目录不可写，仅使用进程内缓存');
-    await buildSnapshot({ full, sessionDir, sourceId, manifest: scan.manifest, pricingConfig, fp });
+    await buildSnapshot({ full, sourceId, manifest: scan, pricingConfig, fp });
     return;
   }
   persistenceUnavailable = false;
@@ -348,17 +397,17 @@ async function executeRefresh({ full = false } = {}) {
     // 等待持锁方完成后再读盘，避免双方都先构建
     await waitForLockRelease();
 
-    // 等待期间源文件可能又发生变化，必须以最新清单判断磁盘快照是否够新
-    scan = rescanManifest(sessionDir);
+    // 等待期间数据源可能又发生变化，必须以最新清单判断磁盘快照是否够新
+    scan = rescanManifest();
     if (!scan.exists) {
-      handleMissingSessionDir(sourceId, pricingConfig, fp);
+      handleMissingDatabase(sourceId, pricingConfig, fp);
       return;
     }
 
     const refreshed = await readDiskCache();
     if (canAdoptDiskSnapshot(refreshed, {
       sourceId,
-      manifest: scan.manifest,
+      manifest: scan,
       full,
       revisionBeforeWait,
     })) {
@@ -376,9 +425,8 @@ async function executeRefresh({ full = false } = {}) {
       }
       await buildSnapshot({
         full,
-        sessionDir,
         sourceId,
-        manifest: scan.manifest,
+        manifest: scan,
         pricingConfig,
         fp,
       });
@@ -386,11 +434,10 @@ async function executeRefresh({ full = false } = {}) {
     }
   }
 
-  const manifest = scan.manifest;
+  const manifest = scan;
   try {
     const { filesMap, stats, revision, now } = await buildSnapshot({
       full,
-      sessionDir,
       sourceId,
       manifest,
       pricingConfig,
@@ -470,7 +517,8 @@ function scheduleBackgroundRefresh() {
  * 尝试从磁盘/内存复用并决定是否需要刷新
  */
 async function ensureLoaded(pricingConfig, fp, sourceId, manifestScan) {
-  const { exists, manifest } = manifestScan;
+  const { exists } = manifestScan;
+  const manifest = manifestScan;
 
   if (memory.stats && memory.sourceId === sourceId) {
     const manifestMatch = manifestsEqual(memory.manifest, manifest);
@@ -532,9 +580,8 @@ async function ensureLoaded(pricingConfig, fp, sourceId, manifestScan) {
 async function getLocalStats({ forceFresh = false, waitForRefresh = false } = {}) {
   const pricingConfig = await loadPricingConfig();
   const fp = buildPricingFingerprint(pricingConfig);
-  const sessionDir = getSessionDir();
-  const sourceId = computeSourceId(sessionDir);
-  const manifestScan = await getManifestCoalesced(sessionDir);
+  const sourceId = computeSourceId(getSqlitePath());
+  const manifestScan = await getManifestCoalesced();
   const checkedAt = new Date().toISOString();
 
   const loaded = await ensureLoaded(pricingConfig, fp, sourceId, manifestScan);

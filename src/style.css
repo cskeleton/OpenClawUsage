@@ -25,6 +25,7 @@ html.theme-light {
   --accent-amber: #d97706;
   --accent-rose: #e11d48;
   --accent-orange: #ea580c;
+  --accent-done: #6366f1;
 
   --gradient-primary: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
   --gradient-card: linear-gradient(145deg, rgba(251, 146, 60, 0.12) 0%, rgba(254, 243, 199, 0.35) 100%);
@@ -73,6 +74,7 @@ html.theme-dark {
   --accent-amber: #fbbf24;
   --accent-rose: #fb7185;
   --accent-orange: #fb923c;
+  --accent-done: #818cf8;
 
   --gradient-primary: linear-gradient(135deg, #ea580c 0%, #f97316 50%, #fb923c 100%);
   --gradient-card: linear-gradient(145deg, rgba(234, 88, 12, 0.14) 0%, rgba(68, 64, 60, 0.4) 100%);
@@ -784,6 +786,12 @@ tbody td {
   background: rgba(5, 150, 105, 0.14);
   color: var(--accent-emerald);
   border: 1px solid rgba(5, 150, 105, 0.25);
+}
+
+.status-done {
+  background: rgba(99, 102, 241, 0.14);
+  color: var(--accent-done);
+  border: 1px solid rgba(99, 102, 241, 0.25);
 }
 
 .status-reset {

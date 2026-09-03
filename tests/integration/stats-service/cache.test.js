@@ -1,17 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   readFileSync,
-  readdirSync,
-  copyFileSync,
   writeFileSync,
-  appendFileSync,
   unlinkSync,
   existsSync,
+  mkdirSync,
 } from 'fs';
+import { dirname as pathDirname } from 'path';
 import { join } from 'path';
 import { spawn } from 'child_process';
+import { DatabaseSync } from 'node:sqlite';
 import { createTmpWorkspace } from '../../helpers/tmp-workspace.js';
-import { fixturePath } from '../../helpers/fixture-loader.js';
 import {
   getStats,
   getLocalContributionCache,
@@ -23,41 +22,65 @@ import {
 } from '../../../stats-service.js';
 import {
   getCacheFilePath,
+  getLegacyCacheFilePath,
   isCacheWritable,
   tryAcquireLock,
   releaseLock,
   writeDiskCacheAtomic,
   readDiskCache,
 } from '../../../stats-cache-store.js';
-import { parseSessionJsonlRaw } from '../../../aggregator.js';
 import { STATS_SHAPE_VERSION } from '../../../stats-contribution.js';
 
-/** 追加一条有效 usage 消息，使请求数 +1 */
-function appendUsageLine(sessionPath) {
-  appendFileSync(
-    sessionPath,
-    '\n' +
-      JSON.stringify({
-        type: 'message',
-        timestamp: '2026-04-17T12:00:00.000Z',
-        message: {
-          role: 'assistant',
-          provider: 'openai',
-          model: 'gpt-4o',
-          usage: {
-            input: 11,
-            output: 7,
-            cacheRead: 0,
-            cacheWrite: 0,
-            totalTokens: 18,
-            cost: { input: 0.0001, output: 0.0001, cacheRead: 0, cacheWrite: 0, total: 0.0002 },
-          },
-        },
-      })
-  );
+const SESSION_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+
+function usageEventJson({ seq = 1, provider = 'openai', model = 'gpt-4o', ts = '2026-04-17T12:00:00.000Z', input = 11, output = 7 } = {}) {
+  return JSON.stringify({
+    type: 'message',
+    id: `evt-${seq}`,
+    timestamp: ts,
+    message: {
+      role: 'assistant',
+      provider,
+      model,
+      usage: {
+        input,
+        output,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: input + output,
+        cost: { input: 0.0001, output: 0.0001, cacheRead: 0, cacheWrite: 0, total: 0.0002 },
+      },
+    },
+  });
+}
+
+/** 在工作区数据库中追加一条 usage 事件（请求数 +1） */
+function appendUsageEvent(ws, { seq = 1 } = {}) {
+  const db = new DatabaseSync(ws.dbPath);
+  try {
+    db.prepare(
+      'INSERT INTO transcript_events (session_id, seq, event_json, created_at) VALUES (?, ?, ?, ?)'
+    ).run(SESSION_ID, seq, usageEventJson({ seq }), Date.parse('2026-04-17T12:00:00.000Z') + seq);
+    db.prepare('UPDATE session_windows SET updated_at = updated_at + 1, transcript_updated_at = transcript_updated_at + 1 WHERE session_id = ?').run(SESSION_ID);
+  } finally {
+    db.close();
+  }
+}
+
+/** 初始化一个带单会话两事件的数据库 */
+function seedDb(ws) {
+  ws.execSql(`
+    INSERT INTO transcript_events VALUES
+      ('${SESSION_ID}', 1, '${usageEventJson({ seq: 1 })}', 1782801600000),
+      ('${SESSION_ID}', 2, '${usageEventJson({ seq: 2, input: 20, output: 5 })}', 1782801600100);
+    INSERT INTO session_windows VALUES
+      ('${SESSION_ID}', 'agent:main:main', 'done', 1782801600000, 1782801600100, 1782801600100);
+  `);
 }
 
 const disposables = [];
+/** 最近一个 setupWorkspace 的工作区引用（部分用例在 getStats 后再注入事件） */
+let lastWs = null;
 
 beforeEach(() => {
   resetStatsServiceForTests();
@@ -67,17 +90,16 @@ afterEach(async () => {
   vi.useRealTimers();
   await __forceReleaseLockForTests();
   while (disposables.length) await disposables.pop()();
+  lastWs = null;
   resetStatsServiceForTests();
 });
 
 async function setupWorkspace(pricingUpdated = '2026-04-20T00:00:00.000Z', withSessions = true) {
   const ws = await createTmpWorkspace();
   disposables.push(ws.cleanup);
+  lastWs = ws;
   if (withSessions) {
-    copyFileSync(
-      fixturePath('sessions-synth', 'edge-matrix.jsonl'),
-      join(ws.sessionsDir, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl')
-    );
+    seedDb(ws);
   }
   await ws.writePricingConfig({
     version: '1.0',
@@ -88,63 +110,70 @@ async function setupWorkspace(pricingUpdated = '2026-04-20T00:00:00.000Z', withS
   return ws;
 }
 
-describe('stats-service persistent cache', () => {
+/** spy 在 sqlite-source 的贡献构建入口上 */
+async function spyBuild() {
+  const sqliteSource = await import('../../../sqlite-source.js');
+  return vi.spyOn(sqliteSource, 'buildSqliteContributions');
+}
+
+describe('stats-service persistent cache (SQLite source)', () => {
   it('cold start builds and writes disk cache', async () => {
     const ws = await setupWorkspace();
     const data = await getStats();
-    expect(data.summary.totalRequests).toBeGreaterThan(0);
+    expect(data.summary.totalRequests).toBe(2);
     expect(data.cache.state).toBe('fresh');
     expect(existsSync(getCacheFilePath())).toBe(true);
     const disk = JSON.parse(readFileSync(getCacheFilePath(), 'utf-8'));
-    expect(disk.schemaVersion).toBe(1);
+    expect(disk.schemaVersion).toBe(2);
     expect(disk.files).toBeDefined();
-    expect(disk.manifest).toBeDefined();
+    expect(disk.manifest.sessions).toBeDefined();
+    expect(disk.manifest.archives).toBeDefined();
+    expect(Object.keys(disk.files)).toEqual([`sqlite:${SESSION_ID}`]);
   });
 
   it('refuses a local contribution export after an existing-cache refresh fails', async () => {
-    const ws = await setupWorkspace();
+    await setupWorkspace();
     await expect(getLocalContributionCache()).resolves.toMatchObject({ cacheState: 'fresh' });
-    const sessionPath = join(ws.sessionsDir, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl');
-    writeFileSync(sessionPath, `${readFileSync(sessionPath, 'utf8')}\n`);
-    const aggregator = await import('../../../aggregator.js');
-    const parseSpy = vi.spyOn(aggregator, 'parseSessionJsonlRaw').mockRejectedValue(new Error('injected parse failure'));
+    appendUsageEvent(lastWs, { seq: 3 });
+    const sqliteSource = await import('../../../sqlite-source.js');
+    const spy = vi.spyOn(sqliteSource, 'buildSqliteContributions').mockRejectedValue(new Error('injected parse failure'));
     try {
       await expect(getLocalContributionCache()).rejects.toThrow(/not fresh/i);
     } finally {
-      parseSpy.mockRestore();
+      spy.mockRestore();
     }
   });
 
-  it('reuses disk cache after module reset without reparsing unchanged files', async () => {
-    const ws = await setupWorkspace();
+  it('reuses disk cache after module reset without reparsing unchanged sessions', async () => {
+    await setupWorkspace();
     await getStats();
-    const parseSpy = vi.spyOn(await import('../../../aggregator.js'), 'parseSessionJsonlRaw');
+    const spy = await spyBuild();
 
     resetStatsServiceForTests();
     const data = await getStats();
     expect(data.cache.state).toBe('fresh');
-    expect(parseSpy).not.toHaveBeenCalled();
-    parseSpy.mockRestore();
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 
-  it('incremental refresh only reparses changed file', async () => {
+  it('incremental refresh only reparses changed session', async () => {
     const ws = await setupWorkspace();
     await getStats();
 
-    const sessionName = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl';
-    const path = join(ws.sessionsDir, sessionName);
-    const original = readFileSync(path);
-    writeFileSync(path, original + '\n');
-
+    appendUsageEvent(ws, { seq: 3 });
     resetStatsServiceForTests();
-    const parseSpy = vi.spyOn(await import('../../../aggregator.js'), 'parseSessionJsonlRaw');
 
+    const spy = await spyBuild();
     await refreshStatsCache();
-    expect(parseSpy.mock.calls.length).toBe(1);
-    parseSpy.mockRestore();
+    expect(spy.mock.calls.length).toBe(1);
+    // 只重解析被变更的会话
+    const [sessionDiff] = spy.mock.calls[0];
+    expect(sessionDiff.added).toEqual([]);
+    expect(sessionDiff.changed).toEqual([SESSION_ID]);
+    spy.mockRestore();
   });
 
-  it('pricing change re-prices without reparsing files', async () => {
+  it('pricing change re-prices without reparsing sessions', async () => {
     const ws = await setupWorkspace('2026-04-20T00:00:00.000Z');
     const before = await getStats();
     const costBefore = before.summary.totalCost;
@@ -160,46 +189,45 @@ describe('stats-service persistent cache', () => {
     });
     invalidateStatsCache();
 
-    const parseSpy = vi.spyOn(await import('../../../aggregator.js'), 'parseSessionJsonlRaw');
+    const spy = await spyBuild();
     const after = await getStats();
-    expect(parseSpy).not.toHaveBeenCalled();
-    parseSpy.mockRestore();
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
     expect(after.summary.totalCost).not.toBe(costBefore);
     expect(after.cache.state).toBe('fresh');
   });
 
-  it('returns stale and keeps old stats when session dir disappears', async () => {
+  it('returns stale and keeps old stats when database disappears', async () => {
     const ws = await setupWorkspace();
     await getStats();
     resetStatsServiceForTests();
 
-    const { rmSync } = await import('fs');
-    rmSync(ws.sessionsDir, { recursive: true, force: true });
+    unlinkSync(ws.dbPath);
 
     const data = await getStats();
     expect(data.cache.state).toBe('stale');
-    expect(data.summary.totalRequests).toBeGreaterThan(0);
+    expect(data.summary.totalRequests).toBe(2);
   });
 
-  it('full refresh reparses session file even when cache exists', async () => {
-    const ws = await setupWorkspace();
+  it('full refresh reparses sessions even when cache exists', async () => {
+    await setupWorkspace();
     await getStats();
 
-    const parseSpy = vi.spyOn(await import('../../../aggregator.js'), 'parseSessionJsonlRaw');
+    const spy = await spyBuild();
     await refreshStatsCache({ full: true });
-    expect(parseSpy.mock.calls.length).toBe(1);
-    parseSpy.mockRestore();
+    expect(spy.mock.calls.length).toBe(1);
+    spy.mockRestore();
   });
 
   it('ignores corrupted disk cache and rebuilds', async () => {
-    const ws = await setupWorkspace();
+    await setupWorkspace();
     await getStats();
     writeFileSync(getCacheFilePath(), '{not-json');
     resetStatsServiceForTests();
 
     const data = await getStats();
     expect(data.cache.state).toBe('fresh');
-    expect(data.summary.totalRequests).toBeGreaterThan(0);
+    expect(data.summary.totalRequests).toBe(2);
   });
 
   it('deduplicates concurrent refresh in same process', async () => {
@@ -207,24 +235,20 @@ describe('stats-service persistent cache', () => {
     await getStats();
     resetStatsServiceForTests();
 
-    const parseSpy = vi.spyOn(await import('../../../aggregator.js'), 'parseSessionJsonlRaw');
-    const sessionPath = join(process.env.OPENCLAW_CONFIG_DIR, 'agents/main/sessions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl');
-    writeFileSync(sessionPath, readFileSync(sessionPath) + '\n');
+    const spy = await spyBuild();
+    appendUsageEvent(lastWs, { seq: 3 });
 
     const [a, b] = await Promise.all([refreshStatsCache(), refreshStatsCache()]);
     expect(a.ok).toBe(true);
     expect(b.ok).toBe(true);
-    expect(parseSpy.mock.calls.length).toBeLessThanOrEqual(2);
-    parseSpy.mockRestore();
+    expect(spy.mock.calls.length).toBeLessThanOrEqual(2);
+    spy.mockRestore();
   });
 
   it('waitForRefresh returns fresh after background refresh completes', async () => {
     const ws = await setupWorkspace();
     await getStats();
-    writeFileSync(
-      join(ws.sessionsDir, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl'),
-      readFileSync(join(ws.sessionsDir, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl')) + '\n'
-    );
+    appendUsageEvent(ws, { seq: 3 });
     resetStatsServiceForTests();
 
     const stale = await getStats();
@@ -232,80 +256,70 @@ describe('stats-service persistent cache', () => {
 
     const fresh = await getStats({ waitForRefresh: true });
     expect(fresh.cache.state).toBe('fresh');
+    expect(fresh.summary.totalRequests).toBe(3);
   });
 
   it('full refresh is not swallowed by in-flight incremental', async () => {
     const ws = await setupWorkspace();
     await getStats();
+    appendUsageEvent(ws, { seq: 3 });
 
-    const sessionName = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl';
-    const sessionPath = join(ws.sessionsDir, sessionName);
-    writeFileSync(sessionPath, readFileSync(sessionPath) + '\n');
-
-    const agg = await import('../../../aggregator.js');
-    const original = agg.parseSessionJsonlRaw;
-    let enteredParse = false;
-    let releaseParse;
-    const parseGate = new Promise((resolve) => {
-      releaseParse = resolve;
+    const sqliteSource = await import('../../../sqlite-source.js');
+    const original = sqliteSource.buildSqliteContributions;
+    let enteredBuild = false;
+    let releaseBuild;
+    const gate = new Promise((resolve) => {
+      releaseBuild = resolve;
     });
-    const parseSpy = vi.spyOn(agg, 'parseSessionJsonlRaw').mockImplementation(async (...args) => {
-      enteredParse = true;
-      await parseGate;
+    const spy = vi.spyOn(sqliteSource, 'buildSqliteContributions').mockImplementation(async (...args) => {
+      enteredBuild = true;
+      await gate;
       return original(...args);
     });
 
     const incremental = refreshStatsCache({ full: false });
     await vi.waitFor(() => {
-      expect(enteredParse).toBe(true);
+      expect(enteredBuild).toBe(true);
     });
 
     const full = refreshStatsCache({ full: true });
-    releaseParse();
+    releaseBuild();
     await Promise.all([incremental, full]);
 
-    // 增量解析变化文件 + 随后全量再解析 → 至少 2 次
-    expect(parseSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
-    parseSpy.mockRestore();
+    expect(spy.mock.calls.length).toBeGreaterThanOrEqual(2);
+    spy.mockRestore();
   });
 
   it('waiter adopts disk cache without reparsing when lock is held', async () => {
     const ws = await setupWorkspace();
     await getStats();
+    appendUsageEvent(ws, { seq: 3 });
 
-    const sessionName = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl';
-    const sessionPath = join(ws.sessionsDir, sessionName);
-    writeFileSync(sessionPath, readFileSync(sessionPath) + '\n');
     const diskBefore = JSON.parse(readFileSync(getCacheFilePath(), 'utf-8'));
-
-    const { statSync } = await import('fs');
     const acquired = await tryAcquireLock();
     expect(acquired).toBe(true);
 
-    const parseSpy = vi.spyOn(await import('../../../aggregator.js'), 'parseSessionJsonlRaw');
+    const spy = await spyBuild();
     const refreshPromise = refreshStatsCache({ full: false });
 
     // 模拟持锁进程已处理变更并写入后释放；若等待方误构建则会 parse
     await new Promise((r) => setTimeout(r, 50));
-    const st = statSync(sessionPath);
+    const manifest = await import('../../../sqlite-source.js').then((m) => m.scanSqliteManifest());
     const bumped = {
       ...diskBefore,
       revision: (diskBefore.revision || 0) + 7,
       checkedAt: new Date().toISOString(),
       buildMode: 'incremental',
-      manifest: {
-        ...diskBefore.manifest,
-        [sessionName]: { size: st.size, mtimeMs: st.mtimeMs },
-      },
+      manifest,
     };
     await writeDiskCacheAtomic(bumped);
     await releaseLock();
 
     const result = await refreshPromise;
     expect(result.ok).toBe(true);
-    expect(parseSpy).not.toHaveBeenCalled();
+    expect(spy).not.toHaveBeenCalled();
     expect(__getMemoryState().revision).toBe(bumped.revision);
-    parseSpy.mockRestore();
+    spy.mockRestore();
   });
 
   it('waiter does not adopt stale disk snapshot when source advanced (full rebuild)', async () => {
@@ -313,12 +327,9 @@ describe('stats-service persistent cache', () => {
     const before = await getStats();
     const requestsBefore = before.summary.totalRequests;
 
-    const sessionName = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl';
-    const sessionPath = join(ws.sessionsDir, sessionName);
-    appendUsageLine(sessionPath);
+    appendUsageEvent(ws, { seq: 3 });
 
     const diskStale = JSON.parse(readFileSync(getCacheFilePath(), 'utf-8'));
-    // 持锁方只回写「旧/不完整」快照：manifest 与统计仍落后于最新源
     const acquired = await tryAcquireLock();
     expect(acquired).toBe(true);
 
@@ -336,44 +347,35 @@ describe('stats-service persistent cache', () => {
     expect(result.ok).toBe(true);
     const after = await getStats();
     expect(after.summary.totalRequests).toBe(requestsBefore + 1);
-    expect(after.summary.totalRequests).toBeGreaterThan(requestsBefore);
   });
 
   it('waiter full rebuild is not satisfied by incremental disk snapshot', async () => {
     const ws = await setupWorkspace();
     await getStats();
 
-    const sessionName = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl';
-    const sessionPath = join(ws.sessionsDir, sessionName);
-    const { statSync } = await import('fs');
-
     const diskBefore = JSON.parse(readFileSync(getCacheFilePath(), 'utf-8'));
     const acquired = await tryAcquireLock();
     expect(acquired).toBe(true);
 
-    const parseSpy = vi.spyOn(await import('../../../aggregator.js'), 'parseSessionJsonlRaw');
+    const spy = await spyBuild();
     const refreshPromise = refreshStatsCache({ full: true });
     await new Promise((r) => setTimeout(r, 50));
 
-    // 磁盘已是「对齐当前 manifest」的增量结果，但对 full 请求不等价
-    const st = statSync(sessionPath);
+    const manifest = await import('../../../sqlite-source.js').then((m) => m.scanSqliteManifest());
     await writeDiskCacheAtomic({
       ...diskBefore,
       revision: (diskBefore.revision || 0) + 3,
       buildMode: 'incremental',
       checkedAt: new Date().toISOString(),
-      manifest: {
-        ...diskBefore.manifest,
-        [sessionName]: { size: st.size, mtimeMs: st.mtimeMs },
-      },
+      manifest,
     });
     await releaseLock();
 
     await refreshPromise;
-    expect(parseSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(spy.mock.calls.length).toBeGreaterThanOrEqual(1);
     const diskAfter = await readDiskCache();
     expect(diskAfter.buildMode).toBe('full');
-    parseSpy.mockRestore();
+    spy.mockRestore();
   });
 
   it('waiter full rebuild is not satisfied by a pre-existing full snapshot', async () => {
@@ -387,19 +389,18 @@ describe('stats-service persistent cache', () => {
     const acquired = await tryAcquireLock();
     expect(acquired).toBe(true);
 
-    const parseSpy = vi.spyOn(await import('../../../aggregator.js'), 'parseSessionJsonlRaw');
+    const spy = await spyBuild();
     const refreshPromise = refreshStatsCache({ full: true });
     await new Promise((r) => setTimeout(r, 50));
 
-    // 模拟持锁进程失败或退出：释放锁，但没有发布本轮新快照。
     await releaseLock();
     await refreshPromise;
 
-    expect(parseSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(spy.mock.calls.length).toBeGreaterThanOrEqual(1);
     const diskAfter = await readDiskCache();
     expect(diskAfter.buildMode).toBe('full');
     expect(diskAfter.revision).toBeGreaterThan(diskBefore.revision);
-    parseSpy.mockRestore();
+    spy.mockRestore();
   });
 
   it('waiter full rebuild adopts a newly published full snapshot', async () => {
@@ -412,7 +413,7 @@ describe('stats-service persistent cache', () => {
     const acquired = await tryAcquireLock();
     expect(acquired).toBe(true);
 
-    const parseSpy = vi.spyOn(await import('../../../aggregator.js'), 'parseSessionJsonlRaw');
+    const spy = await spyBuild();
     const refreshPromise = refreshStatsCache({ full: true });
     await new Promise((r) => setTimeout(r, 50));
 
@@ -426,9 +427,9 @@ describe('stats-service persistent cache', () => {
     await releaseLock();
 
     await refreshPromise;
-    expect(parseSpy).not.toHaveBeenCalled();
+    expect(spy).not.toHaveBeenCalled();
     expect(__getMemoryState().revision).toBe(published.revision);
-    parseSpy.mockRestore();
+    spy.mockRestore();
   });
 
   it('cold-start incremental refresh uses disk manifest baseline (no full reparse)', async () => {
@@ -436,16 +437,15 @@ describe('stats-service persistent cache', () => {
     await getStats();
     resetStatsServiceForTests();
 
-    // memory.manifest 为空对象，不得挡住磁盘 manifest 成为基线
     expect(Object.keys(__getMemoryState().manifest)).toHaveLength(0);
 
-    const parseSpy = vi.spyOn(await import('../../../aggregator.js'), 'parseSessionJsonlRaw');
+    const spy = await spyBuild();
     await refreshStatsCache({ full: false });
-    expect(parseSpy).not.toHaveBeenCalled();
-    parseSpy.mockRestore();
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 
-  it('disk cache hit reuses stats without remmerge when pricing unchanged', async () => {
+  it('disk cache hit reuses stats without remerge when pricing unchanged', async () => {
     await setupWorkspace();
     await getStats();
     const disk = JSON.parse(readFileSync(getCacheFilePath(), 'utf-8'));
@@ -467,7 +467,6 @@ describe('stats-service persistent cache', () => {
 
     const second = await getStats({ forceFresh: true });
     expect(second.cache.state).toBe('fresh');
-    // 强制刷新路径应发布新 revision，即使源文件未变化
     expect(second.cache.revision).toBeGreaterThan(revisionBefore);
   });
 
@@ -485,7 +484,6 @@ describe('stats-service persistent cache', () => {
     const session = data.sessions[0];
     expect(session.byDateModel).toBeDefined();
 
-    // byDate 必须是 byDateModel 在模型维度上的边缘和
     for (const [date, keyMap] of Object.entries(session.byDateModel)) {
       const summed = Object.values(keyMap).reduce(
         (acc, b) => ({
@@ -499,50 +497,128 @@ describe('stats-service persistent cache', () => {
     }
   });
 
-  it('remerges stale-shaped disk stats without reparsing JSONL', async () => {
+  it('remerges stale-shaped disk stats without reparsing sessions', async () => {
     await setupWorkspace();
     await getStats();
 
-    // 模拟旧版本快照：stats 缺少 session.byDateModel，且形状版本落后
     const disk = JSON.parse(readFileSync(getCacheFilePath(), 'utf-8'));
     disk.statsShapeVersion = STATS_SHAPE_VERSION - 1;
     for (const session of disk.stats.sessions) delete session.byDateModel;
     await writeDiskCacheAtomic(disk);
 
     resetStatsServiceForTests();
-    const parseSpy = vi.spyOn(await import('../../../aggregator.js'), 'parseSessionJsonlRaw');
+    const spy = await spyBuild();
     const data = await getStats();
 
-    // 逐文件贡献未变，只需重新合并，不得重新解析 JSONL
-    expect(parseSpy).not.toHaveBeenCalled();
+    expect(spy).not.toHaveBeenCalled();
     expect(data.sessions[0].byDateModel).toBeDefined();
-    parseSpy.mockRestore();
+    spy.mockRestore();
   });
 
   it('remerges disk stats when statsShapeVersion field is absent', async () => {
     await setupWorkspace();
     await getStats();
 
-    // 本次改动之前写入的快照根本没有 statsShapeVersion 字段
     const disk = JSON.parse(readFileSync(getCacheFilePath(), 'utf-8'));
     delete disk.statsShapeVersion;
     for (const session of disk.stats.sessions) delete session.byDateModel;
     await writeDiskCacheAtomic(disk);
 
     resetStatsServiceForTests();
-    const parseSpy = vi.spyOn(await import('../../../aggregator.js'), 'parseSessionJsonlRaw');
+    const spy = await spyBuild();
     const data = await getStats();
 
-    expect(parseSpy).not.toHaveBeenCalled();
+    expect(spy).not.toHaveBeenCalled();
     expect(data.sessions[0].byDateModel).toBeDefined();
-    parseSpy.mockRestore();
+    spy.mockRestore();
+  });
+});
+
+describe('v1 → v2 frozen history migration', () => {
+  it('freezes recorded v1 contributions as legacy:* keys without double counting', async () => {
+    const ws = await setupWorkspace();
+    // 额外准备 v1 缓存：一个有记录的 JSONL 时代会话 + 一个 0 记录文件 + 一个与 SQLite 重合的会话
+    const v1 = {
+      schemaVersion: 1,
+      sourceId: 'old-source',
+      pricingFingerprint: null,
+      manifest: {},
+      files: {
+        '11111111-1111-1111-1111-111111111111.jsonl.reset.2026-08-01T00-00-00.000Z': {
+          session: { id: '11111111-1111-1111-1111-111111111111', status: 'reset', archivedAt: '2026-08-01T00:00:00.000Z' },
+          buckets: [{
+            date: '2026-07-31', provider: 'openai', model: 'gpt-4o',
+            usage: { input: 5, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 10 },
+            openclawCost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+            requests: 1,
+          }],
+          hasRecords: true,
+          firstTimestamp: '2026-07-31T10:00:00.000Z',
+          lastTimestamp: '2026-07-31T10:00:00.000Z',
+        },
+        '22222222-2222-2222-2222-222222222222.jsonl': {
+          session: { id: '22222222-2222-2222-2222-222222222222', status: 'active', archivedAt: null },
+          buckets: [],
+          hasRecords: false,
+          firstTimestamp: null,
+          lastTimestamp: null,
+        },
+        [`${SESSION_ID}.jsonl`]: {
+          // 与 SQLite 活跃会话同 id：必须被排除，防止双计
+          session: { id: SESSION_ID, status: 'active', archivedAt: null },
+          buckets: [{
+            date: '2026-04-17', provider: 'openai', model: 'gpt-4o',
+            usage: { input: 999, output: 999, cacheRead: 0, cacheWrite: 0, totalTokens: 1998 },
+            openclawCost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+            requests: 5,
+          }],
+          hasRecords: true,
+          firstTimestamp: '2026-04-17T00:00:00.000Z',
+          lastTimestamp: '2026-04-17T12:00:00.000Z',
+        },
+      },
+      stats: null,
+      revision: 260,
+      buildMode: 'incremental',
+      generatedAt: '2026-09-03T06:28:52.914Z',
+      checkedAt: '2026-09-03T06:28:52.914Z',
+    };
+    mkdirSync(pathDirname(getLegacyCacheFilePath()), { recursive: true });
+    writeFileSync(getLegacyCacheFilePath(), JSON.stringify(v1));
+
+    const data = await getStats();
+    // 2 条 SQLite 事件 + 1 条冻结历史；同 id 的 v1 贡献被排除
+    expect(data.summary.totalRequests).toBe(3);
+    expect(data.summary.totalSessions).toBe(2);
+
+    const disk = JSON.parse(readFileSync(getCacheFilePath(), 'utf-8'));
+    const legacyKeys = Object.keys(disk.files).filter((k) => k.startsWith('legacy:'));
+    expect(legacyKeys).toHaveLength(1);
+    expect(disk.files[legacyKeys[0]].identity).toEqual({ frozen: true });
+
+    // 增量刷新不触碰冻结贡献
+    appendUsageEvent(ws, { seq: 3 });
+    resetStatsServiceForTests();
+    const spy = await spyBuild();
+    await refreshStatsCache();
+    const disk2 = JSON.parse(readFileSync(getCacheFilePath(), 'utf-8'));
+    expect(Object.keys(disk2.files).filter((k) => k.startsWith('legacy:'))).toHaveLength(1);
+    expect(disk2.summary ? disk2.summary : disk2.stats.summary.totalRequests).toBeTruthy();
+    spy.mockRestore();
+  });
+
+  it('skips migration when no v1 cache exists', async () => {
+    await setupWorkspace();
+    const data = await getStats();
+    expect(data.summary.totalRequests).toBe(2);
+    const disk = JSON.parse(readFileSync(getCacheFilePath(), 'utf-8'));
+    expect(Object.keys(disk.files).filter((k) => k.startsWith('legacy:'))).toHaveLength(0);
   });
 });
 
 describe('stats-cache-store writability probe', () => {
   it('concurrent isCacheWritable probes stay true on a writable directory', async () => {
     const ws = await setupWorkspace();
-    // 确保缓存目录已创建
     await getStats();
     resetStatsServiceForTests();
 

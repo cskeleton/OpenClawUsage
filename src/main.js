@@ -46,6 +46,7 @@ function formatDate(timestamp) {
 function statusBadge(status) {
   const map = {
     active: { icon: '🟢', label: t('dashboard.statusActive'), cls: 'status-active' },
+    done: { icon: '✅', label: t('dashboard.statusDone'), cls: 'status-done' },
     reset: { icon: '🔄', label: t('dashboard.statusReset'), cls: 'status-reset' },
     deleted: { icon: '🗑️', label: t('dashboard.statusDeleted'), cls: 'status-deleted' },
   };

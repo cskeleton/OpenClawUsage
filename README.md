@@ -4,7 +4,7 @@
 
 ---
 
-这是一个为 OpenClaw 开发的独立 Token 用量统计与可视化工具。它通过直接解析本地 Session 文件（JSONL 格式），提供实时的费用监控和数据分析。
+这是一个为 OpenClaw 开发的独立 Token 用量统计与可视化工具。它通过只读解析本地 OpenClaw 会话数据库（SQLite，OpenClaw 2026.8.2+ 架构），提供实时的费用监控和数据分析。
 
 ## 🌟 核心功能
 
@@ -27,14 +27,14 @@
 - **自定义价格配置**：
   - 支持按 Provider/Model 组合配置自定义价格（单位 **$/M**，每百万 tokens）。
   - **两级开关**：可关闭「启用自定义价格」（全局），或对单条规则关闭「启用」，以便在**自定义单价重算的理论成本**与**会话中 OpenClaw 写入的账面成本**之间切换。
-  - 价格配置页提供 **OpenClaw 内置价格（参考）** 与 **缺少价格的模型（参考）**：数据来自 `OPENCLAW_CONFIG_DIR`（默认 `~/.openclaw`）下的 `agents/main/agent/models.json`，两表在同一文件内按「有/无有效单价」划分；每张表可查看是否已被自定义规则覆盖（含通配符/正则），并对未覆盖项支持一键填入「添加新价格」。**实际在 OpenClaw 里可选的模型**由 `openclaw.json` 的 **`agents.defaults.models`** 决定，与参考表列出的条目并非一一对应。
+  - 价格配置页提供 **OpenClaw 内置价格（参考）** 与 **缺少价格的模型（参考）**：数据来自 `OPENCLAW_CONFIG_DIR`（默认 `~/.openclaw`）下 `openclaw.json` 的 **`models.providers`**（OpenClaw 2026.8.2 起，旧版 `agents/main/agent/models.json` 不再生成），两表在同一来源内按「有/无有效单价」划分；每张表可查看是否已被自定义规则覆盖（含通配符/正则），并对未覆盖项支持一键填入「添加新价格」。**实际在 OpenClaw 里可选的模型**由 `openclaw.json` 的 **`agents.defaults.models`** 决定，与参考表列出的条目并非一一对应。
   - 价格配置页「添加新价格」区提供 **从 models.dev 获取参考价** 按钮：弹出可搜索、单选的 [models.dev](https://models.dev) 公开模型目录，确认后**只填入 Input/Output/Cache Read/Cache Write 四个价格格**，不会写入模型键；价格格已有内容时可选择**全部覆盖 / 只填空白 / 取消**。目录在本地缓存 24 小时（`$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/models-dev-v1.json`），过期后先展示上次快照并后台刷新，首次拉取失败则直接报错（fail-closed）；填入后请自行确认 Provider/Model 再保存。
   - 支持 Input、Output、Cache Read、Cache Write 四种价格类型。
   - Cache 价格可选；留空时不设单独缓存价，**统一按 Input 原价计算**（读写都用 Input）。
   - 独立的价格配置页面，支持添加、编辑、删除和重置价格配置。
 
 - **持久化增量统计缓存**：
-  - 页面仍会请求服务端，但 Session 与定价未变化时直接复用持久缓存，不重新解析 JSONL。
+  - 页面仍会请求服务端，但会话数据库与定价未变化时直接复用持久缓存，不重新解析数据库。
   - 检测到变化时先返回最后成功结果，后台只处理变化文件；普通刷新默认增量，下拉菜单提供全量重建。
   - Web 与 MCP 共享同一缓存策略。完整设计见[持久化增量统计缓存规格](docs/superpowers/specs/2026-08-01-persistent-incremental-stats-cache.md)。
 
@@ -50,14 +50,14 @@
 | 2️⃣ | `openclaw.json` 中的 `agents.defaults.workspace` 配置 | `$OPENCLAW_WORKSPACE` → 存到该 workspace 目录 |
 | 3️⃣ | 回退 `~/.openclaw/` | 默认 fallback |
 
-> ⚠️ 上表只决定**定价配置文件**的位置；**sessions 与 models.json** 始终读取 `$OPENCLAW_CONFIG_DIR`（默认 `~/.openclaw`），**不跟随 workspace**。
+> ⚠️ 上表只决定**定价配置文件**的位置；**会话数据库与模型目录（openclaw.json）** 始终读取 `$OPENCLAW_CONFIG_DIR`（默认 `~/.openclaw`），**不跟随 workspace**。
 
-### 模型目录（models.json，用于价格参考 API）
+### 模型目录（openclaw.json `models.providers`，用于价格参考 API）
 
 | 变量 | 含义 |
 |------|------|
 | `OPENCLAW_CONFIG_DIR` | 配置根目录；未设置时默认为 `~/.openclaw` |
-| 模型列表文件 | `$OPENCLAW_CONFIG_DIR/agents/main/agent/models.json` |
+| 模型目录来源 | `$OPENCLAW_CONFIG_DIR/openclaw.json` 的 `models.providers` |
 
 与 `OPENCLAW_DIR`（用于定价配置文件路径探测）相互独立，可分别指向不同根目录。
 
@@ -82,18 +82,17 @@ $OPENCLAW_WORKSPACE/openclaw-usage-pricing.json
 
 ## 📊 数据来源与原理
 
-本工具通过监听和解析 OpenClaw 本地持久化目录实现统计：
+本工具通过只读访问 OpenClaw 本地 SQLite 会话数据库实现统计（OpenClaw 2026.8.2+ 架构；旧版 JSONL 会话文件已废弃，历史数据在首次启动时从旧缓存一次性冻结迁移）：
 
-- **目标路径**：`$OPENCLAW_CONFIG_DIR/agents/main/sessions/`（未设置环境变量时默认为 `~/.openclaw/agents/main/sessions/`）；与 `agents/main/agent/models.json` 同一配置根。**该路径不受 `agents.defaults.workspace` 影响**——workspace 只决定定价配置文件位置（见下文）。
-- **覆盖文件**（目录**不递归**，仅扫描一层）：
-  - `*.jsonl`: 当前活跃的 Session 记录。
-  - `*.jsonl.reset.*`: 执行 `/reset` 命令后归档的旧 Session。
-  - `*.jsonl.deleted.*`: 已删除 Session 的归档。
-  - `*.checkpoint.*.jsonl`: **自动跳过**。checkpoint 中的消息与主文件/reset 副本重复，计入统计会双重记账。
-  - `sessions.json`: Session 索引及其快照统计信息（不计入用量）。
+- **目标数据库**：`$OPENCLAW_CONFIG_DIR/agents/main/agent/openclaw-agent.sqlite`（未设置环境变量时默认为 `~/.openclaw/agents/main/agent/openclaw-agent.sqlite`）；以只读模式打开，不影响 OpenClaw 网关写入。**该路径不受 `agents.defaults.workspace` 影响**——workspace 只决定定价配置文件位置（见下文）。
+- **覆盖数据表**：
+  - `transcript_events`：全部活跃会话的消息与事件日志（`event_json` 与旧 JSONL 行同构）。
+  - `session_transcript_archives`：迁移后被删除/重置会话的整包归档（zstd 压缩 blob，解压后即原 JSONL 文本），与活跃事件天然不重叠。
+  - `session_windows`：会话状态（running/done/failed/killed/timeout → 前端 `active`/`done`）。
+- **历史冻结**：JSONL 时代的旧缓存（`stats-v1.json`）在首次构建 v2 缓存时整体冻结为 `legacy:*` 贡献，与 SQLite 会话零重合（防双计），旧缓存文件原样保留。
 
 - **数据采集点**：
-  本工具逐行读取 JSONL 文件中基于 LLM API 返回的 `usage` 字段，示例如下：
+  本工具解析事件 JSON 中基于 LLM API 返回的 `usage` 字段（`type=message` 事件，过滤 OpenClaw 内部镜像消息），示例如下：
   ```json
   {
     "usage": {
@@ -107,17 +106,17 @@ $OPENCLAW_WORKSPACE/openclaw-usage-pricing.json
 
 ## 🗄️ 持久化增量缓存
 
-- **请求不等于刷新**：页面每次打开可以调用 `/api/stats`，但只有 Session 文件身份或定价发生变化时才重新聚合。
-- **跨重启复用**：缓存保存到 `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/stats-v1.json`，供 Web 与 MCP 进程共享。
-- **增量更新**：未变化文件复用逐文件统计贡献；新增、修改、删除文件才触发对应更新。定价变化只重新计算费用。
+- **请求不等于刷新**：页面每次打开可以调用 `/api/stats`，但只有会话身份或定价发生变化时才重新聚合。
+- **跨重启复用**：缓存保存到 `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/stats-v2.json`，供 Web 与 MCP 进程共享。
+- **增量更新**：每个会话以 `(事件数, maxSeq, 最后事件时间, transcript_updated_at)` 四元组为身份；未变化的会话复用逐会话统计贡献，新增、追加事件的会话才重新解析。定价变化只重新计算费用。数据库 schema 变化（OpenClaw 升级）自动触发全量重建。
 - **先旧后新**：发现变化时先返回最后成功结果，后台完成增量刷新后页面自动更新（`GET /api/stats?fresh=1`）。
-- **两种手动刷新**：默认刷新为增量模式（`GET /api/refresh`）；刷新按钮下拉菜单中的「全量刷新」绕过所有逐文件缓存（`GET /api/refresh?full=1`）。
-- **失败保护**：刷新失败或数据源暂时不可用时保留最后成功结果并标记为 `stale`，不静默覆盖为空数据。
+- **两种手动刷新**：默认刷新为增量模式（`GET /api/refresh`）；刷新按钮下拉菜单中的「全量刷新」绕过所有逐会话缓存（`GET /api/refresh?full=1`）。
+- **失败保护**：刷新失败或数据库暂时不可用时保留最后成功结果并标记为 `stale`，不静默覆盖为空数据。
 - **不使用浏览器持久缓存**：页面刷新后仍从服务端读取，不使用 IndexedDB 或 LocalStorage 保存统计结果。
 - **API `cache` 字段**：`GET /api/stats` 响应顶层含 `cache.state`（`fresh | refreshing | stale`）、`revision`、`sourceId`、`checkedAt`。
 - **MCP**：`refresh_stats_cache` 默认增量，可选 `full: true` 全量重建；价格相关工具不触发统计聚合。
 
-完整行为、缓存结构与验收标准见[设计规格](docs/superpowers/specs/2026-08-01-persistent-incremental-stats-cache.md)。
+完整行为、缓存结构与验收标准见[设计规格](docs/superpowers/specs/2026-08-01-persistent-incremental-stats-cache.md)（SQLite 数据源架构见 [2026-09-03 SQLite 迁移规格](docs/superpowers/specs/2026-09-03-sqlite-session-source.md)）。
 
 ## 🔄 多来源 SSH 同步与统一统计
 
@@ -249,7 +248,7 @@ Settings 中显示的安全提示为：
 
 默认同步间隔为 60 分钟且一次运行不重试；失败后等待下一次调度或人工执行。macOS 使用 `./scripts/install-sync-scheduler.sh` 安装 LaunchAgent（`~/Library/LaunchAgents/com.openclaw.usage.sync.plist`）；Linux 使用同一安装器生成 user systemd service/timer（`~/.config/systemd/user/`），timer 使用 `Persistent=false`，不会因离线或休眠补发重试风暴。安装器会把本机 `node` 与 CLI 的绝对路径写入 LaunchAgent/systemd scheduler；定时执行 `openclaw-usage sync --scheduled`，每次运行都会读取 `settings.enabled`；关闭后跳过，手动 `openclaw-usage sync [targetId]` 仍可用。只有 remote non-interactive SSH receiver 需要在 PATH 中找到 `openclaw-usage`；远端如果报 `openclaw-usage: command not found`，请修正远端 PATH/安装器，而不是把命令或路径交给 Web 配置。
 
-状态文件位于 `$OPENCLAW_CONFIG_DIR/run/openclaw-usage/sync-status.json`，包含 `lastAttempt`、`lastSuccess`、`failureSince`、`targetId` 和安全错误分类。导入快照位于 `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/imports/<sourceId>.json`；统计缓存仍是 `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/stats-v1.json`。导入来源的 `lastReceivedAt` 由接收文件的最后成功写入时间决定，过期时间为 `lastReceivedAt + intervalMinutes`（使用接收端设置的 interval）；配置了但尚未收到的来源仍会列出为 missing，stale/missing 来源仍计入 All 汇总，Dashboard 会显示警告。
+状态文件位于 `$OPENCLAW_CONFIG_DIR/run/openclaw-usage/sync-status.json`，包含 `lastAttempt`、`lastSuccess`、`failureSince`、`targetId` 和安全错误分类。导入快照位于 `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/imports/<sourceId>.json`；统计缓存仍是 `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/stats-v2.json`。导入来源的 `lastReceivedAt` 由接收文件的最后成功写入时间决定，过期时间为 `lastReceivedAt + intervalMinutes`（使用接收端设置的 interval）；配置了但尚未收到的来源仍会列出为 missing，stale/missing 来源仍计入 All 汇总，Dashboard 会显示警告。
 
 如需在 `claw` 上部署 Web 服务，可显式运行：
 
@@ -311,7 +310,7 @@ openclaw-usage help
 | 运行状态 | `$OPENCLAW_CONFIG_DIR/run/openclaw-usage/serve.json` |
 | 生命周期锁 | `$OPENCLAW_CONFIG_DIR/run/openclaw-usage/lifecycle.lock` |
 | 后台日志 | `$OPENCLAW_CONFIG_DIR/logs/openclaw-usage/serve.log`（超过 5 MiB 时轮转为 `serve.log.1`） |
-| 统计缓存 | `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/stats-v1.json`（`start`/`stop` 不会删除） |
+| 统计缓存 | `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/stats-v2.json`（`start`/`stop` 不会删除） |
 
 设计说明见 [本机启动器规格](docs/superpowers/specs/2026-08-01-local-launcher-like-oc-switch.md)。
 
@@ -409,7 +408,7 @@ npm run mcp
        }
      }'
 
-   # 列出 models.json 中有单价 / 缺少价格的模型（与当前自定义价对照，含 findMatchingPricing）
+   # 列出 openclaw.json models.providers 中有单价 / 缺少价格的模型（与当前自定义价对照，含 findMatchingPricing）
    curl http://localhost:3001/api/openclaw/models
 
    # 重置为默认配置（使用 OpenClaw 内置价格）
@@ -426,7 +425,7 @@ npm run mcp
 - **价格单位**：$/M（每百万 tokens 的美元价，例如 Input $30/M）
 - **计算公式**：成本 = (用量 / 1,000,000) × 价格
 - **Cache 价格**：留空表示不设单独缓存价；**统一按 Input 原价计算**（读取量与写入量都用 Input 单价）
-- **全局开关 `enabled`**（可选，默认视为开启）：为 `false` 时，**全部**模型使用会话 JSONL 中的 OpenClaw 账面成本（`usage.cost`），不进行自定义重算。
+- **全局开关 `enabled`**（可选，默认视为开启）：为 `false` 时，**全部**模型使用会话数据中的 OpenClaw 账面成本（`usage.cost`），不进行自定义重算。
 - **单条规则 `pricing[k].enabled`**（可选，默认视为开启）：为 `false` 时，**仅该** `provider/model` 使用 OpenClaw 账面成本；其余仍按自定义规则计算（在全局开启的前提下）。
 - **可选计价**：仅当全局开启、且某模型存在自定义规则且该规则启用时，对该模型使用自定义单价；否则使用 OpenClaw 账面成本。
 
@@ -446,13 +445,14 @@ npm run mcp
 - `server.js`: Web API 服务端入口（Express）。提供 `/api/stats`、`/api/pricing`、`/api/openclaw/models` 等端点。
 - `mcp-server.js`: MCP 服务端入口（@modelcontextprotocol/sdk）；与 Web 共享 `stats-service.js` 及磁盘缓存。
 - `stats-service.js`: 统计缓存与价格配置管理的共享服务层；持久化增量缓存、跨进程锁与 `cache` 状态机。
-- `stats-cache-store.js`: 磁盘缓存读写、跨进程锁与定价指纹。
-- `stats-contribution.js`: 逐文件贡献解析与合并聚合。
-- `aggregator.js`: 共享数据处理引擎；解析 `$OPENCLAW_CONFIG_DIR/agents/main/sessions/` 下的 JSONL（跳过 checkpoint 变体），输出 `byDate`、`byDateProvider`、`byDateModel` 等交叉聚合。
+- `stats-cache-store.js`: 磁盘缓存读写（`stats-v2.json`）、跨进程锁与定价指纹；含 v1 历史缓存读取。
+- `sqlite-source.js`: SQLite 会话数据源；只读访问 `openclaw-agent.sqlite`（`transcript_events` / `session_transcript_archives` / `session_windows`），构建增量 manifest 与逐会话贡献。
+- `stats-contribution.js`: 逐会话贡献构建与合并聚合。
 - `pricing.js`: 价格配置加载与保存，支持动态路径检测与成本计算；`findMatchingPricing` 负责 exact/wildcard/regex 优先级匹配。
-- `openclaw-config.js`: 读取 `agents/main/agent/models.json`（`OPENCLAW_CONFIG_DIR` 或默认 `~/.openclaw`），划分有/无有效单价模型（供参考 API 使用）。
+- `openclaw-config.js`: 读取 `openclaw.json` 的 `models.providers`（`OPENCLAW_CONFIG_DIR` 或默认 `~/.openclaw`），划分有/无有效单价模型（供参考 API 使用）。
 - `pricing.json.example`: 价格配置模板（git 跟踪）。
 - `index.html` & `src/`: 前端可视化界面代码；`src/util.js` 内是共享的 HTML 转义与 toast 工具。
+- 依赖 Node.js ≥ 24（`node:sqlite` / zstd 解压）。
 
 ## 📜 开源协议
 
@@ -473,4 +473,4 @@ npm run mcp
 ```
 
 ## 📝 备注
-本工具通过扫描 `$OPENCLAW_CONFIG_DIR/agents/main/sessions/` 目录下的文件实现统计，不侵入 OpenClaw 核心代码，安全可靠。
+本工具通过只读访问 `$OPENCLAW_CONFIG_DIR/agents/main/agent/openclaw-agent.sqlite` 实现统计，不侵入 OpenClaw 核心代码，安全可靠。

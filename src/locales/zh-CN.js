@@ -1,7 +1,7 @@
 export const zhCNMessages = {
   common: {
     appName: 'OpenClaw Token Stats',
-    loadingSessions: '正在扫描 Session 文件...',
+    loadingSessions: '正在读取会话数据库...',
     refreshData: '刷新数据',
     refreshMenu: '刷新选项',
     fullRebuild: '全量刷新 / Full rebuild',
@@ -110,6 +110,7 @@ export const zhCNMessages = {
     summaryAvgTokens: '均 {count} tokens/请求',
     summaryAvgCost: '均 {cost}/请求',
     statusActive: 'Active',
+    statusDone: 'Done',
     statusReset: 'Reset',
     statusDeleted: 'Deleted',
   },
@@ -121,6 +122,7 @@ export const zhCNMessages = {
     resetSuccess: '价格配置已重置',
     resetFailed: '重置失败: {message}',
     loadFailed: '加载价格配置失败: {message}',
+    openclawRefEmpty: '未在 openclaw.json 的 models.providers 中找到带有效单价的模型，或文件不可读（请检查 OPENCLAW_CONFIG_DIR 下的 openclaw.json）',
     syncFailed: '同步失败: {message}',
     copyDone: '已复制',
     copyFailed: '复制失败，请手动选择说明文字',

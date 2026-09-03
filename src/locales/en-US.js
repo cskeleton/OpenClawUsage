@@ -1,7 +1,7 @@
 export const enUSMessages = {
   common: {
     appName: 'OpenClaw Token Stats',
-    loadingSessions: 'Scanning session files...',
+    loadingSessions: 'Reading session database...',
     refreshData: 'Refresh data',
     refreshMenu: 'Refresh options',
     fullRebuild: 'Full rebuild',
@@ -110,6 +110,7 @@ export const enUSMessages = {
     summaryAvgTokens: 'Avg {count} tokens/request',
     summaryAvgCost: 'Avg {cost}/request',
     statusActive: 'Active',
+    statusDone: 'Done',
     statusReset: 'Reset',
     statusDeleted: 'Deleted',
   },
@@ -121,6 +122,7 @@ export const enUSMessages = {
     resetSuccess: 'Pricing configuration has been reset',
     resetFailed: 'Reset failed: {message}',
     loadFailed: 'Failed to load pricing config: {message}',
+    openclawRefEmpty: 'No models with valid pricing found in openclaw.json models.providers, or the file is unreadable (check openclaw.json under OPENCLAW_CONFIG_DIR)',
     syncFailed: 'Sync failed: {message}',
     copyDone: 'Copied',
     copyFailed: 'Copy failed, please copy manually',

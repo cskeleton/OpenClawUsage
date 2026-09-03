@@ -1,11 +1,11 @@
 # OpenClaw Token Usage Tool
 
-A standalone token usage statistics and visualization tool for OpenClaw. It parses local session files (JSONL) to provide real-time cost monitoring and data analysis.
+A standalone token usage statistics and visualization tool for OpenClaw. It reads the local OpenClaw session database (SQLite, OpenClaw 2026.8.2+) in read-only mode to provide real-time cost monitoring and data analysis.
 
 ## 🌟 Key Features
 
 - **Visual Dashboard (Web UI)**: Dark-themed interface built with Vite + Chart.js.
-  - **Comprehensive Stats**: Covers all sessions include active (`.jsonl`), reset (`.jsonl.reset.*`), and archived deleted sessions.
+  - **Comprehensive Stats**: Covers all sessions including active, completed (`done`), reset, and deleted (archived) sessions from the SQLite transcript store.
   - **Time Filtering**: Built-in presets (Today, Last 7 Days, This Month, etc.) and custom date ranges.
   - **Provider / Model Filtering**: Filter by a Provider or a specific `provider/model` together with the selected time range. After filtering, **summary cards, all charts, and Session details are recalculated consistently**, while a chip at the top shows that dimension's cost / Tokens / request count for the selected period.
   - **Provider / Model Usage Details**: Aggregate by Provider or Model across Input / Output / Cache Read / Cache Write / Total Tokens, **Cost ($)**, cost share, and request count. Columns are sortable, and clicking any row drills down by applying it as a filter.
@@ -23,7 +23,7 @@ A standalone token usage statistics and visualization tool for OpenClaw. It pars
 - **Custom Pricing Configuration**:
   - Configure custom prices per Provider/Model combination (unit **$/M**, per million tokens).
   - **Two-level toggles**: Turn off **Enable custom pricing** globally, or disable a single rule, to switch between **recalculated costs from your custom $/M rates** and **per-message costs embedded in sessions** (`usage.cost`, as produced by OpenClaw).
-  - The pricing page includes **OpenClaw built-in prices (reference)** and **Models missing prices (reference)**: both are derived from `agents/main/agent/models.json` under `OPENCLAW_CONFIG_DIR` (default `~/.openclaw`), split by whether input/output rates are present. Each table shows whether a row is already covered by custom rules (including wildcard/regex matches) and lets you copy uncovered keys into “Add price”. **Models actually selectable in OpenClaw** are governed by **`agents.defaults.models`** in `openclaw.json`, which is not the same as the rows listed in these reference tables.
+  - The pricing page includes **OpenClaw built-in prices (reference)** and **Models missing prices (reference)**: both are derived from `models.providers` in `openclaw.json` under `OPENCLAW_CONFIG_DIR` (default `~/.openclaw`; OpenClaw 2026.8.2+ — the legacy `agents/main/agent/models.json` is no longer generated), split by whether input/output rates are present. Each table shows whether a row is already covered by custom rules (including wildcard/regex matches) and lets you copy uncovered keys into “Add price”. **Models actually selectable in OpenClaw** are governed by **`agents.defaults.models`** in `openclaw.json`, which is not the same as the rows listed in these reference tables.
   - The “Add price” area on the pricing page provides a **Fetch reference prices from models.dev** button: it opens a searchable, single-select dialog backed by the public [models.dev](https://models.dev) catalog, and on confirm it **only fills the Input/Output/Cache Read/Cache Write price fields** — it never writes the model key. If any price field already has a value, you can choose **Overwrite all / Fill blanks only / Cancel**. The catalog is cached locally for 24 hours (`$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/models-dev-v1.json`); when expired, the last snapshot is shown first while a background refresh runs, and a failed first fetch fails closed with an error. Confirm Provider/Model yourself before saving.
   - Supports 4 price types: Input, Output, Cache Read, Cache Write.
   - Cache prices are optional; when left empty, costs are computed **at the Input list price** (both cache read and cache write traffic use Input $/M; no separate cache rate).
@@ -31,24 +31,23 @@ A standalone token usage statistics and visualization tool for OpenClaw. It pars
   - **Dynamic config path**: The pricing file (`openclaw-usage-pricing.json`) auto-detects the OpenClaw workspace directory, so it travels with your config across machines.
 
 - **Persistent Incremental Stats Cache**:
-  - The page will still request the server, but unchanged sessions and pricing will reuse the persistent cache without reparsing JSONL files.
+  - The page will still request the server, but unchanged sessions and pricing will reuse the persistent cache without reparsing the database.
   - When changes are detected, the last successful result is returned first and only changed files are processed in the background. Normal refresh is incremental; a dropdown action performs a full rebuild.
   - Web and MCP share the same cache strategy. See the [persistent incremental stats cache specification](docs/superpowers/specs/2026-08-01-persistent-incremental-stats-cache.md) for the complete design.
 
 ## 📊 Data Source & Logic
 
-The tool monitors and parses the local OpenClaw persistence directory:
+The tool reads OpenClaw's local SQLite session database in read-only mode (OpenClaw 2026.8.2+ architecture; the legacy JSONL session files are obsolete — their history is frozen in one shot from the old cache on first launch):
 
-- **Target Path**: `$OPENCLAW_CONFIG_DIR/agents/main/sessions/` (defaults to `~/.openclaw/agents/main/sessions/` when the env var is unset); the same config root as `agents/main/agent/models.json`. **This path is NOT affected by `agents.defaults.workspace`** — workspace only controls where the pricing config file lives (see below).
-- **Supported Files** (directory scan is **not recursive** — only top-level files):
-  - `*.jsonl`: Currently active session records.
-  - `*.jsonl.reset.*`: Archived sessions after a `/reset` command.
-  - `*.jsonl.deleted.*`: Archived deleted sessions.
-  - `*.checkpoint.*.jsonl`: **Skipped**. Checkpoint content is already captured in the main/reset file; counting both would double the totals.
-  - `sessions.json`: Session index and snapshot statistics (not counted toward usage).
+- **Target Database**: `$OPENCLAW_CONFIG_DIR/agents/main/agent/openclaw-agent.sqlite` (defaults to `~/.openclaw/agents/main/agent/openclaw-agent.sqlite` when the env var is unset), opened read-only so the OpenClaw gateway keeps writing unaffected. **This path is NOT affected by `agents.defaults.workspace`** — workspace only controls where the pricing config file lives (see below).
+- **Covered Tables**:
+  - `transcript_events`: the full message/event log of active sessions (`event_json` mirrors the old JSONL rows).
+  - `session_transcript_archives`: whole-session archives for post-migration deleted/reset sessions (zstd blobs that decompress to the original JSONL text); they never overlap with active events.
+  - `session_windows`: session status (running/done/failed/killed/timeout → UI `active`/`done`).
+- **Frozen History**: the legacy JSONL-era cache (`stats-v1.json`) is frozen into `legacy:*` contributions on the first v2 build, with zero overlap against SQLite sessions (no double counting); the old cache file is left untouched.
 
 - **Data Capture**:
-  The tool reads each JSONL file line-by-line, extracting the `usage` field returned by LLM APIs:
+  The tool parses the `usage` field returned by LLM APIs from `type=message` events (OpenClaw internal mirror messages are filtered out):
   ```json
   {
     "usage": {
@@ -62,9 +61,9 @@ The tool monitors and parses the local OpenClaw persistence directory:
 
 ## 🗄️ Persistent Incremental Cache
 
-- **A request is not a refresh**: The page may call `/api/stats` whenever it opens, but aggregation only runs when session file identities or pricing have changed.
-- **Reuse across restarts**: The cache lives at `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/stats-v1.json` and is shared by the Web and MCP processes.
-- **Incremental updates**: Unchanged files reuse their cached contributions. Only added, modified, or removed files are processed; pricing changes only recalculate costs.
+- **A request is not a refresh**: The page may call `/api/stats` whenever it opens, but aggregation only runs when session identities or pricing have changed.
+- **Reuse across restarts**: The cache lives at `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/stats-v2.json` and is shared by the Web and MCP processes.
+- **Incremental updates**: Each session is identified by an `(event count, maxSeq, last event time, transcript_updated_at)` quadruple. Unchanged sessions reuse their cached contributions; only added or extended sessions are reparsed, and pricing changes only recalculate costs. Database schema changes (OpenClaw upgrades) trigger a full rebuild automatically.
 - **Stale while revalidate**: When changes are found, the last successful result is returned first and the page updates automatically after the background refresh completes (`GET /api/stats?fresh=1`).
 - **Two manual refresh modes**: Normal refresh is incremental (`GET /api/refresh`). A dropdown “Full rebuild” action bypasses every per-file cache entry (`GET /api/refresh?full=1`).
 - **Last-known-good fallback**: Refresh failures or temporary source errors retain the last successful result and mark it `stale` instead of silently replacing it with empty data.
@@ -72,7 +71,7 @@ The tool monitors and parses the local OpenClaw persistence directory:
 - **API `cache` field**: `GET /api/stats` includes top-level `cache.state` (`fresh | refreshing | stale`), `revision`, `sourceId`, and `checkedAt`.
 - **MCP**: `refresh_stats_cache` is incremental by default; optional `full: true` performs a full rebuild. Pricing tools do not trigger stats aggregation.
 
-See the [design specification](docs/superpowers/specs/2026-08-01-persistent-incremental-stats-cache.md) for behavior, cache structure, and acceptance criteria.
+See the [design specification](docs/superpowers/specs/2026-08-01-persistent-incremental-stats-cache.md) for behavior, cache structure, and acceptance criteria (SQLite source architecture: [2026-09-03 SQLite migration spec](docs/superpowers/specs/2026-09-03-sqlite-session-source.md)).
 
 ## 🔄 Multi-source SSH sync and unified pricing
 
@@ -204,7 +203,7 @@ When omitted, `sync` uses `settings.targetId`; `receive-sync` reads exactly one 
 
 The default interval is 60 minutes and one run does not retry. After a failure, the next scheduler tick or a manual run is required. On macOS, `./scripts/install-sync-scheduler.sh` installs a LaunchAgent at `~/Library/LaunchAgents/com.openclaw.usage.sync.plist`; on Linux, the same installer creates user systemd service/timer units under `~/.config/systemd/user/`. The timer uses `Persistent=false`, so offline or sleep periods do not create a retry storm. The installer embeds absolute local `node` and CLI paths in the LaunchAgent/systemd scheduler. Scheduled runs call `openclaw-usage sync --scheduled` and reread `settings.enabled` each time; disabled scheduled runs skip, while manual `openclaw-usage sync [targetId]` remains available. Only the remote non-interactive SSH receiver must resolve `openclaw-usage` in its PATH. If the remote side reports `openclaw-usage: command not found`, fix the remote PATH/launcher installation instead of exposing a command or path in Web settings.
 
-Status is stored at `$OPENCLAW_CONFIG_DIR/run/openclaw-usage/sync-status.json` and contains `lastAttempt`, `lastSuccess`, `failureSince`, `targetId`, and a safe error classification. Imported snapshots live at `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/imports/<sourceId>.json`; the local stats cache remains `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/stats-v1.json`. For an imported source, `lastReceivedAt` is the last successful replacement time and expiry is `lastReceivedAt + intervalMinutes`, using the receiver's interval setting. Configured-but-not-yet-received sources remain listed as missing; stale and missing sources remain in the All aggregate and are visibly flagged by the Dashboard.
+Status is stored at `$OPENCLAW_CONFIG_DIR/run/openclaw-usage/sync-status.json` and contains `lastAttempt`, `lastSuccess`, `failureSince`, `targetId`, and a safe error classification. Imported snapshots live at `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/imports/<sourceId>.json`; the local stats cache remains `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/stats-v2.json`. For an imported source, `lastReceivedAt` is the last successful replacement time and expiry is `lastReceivedAt + intervalMinutes`, using the receiver's interval setting. Configured-but-not-yet-received sources remain listed as missing; stale and missing sources remain in the All aggregate and are visibly flagged by the Dashboard.
 
 To deploy the Web service on `claw`, an explicit example is:
 
@@ -266,7 +265,7 @@ openclaw-usage help
 | Run state | `$OPENCLAW_CONFIG_DIR/run/openclaw-usage/serve.json` |
 | Lifecycle lock | `$OPENCLAW_CONFIG_DIR/run/openclaw-usage/lifecycle.lock` |
 | Background log | `$OPENCLAW_CONFIG_DIR/logs/openclaw-usage/serve.log` (rotated to `serve.log.1` above 5 MiB) |
-| Stats cache | `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/stats-v1.json` (not deleted by `start`/`stop`) |
+| Stats cache | `$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/stats-v2.json` (not deleted by `start`/`stop`) |
 
 See the [local launcher spec](docs/superpowers/specs/2026-08-01-local-launcher-like-oc-switch.md).
 
@@ -313,7 +312,7 @@ Add the following to your OpenClaw or Claude Desktop MCP config:
 
 - `get_pricing_config`: Read the current pricing config (read-only).
 - `update_pricing_config`: Update pricing config (write operation).
-- `refresh_stats_cache`: Refreshes the aggregate cache without altering business data. It performs an **incremental refresh by default** (only added/changed session files are reparsed) and accepts `full: true` for a full rebuild.
+- `refresh_stats_cache`: Refreshes the aggregate cache without altering business data. It performs an **incremental refresh by default** (only added/changed sessions are reparsed) and accepts `full: true` for a full rebuild.
 
 Example `config` payload for `update_pricing_config` (full config object):
 
@@ -347,14 +346,14 @@ The pricing config file (`openclaw-usage-pricing.json`) uses **dynamic path dete
 | 2️⃣ | `agents.defaults.workspace` in `openclaw.json` | `$OPENCLAW_WORKSPACE` → stored under that workspace |
 | 3️⃣ | Fallback `~/.openclaw/` | Default fallback |
 
-> ⚠️ The table above applies **only to the pricing config file**. **Sessions and models.json** are always read from `$OPENCLAW_CONFIG_DIR` (default `~/.openclaw`) and do **not** follow the workspace.
+> ⚠️ The table above applies **only to the pricing config file**. **The session database and model catalog (openclaw.json)** are always read from `$OPENCLAW_CONFIG_DIR` (default `~/.openclaw`) and do **not** follow the workspace.
 
-#### Model catalog (`models.json`, pricing reference API)
+#### Model catalog (`openclaw.json` `models.providers`, pricing reference API)
 
 | Variable | Meaning |
 |----------|---------|
 | `OPENCLAW_CONFIG_DIR` | Config root; defaults to `~/.openclaw` if unset |
-| Model list file | `$OPENCLAW_CONFIG_DIR/agents/main/agent/models.json` |
+| Model catalog source | `models.providers` in `$OPENCLAW_CONFIG_DIR/openclaw.json` |
 
 Independent of `OPENCLAW_DIR` (used for pricing file path detection).
 
@@ -406,7 +405,7 @@ Instead of under `~/.openclaw/`. This keeps the pricing config bound to the Open
        }
      }'
 
-   # List models with / without prices from models.json (joined via findMatchingPricing)
+   # List models with / without prices from openclaw.json models.providers (joined via findMatchingPricing)
    curl http://localhost:3001/api/openclaw/models
 
    # Reset to default configuration (use OpenClaw built-in pricing)

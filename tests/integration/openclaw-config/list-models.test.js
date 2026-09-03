@@ -1,6 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { copyFileSync } from 'fs';
-import { join } from 'path';
+import { readFileSync, writeFileSync } from 'fs';
 import { createTmpWorkspace } from '../../helpers/tmp-workspace.js';
 import { fixturePath } from '../../helpers/fixture-loader.js';
 import {
@@ -14,7 +13,7 @@ afterEach(async () => {
 });
 
 describe('openclaw-config list*Models', () => {
-  it('returns [] when models.json is missing', async () => {
+  it('returns [] when openclaw.json is missing', async () => {
     const ws = await createTmpWorkspace();
     disposables.push(ws.cleanup);
 
@@ -22,22 +21,54 @@ describe('openclaw-config list*Models', () => {
     expect(await listUnpricedModels()).toEqual([]);
   });
 
-  it('splits priced vs unpriced from synth fixture', async () => {
+  it('splits priced vs unpriced from models.providers', async () => {
     const ws = await createTmpWorkspace();
     disposables.push(ws.cleanup);
-    copyFileSync(fixturePath('models', 'models.synth.json'), join(ws.agentDir, 'models.json'));
+    ws.writeModelsJson({
+      models: {
+        providers: {
+          openai: {
+            models: [
+              { id: 'gpt-4o', name: 'GPT-4o', cost: { input: 2.5, output: 10 } },
+            ],
+          },
+          another: {
+            models: [
+              { id: 'gpt-mini-unpriced', name: 'Mini' },
+            ],
+          },
+        },
+      },
+    });
 
     const priced = await listOpenClawPricedModels();
     const unpriced = await listUnpricedModels();
 
     expect(priced.map((r) => `${r.provider}/${r.model}`)).toEqual(['openai/gpt-4o']);
-    expect(unpriced.map((r) => `${r.provider}/${r.model}`)).toEqual(['openai/gpt-mini-unpriced']);
+    expect(unpriced.map((r) => `${r.provider}/${r.model}`)).toEqual(['another/gpt-mini-unpriced']);
   });
 
-  it('produces non-empty lists from the redacted real models.json', async () => {
+  it('accepts the legacy top-level providers shape as a fallback', async () => {
     const ws = await createTmpWorkspace();
     disposables.push(ws.cleanup);
-    copyFileSync(fixturePath('models', 'models.real.json'), join(ws.agentDir, 'models.json'));
+    ws.writeModelsJson({
+      providers: {
+        openai: {
+          models: [
+            { id: 'gpt-4o', name: 'GPT-4o', cost: { input: 2.5, output: 10 } },
+          ],
+        },
+      },
+    });
+
+    const priced = await listOpenClawPricedModels();
+    expect(priced.map((r) => `${r.provider}/${r.model}`)).toEqual(['openai/gpt-4o']);
+  });
+
+  it('produces non-empty lists from the redacted real openclaw.json extract', async () => {
+    const ws = await createTmpWorkspace();
+    disposables.push(ws.cleanup);
+    ws.writeModelsJson(JSON.parse(readFileSync(fixturePath('models', 'models.real.json'), 'utf-8')));
 
     const priced = await listOpenClawPricedModels();
     const unpriced = await listUnpricedModels();
@@ -52,11 +83,10 @@ describe('openclaw-config list*Models', () => {
     }
   });
 
-  it('treats unparseable models.json as empty', async () => {
+  it('treats unparseable openclaw.json as empty', async () => {
     const ws = await createTmpWorkspace();
     disposables.push(ws.cleanup);
-    const { writeFileSync } = await import('fs');
-    writeFileSync(join(ws.agentDir, 'models.json'), '{ this is not valid json', 'utf-8');
+    writeFileSync(`${ws.configDir}/openclaw.json`, '{ this is not valid json', 'utf-8');
 
     expect(await listOpenClawPricedModels()).toEqual([]);
     expect(await listUnpricedModels()).toEqual([]);

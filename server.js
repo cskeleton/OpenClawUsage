@@ -3,7 +3,7 @@ import { isIP } from 'net';
 import { existsSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
-import { getSessionDir } from './aggregator.js';
+import { getSqlitePath } from './sqlite-source.js';
 import {
   findMatchingPricing,
 } from './pricing.js';
@@ -125,7 +125,7 @@ export function writeRequestGuard(req, res, next) {
 }
 
 /**
- * 为 models.json 的一条模型记录附加 custom 对比字段
+ * 为 openclaw.json 的一条模型记录附加 custom 对比字段
  */
 function attachCustomRule(row, customMap) {
   const key = `${row.provider}/${row.model}`;
@@ -348,7 +348,7 @@ export function createApp({ staticDir } = {}) {
     }
   });
 
-  // GET /api/openclaw/models - models.json 中有/无单价模型 + 与自定义价对照
+  // GET /api/openclaw/models - openclaw.json 中有/无单价模型 + 与自定义价对照
   app.get('/api/openclaw/models', async (req, res) => {
     try {
       const [priced, pricingConfig, unpriced] = await Promise.all([
@@ -428,7 +428,7 @@ export function startServer() {
   const app = createApp();
   const server = app.listen(port, host, () => {
     console.log(`OpenClaw Usage running at http://${host}:${port}`);
-    console.log(`Scanning sessions from: ${getSessionDir()}`);
+    console.log(`Reading sessions from SQLite: ${getSqlitePath()}`);
   });
 
   server.on('error', (err) => {

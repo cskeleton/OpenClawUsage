@@ -104,7 +104,7 @@ function renderOpenClawReference(models, { resetPage = true } = {}) {
     tbody.innerHTML = `
       <tr>
         <td colspan="8" style="text-align: center; color: var(--text-secondary); padding: 24px;">
-          未在 models.json 中找到带有效单价的模型，或文件不可读（请检查 OPENCLAW_CONFIG_DIR 与 agents/main/agent/models.json）
+          ${t('pricing.openclawRefEmpty')}
         </td>
       </tr>
     `;
