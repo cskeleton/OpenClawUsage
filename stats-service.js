@@ -170,7 +170,7 @@ function manifestKeyMap(manifest) {
  * 磁盘快照里的 `stats` 是否可直接复用。
  * 除定价指纹外还要求合并结果形状版本一致：
  * 旧形状（缺少 session.byDateModel 等字段）必须从 `files` 重新合并，
- * 但这是纯内存计算，不需要重新解析 JSONL。
+ * 但这是纯内存计算，不需要重新解析会话数据。
  * @param {object|null} diskCache
  * @param {object} fp 当前定价指纹
  * @returns {boolean}
@@ -183,7 +183,7 @@ function canReuseDiskStats(diskCache, fp) {
 }
 
 /**
- * 从磁盘快照采纳到内存（不解析 JSONL）。
+ * 从磁盘快照采纳到内存（不重新解析会话数据）。
  * 定价指纹与结果形状均一致时直接复用磁盘上的统计结果，避免无意义的全量重新合并。
  */
 function adoptDiskCache(diskCache, pricingConfig, fp) {
@@ -807,7 +807,7 @@ function statsForContributions(files, pricingConfig) {
  * Build the public multi-source view from the local pricing-independent cache
  * and durable imported snapshots. Imports are loaded on each response so a
  * successful receive, replacement, or removal is visible on the next request
- * without polluting the local stats-v1 cache with foreign identities.
+ * without polluting the local stats-v2 cache with foreign identities.
  */
 export async function getStats(options = {}) {
   const localResponse = await getLocalStats(options);

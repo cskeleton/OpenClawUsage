@@ -112,10 +112,23 @@ describe('sqlite-source manifest & contributions', () => {
     expect(Object.keys(contributions).sort()).toEqual(['sqlite:sess-done', 'sqlite:sess-run']);
     expect(contributions['sqlite:sess-run'].session.status).toBe('active');
     expect(contributions['sqlite:sess-done'].session.status).toBe('done');
-    // missing window → active
     expect(contributions['sqlite:sess-run'].buckets).toHaveLength(1);
     expect(contributions['sqlite:sess-run'].buckets[0].requests).toBe(2);
     expect(contributions['sqlite:sess-run'].hasRecords).toBe(true);
+  });
+
+  it('falls back to active when the session window row is missing', async () => {
+    ws.execSql(`
+      INSERT INTO transcript_events VALUES
+        ('sess-nowin', 1, '${JSON.stringify(messageEvent({ provider: 'p1', model: 'm1' }))}', 1783000000000);
+    `);
+
+    const { contributions } = await buildSqliteContributions(
+      { added: ['sess-nowin'], changed: [], removed: [] },
+      { added: [], changed: [], removed: [] }
+    );
+
+    expect(contributions['sqlite:sess-nowin'].session.status).toBe('active');
   });
 
   it('parses identity-encoded archives as deleted sessions', async () => {

@@ -135,6 +135,32 @@ describe('source contribution snapshots', () => {
     expect(validateSourceSnapshot(snapshot, receiverConfig)).toBe(true);
   });
 
+  it('accepts mixed sqlite/archive/legacy contributions with done and deleted statuses', () => {
+    const receiverConfig = syncConfig({
+      source: { id: 'claw', label: 'claw' },
+      imports: { allowedSourceIds: ['mbp'] },
+    });
+    const cache = cacheSnapshot();
+    const base = cache.files['secret-session.jsonl'];
+    cache.files = {
+      'sqlite:sess-a': { ...structuredClone(base), session: { id: 'sess-a', status: 'done', archivedAt: null } },
+      'sqlite-archive:sess-b@deadbeef': {
+        ...structuredClone(base),
+        session: { id: 'sess-b', status: 'deleted', archivedAt: '2026-08-24T11:30:00.000Z' },
+      },
+      'legacy:old-session.jsonl': {
+        ...structuredClone(base),
+        session: { id: 'old-1', status: 'done', archivedAt: '2026-08-20T00:00:00.000Z' },
+      },
+    };
+
+    const snapshot = buildSourceSnapshot(cache, syncConfig());
+    snapshot.source = { id: 'mbp', label: 'MBP' };
+    expect(snapshot.contributions).toHaveLength(3);
+    expect(snapshot.contributions.map((c) => c.session.status).sort()).toEqual(['deleted', 'done', 'done']);
+    expect(validateSourceSnapshot(snapshot, receiverConfig)).toBe(true);
+  });
+
   it('rejects unauthorized sources, unknown fields, and invalid counters', () => {
     const config = syncConfig({ source: { id: 'claw', label: 'claw' }, imports: { allowedSourceIds: ['mbp'] } });
     const snapshot = validImportedSnapshot(config);

@@ -1,5 +1,4 @@
-import { existsSync } from 'fs';
-import { statSync } from 'fs';
+import { existsSync, statSync } from 'fs';
 import { join } from 'path';
 import { zstdDecompressSync } from 'node:zlib';
 import { DatabaseSync } from 'node:sqlite';
@@ -104,6 +103,11 @@ function mapSessionStatus(windowStatus) {
 /**
  * 扫描活跃会话与归档的身份清单（新 manifest）。
  * 身份四元组 (events, maxSeq, lastCreatedAt, watermark) 任一变化即视为变更。
+ * 两个查询均带 ORDER BY：manifest 经 JSON.stringify 比较（stats-cache-store.manifestsEqual），
+ * 行序不稳定会产生假阴性触发空增量刷新。
+ * 注意：sessions 与 archives 是两条独立语句，无跨语句快照——reset 归档若落在
+ * 两查询之间，当轮会同时产出 `sqlite:` 与 `sqlite-archive:` 两份贡献（瞬态双计），
+ * 下一轮扫描自愈。
  * @returns {{
  *   exists: boolean,
  *   identity?: object,
@@ -131,6 +135,7 @@ export function scanSqliteManifest() {
         FROM transcript_events e
         LEFT JOIN session_windows w ON w.session_id = e.session_id
         GROUP BY e.session_id
+        ORDER BY e.session_id
       `).all();
 
       for (const row of sessionRows) {
@@ -150,6 +155,7 @@ export function scanSqliteManifest() {
       const archiveRows = db.prepare(`
         SELECT session_id, generation, reason, encoding, created_at AS createdAt
         FROM session_transcript_archives
+        ORDER BY session_id, generation
       `).all();
       archives = Object.create(null);
       for (const row of archiveRows) {

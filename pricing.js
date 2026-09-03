@@ -121,8 +121,8 @@ export function findMatchingPricing(modelKey, pricingMap) {
 /**
  * 动态检测 OpenClaw 工作目录（用于定位 openclaw-usage-pricing.json）。
  * 优先级：OPENCLAW_DIR env > openclaw.json 里的 agents.defaults.workspace > ~/.openclaw
- * 注意：这是 **定价配置文件** 的存储位置；sessions 与 models.json 走
- * `openclaw-config.js` 的 `OPENCLAW_CONFIG_DIR`（通常默认 `~/.openclaw`）。
+ * 注意：这是 **定价配置文件** 的存储位置；会话数据（openclaw-agent.sqlite）与
+ * openclaw.json 走 `openclaw-config.js` 的 `OPENCLAW_CONFIG_DIR`（通常默认 `~/.openclaw`）。
  * @returns {Promise<string>} OpenClaw 工作目录路径
  */
 export async function detectOpenClawDir() {
