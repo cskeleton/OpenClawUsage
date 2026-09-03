@@ -335,8 +335,9 @@ function renderTimelineChart(byDate, metric = 'tokens') {
       ]
     : [
         {
-          label: 'Input Tokens',
-          data: dates.map((d) => byDate[d].input),
+          // 命中缓存的输入（左轴）
+          label: 'Cache Read Tokens',
+          data: dates.map((d) => byDate[d].cacheRead),
           borderColor: COLORS.cyan.border,
           backgroundColor: 'rgba(34, 211, 238, 0.08)',
           fill: true,
@@ -344,17 +345,34 @@ function renderTimelineChart(byDate, metric = 'tokens') {
           pointRadius: dates.length > 30 ? 0 : 2,
           pointHoverRadius: 6,
           borderWidth: 2,
+          yAxisID: 'y',
         },
         {
+          // 未命中缓存的输入（左轴）
+          label: 'Input Tokens',
+          data: dates.map((d) => byDate[d].input),
+          borderColor: COLORS.sky.border,
+          backgroundColor: 'rgba(56, 189, 248, 0.06)',
+          fill: true,
+          tension: 0.4,
+          borderDash: [5, 4],
+          pointRadius: dates.length > 30 ? 0 : 2,
+          pointHoverRadius: 6,
+          borderWidth: 2,
+          yAxisID: 'y',
+        },
+        {
+          // 输出量级远小于输入，挂到右侧独立纵轴
           label: 'Output Tokens',
           data: dates.map((d) => byDate[d].output),
           borderColor: COLORS.emerald.border,
-          backgroundColor: 'rgba(52, 211, 153, 0.08)',
+          backgroundColor: 'rgba(52, 211, 153, 0.10)',
           fill: true,
           tension: 0.4,
           pointRadius: dates.length > 30 ? 0 : 2,
           pointHoverRadius: 6,
           borderWidth: 2,
+          yAxisID: 'y1',
         },
       ];
 
@@ -379,9 +397,19 @@ function renderTimelineChart(byDate, metric = 'tokens') {
       scales: {
         y: {
           beginAtZero: true,
+          position: 'left',
           ticks: { callback: isCost ? formatCostValue : formatTickValue },
           grid: { color: getChartThemeFromCss().grid },
         },
+        // Token 模式下输出挂右轴，网格只画左轴避免双线交错
+        ...(isCost ? {} : {
+          y1: {
+            beginAtZero: true,
+            position: 'right',
+            ticks: { callback: formatTickValue, color: COLORS.emerald.border },
+            grid: { drawOnChartArea: false },
+          },
+        }),
         x: { grid: { display: false } },
       },
     },
