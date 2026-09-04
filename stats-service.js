@@ -16,6 +16,7 @@ import {
 } from './sync-config.js';
 import { loadImportedSnapshots } from './sync-snapshot.js';
 import { loadPricingConfig, loadPricingConfigDetailed, savePricingConfig, validatePricingConfig } from './pricing.js';
+import { rematchObservedKeys } from './pricing-matching-service.js';
 import {
   CACHE_SCHEMA_VERSION,
   computeSourceId,
@@ -58,6 +59,39 @@ let inflightRefresh = null;
 let inflightIsFull = false;
 let lastManifestScan = null;
 let persistenceUnavailable = false;
+/** 自动 rematch 在途守卫（同一时间至多一轮） */
+let inflightAutoRematch = null;
+/** 测试可注入的 models.dev fetch 实现（模式同 models-dev.js 的 activeFetchImpl） */
+let autoRematchFetchImpl = null;
+
+/** 测试辅助：注入 models.dev fetch 实现 */
+export function __setAutoRematchFetchImplForTests(fn) {
+  autoRematchFetchImpl = fn;
+}
+
+/**
+ * merge 产出 stats 后的惰性自动匹配：对账面回退（未覆盖）的模型后台跑一次 rematch。
+ * fire-and-forget；matched>0 时 invalidate 使下次 getStats 以新价 re-merge。
+ * 每次 merge 周期至多触发一轮（inflight 守卫 + 触发后短期内新规则使 uncovered 收敛）。
+ */
+function maybeAutoRematch(stats, pricingConfig) {
+  if (inflightAutoRematch) return;
+  if (!pricingConfig || pricingConfig.enabled === false) return;
+  const uncovered = Object.keys(stats?.byModel || {}).filter(
+    (k) => stats.byModel[k].costSource === 'openclaw'
+  );
+  if (!uncovered.length) return;
+  inflightAutoRematch = (async () => {
+    try {
+      const result = await rematchObservedKeys(uncovered, autoRematchFetchImpl ? { fetchImpl: autoRematchFetchImpl } : {});
+      if (result.matched > 0) invalidateStatsCache();
+    } catch (err) {
+      console.warn('自动价格匹配失败:', err?.message || err);
+    } finally {
+      inflightAutoRematch = null;
+    }
+  })();
+}
 
 /**
  * 附加定价元数据到统计结果（pricingConfig 为 null 表示配置损坏，已回退账面价）
@@ -209,6 +243,7 @@ function adoptDiskCache(diskCache, pricingConfig, fp) {
       mergeFileContributions(diskCache.files, pricingConfig),
       pricingConfig
     );
+    maybeAutoRematch(memory.stats, pricingConfig);
   }
   memory.pricingFingerprint = fp;
   memory.cacheState = 'fresh';
@@ -311,6 +346,8 @@ async function buildSnapshot({ full, sourceId, manifest, pricingConfig, fp }) {
   memory.sourceId = sourceId;
   memory.pricingFingerprint = fp;
   memory.cacheState = 'fresh';
+
+  maybeAutoRematch(stats, pricingConfig);
 
   return { filesMap, stats, revision, now, manifest };
 }
@@ -548,6 +585,7 @@ async function ensureLoaded(pricingConfig, fp, sourceId, manifestScan) {
     if (!pricingMatch) {
       memory.stats = attachPricingMeta(mergeFileContributions(memory.files, pricingConfig), pricingConfig);
       memory.pricingFingerprint = fp;
+      maybeAutoRematch(memory.stats, pricingConfig);
       if (manifestMatch) {
         memory.cacheState = 'fresh';
         return true;
@@ -571,6 +609,7 @@ async function ensureLoaded(pricingConfig, fp, sourceId, manifestScan) {
       mergeFileContributions(memory.files, pricingConfig),
       pricingConfig
     );
+    maybeAutoRematch(memory.stats, pricingConfig);
   }
   memory.pricingFingerprint = fp;
 
@@ -952,6 +991,8 @@ export function resetStatsServiceForTests() {
   inflightIsFull = false;
   lastManifestScan = null;
   persistenceUnavailable = false;
+  inflightAutoRematch = null;
+  autoRematchFetchImpl = null;
 }
 
 /**
