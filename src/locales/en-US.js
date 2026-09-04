@@ -156,6 +156,7 @@ export const enUSMessages = {
     sourceManual: 'Manual',
     sourceModelsDev: 'models.dev',
     sourcePattern: 'Advanced rule',
+    sourceOpenclaw: 'Book price',
     validationErrorsTitle: 'Config validation warnings',
     candidateAccept: 'Accept',
     candidateDismiss: 'Dismiss',
@@ -163,6 +164,10 @@ export const enUSMessages = {
     manualFillHint: 'Model key filled; please enter Input/Output prices',
     rematchResult: 'Rescan done: {matched} auto-matched, {queued} queued for review',
     rematchCatalogUnavailable: 'models.dev catalog unavailable; rescan skipped',
+  },
+  stats: {
+    groupByCanonical: 'Group by canonical',
+    costBySourceTitle: 'Cost by pricing source',
   },
   settings: {
     pageTitle: 'Sync Settings - OpenClaw Usage',

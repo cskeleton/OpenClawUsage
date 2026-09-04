@@ -8,6 +8,7 @@ import {
   modelOfKey,
   selectSourceData,
   sourceOptions,
+  buildKeyMatcher,
 } from './data-filter.js';
 
 // ---- Utility functions ----
@@ -52,6 +53,26 @@ function statusBadge(status) {
   };
   const s = map[status] || map.active;
   return `<span class="status-badge ${s.cls}">${s.icon} ${s.label}</span>`;
+}
+
+// ---- 成本来源（costSource）展示 ----
+
+/**
+ * 计费来源元信息：徽标沿用 pricing 页的 badge 变体（badge-muted/ok/warn），
+ * 占比条颜色沿用现有主题 accent 变量；openclaw（账面价）无专属变体，复用 badge-muted。
+ */
+const COST_SOURCE_META = {
+  manual: { cls: 'badge-muted', color: 'var(--accent-violet)', labelKey: 'pricing.sourceManual' },
+  'models.dev': { cls: 'badge-ok', color: 'var(--accent-emerald)', labelKey: 'pricing.sourceModelsDev' },
+  pattern: { cls: 'badge-warn', color: 'var(--accent-amber)', labelKey: 'pricing.sourcePattern' },
+  openclaw: { cls: 'badge-muted', color: 'var(--accent-orange)', labelKey: 'pricing.sourceOpenclaw' },
+};
+const COST_SOURCE_ORDER = ['manual', 'models.dev', 'pattern', 'openclaw'];
+
+function costSourceBadgeHtml(costSource) {
+  const meta = COST_SOURCE_META[costSource];
+  if (!meta) return '';
+  return `<span class="badge ${meta.cls}">${escapeHtml(t(meta.labelKey))}</span>`;
 }
 
 // ---- Time range helpers ----
@@ -349,9 +370,14 @@ function renderDimensionSummary(filteredData) {
 let breakdownDimension = 'provider';
 let breakdownSort = 'totalCost';
 let breakdownAsc = false;
+let groupByCanonical = false;
 
 /**
- * 把 byProvider / byModel 摊平为明细表行
+ * 把 byProvider / byModel 摊平为明细表行。
+ * byModel 行附带 canonical/costSource/costBreakdown：filterData 按日期区间
+ * 重切后这些 merge 期元信息会丢失，这里从当前来源的未切片 byModel 回填
+ * （它们是 `provider/model` 键的属性，与日期区间无关）。
+ * 开启「按 canonical 分组」时（仅 model 维度）在展示层聚合同 canonical 的行。
  * @param {Object} filteredData
  * @returns {Array<object>}
  */
@@ -360,8 +386,16 @@ function buildBreakdownRows(filteredData) {
     ? filteredData.byProvider || {}
     : filteredData.byModel || {};
 
-  return Object.entries(source).map(([key, stats]) => ({
+  const metaByModel = breakdownDimension === 'model'
+    ? selectSourceData(fullData, filterSource)?.byModel || {}
+    : {};
+
+  let rows = Object.entries(source).map(([key, stats]) => ({
     key,
+    model: stats.model ?? modelOfKey(key),
+    canonical: stats.canonical ?? metaByModel[key]?.canonical ?? null,
+    costSource: stats.costSource ?? metaByModel[key]?.costSource ?? null,
+    costBreakdown: stats.costBreakdown ?? metaByModel[key]?.costBreakdown ?? null,
     input: stats.input,
     output: stats.output,
     cacheRead: stats.cacheRead,
@@ -370,12 +404,54 @@ function buildBreakdownRows(filteredData) {
     totalCost: stats.totalCost,
     requests: stats.requests,
   }));
+
+  if (breakdownDimension === 'model' && groupByCanonical) {
+    rows = groupModelsByCanonical(rows);
+  }
+  return rows;
+}
+
+/**
+ * 展示层按 canonical 聚合行：tokens/cost 求和，不改 stats 数据结构。
+ * costBreakdown 仅在全体成员都携带时求和，任一缺失则置 null（不虚构分项）；
+ * costSource 全体成员一致才保留，混合来源不挂徽标。
+ */
+function groupModelsByCanonical(rows) {
+  const groups = new Map();
+  for (const row of rows) {
+    const gk = row.canonical || row.model || row.key;
+    if (!groups.has(gk)) {
+      groups.set(gk, {
+        ...row,
+        key: gk,
+        costBreakdown: row.costBreakdown ? { ...row.costBreakdown } : null,
+        members: [row.key],
+      });
+      continue;
+    }
+    const g = groups.get(gk);
+    for (const f of ['input', 'output', 'cacheRead', 'cacheWrite', 'totalTokens', 'totalCost', 'requests']) {
+      g[f] += row[f];
+    }
+    if (g.costBreakdown && row.costBreakdown) {
+      for (const f of ['input', 'output', 'cacheRead', 'cacheWrite']) g.costBreakdown[f] += row.costBreakdown[f];
+    } else {
+      g.costBreakdown = null;
+    }
+    if (g.costSource !== row.costSource) g.costSource = null;
+    g.members.push(row.key);
+  }
+  return [...groups.values()].sort((a, b) => b.totalCost - a.totalCost);
 }
 
 function renderBreakdownTable(filteredData) {
   const tbody = document.getElementById('breakdown-tbody');
   const tfoot = document.getElementById('breakdown-tfoot');
   const rows = buildBreakdownRows(filteredData);
+  const grouped = breakdownDimension === 'model' && groupByCanonical;
+
+  const groupWrap = document.getElementById('group-canonical-wrap');
+  if (groupWrap) groupWrap.hidden = breakdownDimension !== 'model';
 
   const totalCost = rows.reduce((sum, r) => sum + r.totalCost, 0);
 
@@ -408,9 +484,18 @@ function renderBreakdownTable(filteredData) {
 
   const activeKey = breakdownDimension === 'provider' ? filterProvider : filterModel;
 
-  tbody.innerHTML = rows.map((r) => `
-    <tr class="breakdown-row${r.key === activeKey ? ' is-active' : ''}" data-key="${escapeAttr(r.key)}" tabindex="0">
-      <td><span class="breakdown-key">${escapeHtml(r.key)}</span></td>
+  tbody.innerHTML = rows.map((r) => {
+    // model 维度：行尾带来源徽标；canonical 与模型名不同则小字标注 canonical
+    const badge = breakdownDimension === 'model' ? costSourceBadgeHtml(r.costSource) : '';
+    const canonicalHint = !grouped && r.canonical && r.canonical !== r.model
+      ? ` <span class="canonical-name share-text">${escapeHtml(r.canonical)}</span>`
+      : '';
+    // 分组行的 key 是 canonical 而非 provider/model 键，不可下钻为筛选条件
+    const rowAttrs = grouped ? '' : ` data-key="${escapeAttr(r.key)}" tabindex="0"`;
+    const activeCls = !grouped && r.key === activeKey ? ' is-active' : '';
+    return `
+    <tr class="breakdown-row${activeCls}"${rowAttrs}>
+      <td><span class="breakdown-key">${escapeHtml(r.key)}</span>${canonicalHint} ${badge}</td>
       <td>${formatNumber(r.input)}</td>
       <td>${formatNumber(r.output)}</td>
       <td>${formatNumber(r.cacheRead)}</td>
@@ -423,7 +508,8 @@ function renderBreakdownTable(filteredData) {
       </td>
       <td>${r.requests.toLocaleString()}</td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
 
   const totals = rows.reduce((acc, r) => {
     acc.input += r.input;
@@ -448,6 +534,60 @@ function renderBreakdownTable(filteredData) {
       <td>${totals.requests.toLocaleString()}</td>
     </tr>
   `;
+}
+
+// ---- 成本构成（按计费来源）----
+
+/**
+ * 当前筛选口径下的 costBySource。无筛选时 filterData 直通 merge 输出的
+ * summary.costBySource；有日期/维度筛选时 summary 由 byDate 重算、不含该字段，
+ * 此时从 byDateModel cell（携带 costSource meta）按同一口径展示层聚合。
+ * cell 缺 costSource（旧快照）按 openclaw（账面价）计——重设计前的成本即账面价。
+ */
+function computeCostBySource(filteredData, filter) {
+  const direct = filteredData.summary?.costBySource;
+  if (direct && typeof direct === 'object') return direct;
+
+  const totals = { manual: 0, 'models.dev': 0, pattern: 0, openclaw: 0 };
+  const matches = buildKeyMatcher({ provider: filter.provider, model: filter.model });
+  for (const [date, keyMap] of Object.entries(filteredData.byDateModel || {})) {
+    if (filter.from && date < filter.from) continue;
+    if (filter.to && date > filter.to) continue;
+    for (const [key, cell] of Object.entries(keyMap)) {
+      if (matches && !matches(key)) continue;
+      const src = COST_SOURCE_META[cell.costSource] ? cell.costSource : 'openclaw';
+      totals[src] += cell.totalCost || 0;
+    }
+  }
+  return totals;
+}
+
+/** 占比条复用明细表的 share-bar/share-bar-fill，分段颜色用现有 accent 变量 */
+function renderCostBySource(filteredData, filter) {
+  const section = document.getElementById('cost-source-section');
+  const rowsEl = document.getElementById('cost-source-rows');
+  if (!section || !rowsEl) return;
+
+  const totals = computeCostBySource(filteredData, filter);
+  const entries = COST_SOURCE_ORDER
+    .map((src) => [src, Number(totals[src]) || 0])
+    .filter(([, value]) => value > 0);
+  const total = entries.reduce((sum, [, value]) => sum + value, 0);
+
+  section.hidden = total <= 0;
+  if (total <= 0) {
+    rowsEl.innerHTML = '';
+    return;
+  }
+
+  rowsEl.innerHTML = entries.map(([src, value]) => `
+    <div class="cost-source-row" data-cost-source="${escapeAttr(src)}">
+      ${costSourceBadgeHtml(src)}
+      <span class="share-bar"><span class="share-bar-fill" style="width:${(value / total) * 100}%;background:${COST_SOURCE_META[src].color}"></span></span>
+      <span class="cost-value">${formatCost(value)}</span>
+      <span class="share-text">${formatPercent(value, total)}</span>
+    </div>
+  `).join('');
 }
 
 // ---- Render Sessions Table with Pagination ----
@@ -720,6 +860,7 @@ function applyFilter(filter, resetPage = true) {
   renderSourceOverview(filter);
   renderDimensionSummary(filteredData);
   renderBreakdownTable(filteredData);
+  renderCostBySource(filteredData, filter);
   destroyCharts();
   renderCharts(filteredData, { timelineMetric });
 
@@ -856,6 +997,11 @@ function bindEventsOnce() {
       });
       rerender(false);
     });
+  });
+
+  document.getElementById('model-group-canonical').addEventListener('change', (e) => {
+    groupByCanonical = e.target.checked;
+    rerender(false);
   });
 
   document.querySelectorAll('#breakdown-table thead th[data-breakdown-sort]').forEach((th) => {

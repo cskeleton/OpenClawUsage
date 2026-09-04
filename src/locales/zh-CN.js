@@ -156,6 +156,7 @@ export const zhCNMessages = {
     sourceManual: '手动',
     sourceModelsDev: 'models.dev',
     sourcePattern: '高级规则',
+    sourceOpenclaw: '账面价',
     validationErrorsTitle: '配置校验警告',
     candidateAccept: '采纳',
     candidateDismiss: '忽略',
@@ -163,6 +164,10 @@ export const zhCNMessages = {
     manualFillHint: '已填入模型键，请填写 Input/Output 单价',
     rematchResult: '重新扫描完成：自动匹配 {matched} 个，进入确认队列 {queued} 个',
     rematchCatalogUnavailable: 'models.dev 目录不可用，未能重新扫描',
+  },
+  stats: {
+    groupByCanonical: '按 canonical 分组',
+    costBySourceTitle: '成本构成（按计费来源）',
   },
   settings: {
     pageTitle: '同步设置 - OpenClaw Usage',
