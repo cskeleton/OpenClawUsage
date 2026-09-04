@@ -2,7 +2,7 @@ import { readFile, writeFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { homedir } from 'os';
-import { DEFAULT_NOISE_SUFFIXES } from './pricing-normalize.js';
+import { DEFAULT_NOISE_SUFFIXES, generateModelKeyCandidates } from './pricing-normalize.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -480,9 +480,10 @@ export function validatePricingConfig(config) {
 /**
  * 使用会话中 OpenClaw 写入的原始成本（账面价）
  * @param {Object} usage
- * @returns {{ input: number, output: number, cacheRead: number, cacheWrite: number, total: number, source: string }}
+ * @param {string} [model] - 可选；提供时作为 canonical 透出，便于上层聚合
+ * @returns {{ input: number, output: number, cacheRead: number, cacheWrite: number, total: number, source: string, canonical: string|null }}
  */
-function openclawCostFallback(usage) {
+function openclawCostFallback(usage, model) {
   return {
     input: usage.cost?.input || 0,
     output: usage.cost?.output || 0,
@@ -490,6 +491,94 @@ function openclawCostFallback(usage) {
     cacheWrite: usage.cost?.cacheWrite || 0,
     total: usage.cost?.total || 0,
     source: 'openclaw',
+    canonical: model ?? null,
+  };
+}
+
+/**
+ * 匹配管线：别名 → 原始键精确 → 归一化候选（provider 感知）→ legacy patterns。
+ * 跳过 enabled === false 的条目并继续查找（与 v1 语义一致）。
+ * @param {string} provider
+ * @param {string} model
+ * @param {object} config - v2 配置
+ * @returns {null | { rule: object, canonical: string, matchedKey: string, via: 'alias'|'exact'|'normalized'|'pattern' }}
+ */
+export function resolvePricingRule(provider, model, config) {
+  if (!config || config.enabled === false) return null;
+  const rules = config.rules || {};
+  const ignoreProvider = config.matching?.ignoreProvider !== false;
+  const rawKey = `${provider}/${model}`;
+
+  const lookupCanonical = (canonical) => {
+    if (!ignoreProvider) {
+      const qualifiedKey = `${provider}/${canonical}`;
+      const qualified = rules[qualifiedKey];
+      if (qualified && qualified.enabled !== false) {
+        return { rule: qualified, canonical, matchedKey: qualifiedKey };
+      }
+    }
+    const bare = rules[canonical];
+    if (bare && bare.enabled !== false) {
+      return { rule: bare, canonical, matchedKey: canonical };
+    }
+    return null;
+  };
+
+  const alias = config.aliases?.[rawKey];
+  if (typeof alias === 'string' && alias) {
+    const hit = lookupCanonical(alias);
+    if (hit) return { ...hit, via: 'alias' };
+  }
+
+  // 精确层：ignoreProvider=true 时裸 model 规则优先、原始键兜底（provider 无关语义）；
+  // ignoreProvider=false 时 provider 限定键优先、bare 兜底（provider 感知）。
+  // 命中键 === 原始键才算 via 'exact'，否则视为归一化命中。
+  const orderedKeys = ignoreProvider ? [model, rawKey] : [rawKey, model];
+  for (const key of orderedKeys) {
+    const rule = rules[key];
+    if (rule && rule.enabled !== false) {
+      return { rule, canonical: model, matchedKey: key, via: key === rawKey ? 'exact' : 'normalized' };
+    }
+  }
+
+  const noiseSuffixes = config.matching?.noiseSuffixes || DEFAULT_NOISE_SUFFIXES;
+  for (const candidate of generateModelKeyCandidates(provider, model, noiseSuffixes)) {
+    if (candidate === model) continue; // 精确层已覆盖
+    const hit = lookupCanonical(candidate);
+    if (hit) return { ...hit, via: 'normalized' };
+  }
+
+  const patternHit = findMatchingPricing(rawKey, config.patterns || {});
+  if (patternHit) {
+    return { rule: patternHit, canonical: model, matchedKey: rawKey, via: 'pattern' };
+  }
+  return null;
+}
+
+/**
+ * 按解析结果计价。resolution 为 null → 账面价回退。
+ * @param {Object} usage
+ * @param {null|object} resolution - resolvePricingRule 的返回值
+ * @returns {{ input: number, output: number, cacheRead: number, cacheWrite: number, total: number, source: string, canonical: string|null }}
+ */
+export function applyPricingResolution(usage, resolution) {
+  if (!resolution) return openclawCostFallback(usage);
+  const pricing = resolution.rule;
+  const inputCost = (pricing.input * (usage.input || 0)) / TOKENS_PER_UNIT;
+  const outputCost = (pricing.output * (usage.output || 0)) / TOKENS_PER_UNIT;
+  // 缓存单价留空：无单独缓存价，统一按 Input 原价计算缓存 token 费用
+  const cacheReadPrice = pricing.cacheRead ?? pricing.input;
+  const cacheWritePrice = pricing.cacheWrite ?? pricing.input;
+  const cacheReadCost = (cacheReadPrice * (usage.cacheRead || 0)) / TOKENS_PER_UNIT;
+  const cacheWriteCost = (cacheWritePrice * (usage.cacheWrite || 0)) / TOKENS_PER_UNIT;
+  return {
+    input: inputCost,
+    output: outputCost,
+    cacheRead: cacheReadCost,
+    cacheWrite: cacheWriteCost,
+    total: inputCost + outputCost + cacheReadCost + cacheWriteCost,
+    source: resolution.via === 'pattern' ? 'pattern' : (resolution.rule.source || 'manual'),
+    canonical: resolution.canonical,
   };
 }
 
@@ -499,46 +588,13 @@ function openclawCostFallback(usage) {
  * @param {string} provider - 提供商
  * @param {string} model - 模型名称
  * @param {Object|null} pricingConfig - 价格配置对象，null 表示使用 OpenClaw 原始成本
- * @returns {Object} 计算结果 {input, output, cacheRead, cacheWrite, total, source}
+ * @returns {Object} 计算结果 {input, output, cacheRead, cacheWrite, total, source, canonical}
  */
 export function calculateCostFromUsage(usage, provider, model, pricingConfig) {
   // 未加载配置或全局关闭自定义价：使用 OpenClaw 原始成本
   if (!pricingConfig || pricingConfig.enabled === false) {
-    return openclawCostFallback(usage);
+    return openclawCostFallback(usage, model);
   }
-
-  // 没有条目时：使用 OpenClaw 原始成本
-  if (!pricingConfig.pricing || Object.keys(pricingConfig.pricing).length === 0) {
-    return openclawCostFallback(usage);
-  }
-
-  const modelKey = `${provider}/${model}`;
-  const pricing = findMatchingPricing(modelKey, pricingConfig.pricing);
-
-  // 未配置该模型或该条规则关闭：使用 OpenClaw 原始成本
-  if (!pricing || pricing.enabled === false) {
-    return openclawCostFallback(usage);
-  }
-
-  // 计算成本：价格（$/M） * 用量（tokens） / 1e6
-  const inputCost = (pricing.input * (usage.input || 0)) / TOKENS_PER_UNIT;
-  const outputCost = (pricing.output * (usage.output || 0)) / TOKENS_PER_UNIT;
-
-  // 缓存单价留空：无单独缓存价，统一按 Input 原价计算缓存 token 费用
-  const cacheReadPrice = pricing.cacheRead ?? pricing.input;
-  const cacheWritePrice = pricing.cacheWrite ?? pricing.input;
-
-  const cacheReadCost = (cacheReadPrice * (usage.cacheRead || 0)) / TOKENS_PER_UNIT;
-  const cacheWriteCost = (cacheWritePrice * (usage.cacheWrite || 0)) / TOKENS_PER_UNIT;
-
-  const total = inputCost + outputCost + cacheReadCost + cacheWriteCost;
-
-  return {
-    input: inputCost,
-    output: outputCost,
-    cacheRead: cacheReadCost,
-    cacheWrite: cacheWriteCost,
-    total: total,
-    source: 'custom'
-  };
+  // 空 rules + patterns 时 resolve 自然返回 null，同样回退账面价
+  return applyPricingResolution(usage, resolvePricingRule(provider, model, pricingConfig));
 }

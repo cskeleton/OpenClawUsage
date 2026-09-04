@@ -91,8 +91,11 @@ async function setup({ withImport = true, missingImport = false } = {}) {
       ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'agent:main:tui-x', 'done', 1782801700000, 1782801700000, 1782801700000);
   `);
   writeFileSync(join(ws.workspaceDir, 'openclaw-usage-pricing.json'), JSON.stringify({
-    version: '1.0', enabled: true, updated: '2026-04-20T00:00:00.000Z',
-    pricing: { 'openai/gpt-4o': { input: 1, output: 2 } },
+    version: '2.0', enabled: true, updated: '2026-04-20T00:00:00.000Z', revision: 0,
+    matching: { ignoreProvider: true, noiseSuffixes: ['-high', '-thinking', '-low', '-medium'] },
+    rules: { 'openai/gpt-4o': { input: 1, output: 2 } },
+    aliases: {},
+    patterns: {},
   }));
   writeFileSync(join(ws.configDir, 'openclaw-usage-sync.json'), JSON.stringify(syncConfig({
     imports: { allowedSourceIds: missingImport ? ['remote', 'missing'] : ['remote'] },
@@ -296,10 +299,14 @@ describe('multi-source stats aggregation', () => {
     const beforeRemote = before.statsBySource.remote.byModel['openai/gpt-4o'].totalCost;
 
     await updatePricingConfig({
-      version: '1.0',
+      version: '2.0',
       enabled: true,
       updated: '2026-04-20T00:01:00.000Z',
-      pricing: { 'openai/gpt-4o': { input: 3, output: 4 } },
+      revision: 1,
+      matching: { ignoreProvider: true, noiseSuffixes: ['-high', '-thinking', '-low', '-medium'] },
+      rules: { 'openai/gpt-4o': { input: 3, output: 4 } },
+      aliases: {},
+      patterns: {},
     });
     const after = await getStats({ waitForRefresh: true });
     const afterLocal = after.statsBySource.local.byModel['openai/gpt-4o'].totalCost;

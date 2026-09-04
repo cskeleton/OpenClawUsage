@@ -31,6 +31,20 @@ import {
 } from '../../../stats-cache-store.js';
 import { STATS_SHAPE_VERSION } from '../../../stats-contribution.js';
 
+/** v2 定价配置骨架（空 rules/patterns） */
+function v2PricingConfig(updated, { rules = {}, aliases = {}, patterns = {}, enabled = true } = {}) {
+  return {
+    version: '2.0',
+    enabled,
+    updated,
+    revision: 0,
+    matching: { ignoreProvider: true, noiseSuffixes: ['-high', '-thinking', '-low', '-medium'] },
+    rules,
+    aliases,
+    patterns,
+  };
+}
+
 const SESSION_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 
 function usageEventJson({ seq = 1, provider = 'openai', model = 'gpt-4o', ts = '2026-04-17T12:00:00.000Z', input = 11, output = 7 } = {}) {
@@ -101,12 +115,7 @@ async function setupWorkspace(pricingUpdated = '2026-04-20T00:00:00.000Z', withS
   if (withSessions) {
     seedDb(ws);
   }
-  await ws.writePricingConfig({
-    version: '1.0',
-    enabled: true,
-    updated: pricingUpdated,
-    pricing: {},
-  });
+  await ws.writePricingConfig(v2PricingConfig(pricingUpdated));
   return ws;
 }
 
@@ -178,15 +187,10 @@ describe('stats-service persistent cache (SQLite source)', () => {
     const before = await getStats();
     const costBefore = before.summary.totalCost;
 
-    await ws.writePricingConfig({
-      version: '1.0',
-      enabled: true,
-      updated: '2026-04-21T00:00:00.000Z',
-      pricing: {
-        'openai/gpt-4o': { input: 999, output: 999 },
-        'anthropic/claude-*': { matchType: 'wildcard', input: 999, output: 999 },
-      },
-    });
+    await ws.writePricingConfig(v2PricingConfig('2026-04-21T00:00:00.000Z', {
+      rules: { 'openai/gpt-4o': { input: 999, output: 999 } },
+      patterns: { 'anthropic/claude-*': { matchType: 'wildcard', input: 999, output: 999 } },
+    }));
     invalidateStatsCache();
 
     const spy = await spyBuild();
