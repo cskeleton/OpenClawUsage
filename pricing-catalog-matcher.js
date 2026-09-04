@@ -54,9 +54,26 @@ export function scoreCandidate(observed, catalogId) {
   return Math.max(tokenJaccard(observed, catalogId) * 0.86, editSimilarity(observed, catalogId) * 0.82);
 }
 
-/** 官方条目启发式：provider id 作为 token 出现在模型 id 中（deepseek/deepseek-v4-flash） */
-function isOfficialEntry(entry) {
-  return tokenize(entry.model).includes(String(entry.provider).toLowerCase());
+/**
+ * 已知模型厂官方 provider 集合（对照 models.dev catalog 实际 provider id 维护，保持保守）。
+ * 覆盖模型 id 不含厂商名的高频厂商（anthropic/claude-*、openai/gpt-*、google/gemini-*、
+ * moonshotai/kimi-* 等）；models.dev 实际 id 为 `xai`/`zai`（无 `x-ai`/`z-ai`），
+ * qwen 系列挂在 `alibaba` 下且无独立 `qwen` provider，故不收。
+ */
+const KNOWN_MODEL_CREATORS = new Set([
+  'anthropic', 'openai', 'google', 'deepseek',
+  'moonshotai', 'moonshotai-cn', 'meta', 'mistral', 'xai', 'zai',
+]);
+
+/**
+ * 官方条目启发式：provider 属于已知模型厂集合（anthropic/claude-opus-5、openai/gpt-5），
+ * 或 provider id 作为 token 出现在模型 id 中（deepseek/deepseek-v4-flash）。
+ * 后者作为补充信号保留：可覆盖集合外、但「自产自销」特征明显的厂商；
+ * bedrock/anthropic.claude-* 一类分销条目两者都不命中，不会误判。
+ */
+export function isOfficialEntry(entry) {
+  const provider = String(entry.provider).toLowerCase();
+  return KNOWN_MODEL_CREATORS.has(provider) || tokenize(entry.model).includes(provider);
 }
 
 function toPrices(cost) {

@@ -48,7 +48,7 @@
 
 **候选必须验证**：归一化产物是「候选名」而非断言，必须能在 alias/rules/models.dev catalog 之一中查到才算命中。因此 `-pro`、`-luna`/`-sol`/`-terra` 等**不在**噪声后缀清单中（它们是不同模型），`mimo-v2.5` 与 `mimo-v2.5-pro` 天然不混淆。
 
-**models.dev 匹配是 provider 感知的**：`ignoreProvider = true`（官方价口径）时优先对齐 catalog 中**模型厂官方条目**（如 `deepseek-v4-pro` → DeepSeek 官方价而非 Fireworks 分销价；官方条目识别参考 CPAMP 的 canonical entry 判定）；`= false` 时优先对齐实际 provider 在 catalog 中的条目，该 provider 不在 catalog 再回落官方条目。
+**models.dev 匹配是 provider 感知的**：`ignoreProvider = true`（官方价口径）时优先对齐 catalog 中**模型厂官方条目**（如 `deepseek-v4-pro` → DeepSeek 官方价而非 Fireworks 分销价）；`= false` 时优先对齐实际 provider 在 catalog 中的条目，该 provider 不在 catalog 再回落官方条目。另：`ignoreProvider = false` 时，自动匹配从某个 provider 的 catalog 条目写出的**裸（非 provider 限定）`models.dev` 规则**，同时充当所有没有 provider 限定规则的 provider 的默认价（归一化裸键兜底）。
 
 ## 配置 Schema v2
 
@@ -142,6 +142,8 @@
 > - exact 命中层（归一化候选精确查 model id）中，**单条目非官方命中即唯一**，reason 为 `exact-single`；官方条目启发式仅用于同 id 多 provider 条目的消歧，不会把单条目制造成歧义。
 > - **严格 token 包含关系只可进队列、不可自动唯一**：模糊打分 top1 ≥ 阈值时，若 probe 与 top1 的 token 集合互为严格子集（一方是另一方的截断/加长版，如 `gpt-5.6-codex-mini` vs `gpt-5.6-codex`），说明 observed 带额外区分信息，一律进确认队列。
 
+> 实现偏差回写（2026-09-04，整分支评审修复）：**官方条目识别规则** = 「provider 属于已知模型厂集合（`KNOWN_MODEL_CREATORS`：anthropic / openai / google / deepseek / moonshotai / moonshotai-cn / meta / mistral / xai / zai，对照 models.dev catalog 实际 provider id 维护）」**或**「provider id 作为 token 出现在模型 id 中」（后者保留为补充信号，覆盖集合外但自产自销特征明显的厂商）。原实现只有 token 判定，对 `anthropic/claude-*`、`openai/gpt-*` 等模型 id 不含厂商名的高频条目失效，导致官方价口径下大多 Claude/GPT 精确多 provider 命中被误送入确认队列；修复后 `anthropic/claude-opus-5` vs `bedrock/anthropic.claude-opus-5` vs `someproxy/claude-opus-5` 仅 anthropic 条目判官方，忽略 provider 时收敛为唯一自动生效。另：rematch/accept 两条写路径均不再覆盖/复活 `enabled === false` 的规则（用户停用即用户意图，与 manual 同等保护）；accept 仍写 alias 并 dismiss 队列条目。
+
 **两个触发入口**：
 
 1. **惰性**：merge 产出 stats 后的异步 fire-and-forget 钩子（`stats-service.js` 的 `maybeAutoRematch`）——收集 `byModel` 中 `costSource === 'openclaw'`（即管线未覆盖）的键，后台跑一次批量匹配（inflight 守卫，同时间至多一轮）；唯一命中写 `rules`（`source: "models.dev"`）并 `invalidateStatsCache()`，**下次** `getStats` 以新价 re-merge；歧义写 candidates 文件。本次 merge 不受影响（仍按账面价），持久化失败仅记警告。测试注入缝：`__setAutoRematchFetchImplForTests`
@@ -151,7 +153,7 @@
 
 **确认队列操作**（`POST /api/pricing/candidates/resolve`，body 为 `{ resolutions: [...] }` 以支持批量；单条失败计入 `failed`、不中断其余决议）：
 
-- `accept`：请求体 `catalogId` 先按候选 `catalogKey` 精确匹配、再按 `model` 匹配兜底（同 model 多候选取首个）；写 `aliases[observedKey] = 候选 model`，并在目标 canonical 键不存在或不是 `manual` 时写/更新 `rules[model]`（`source: "models.dev"`，用候选价格）——**manual 规则只挂 alias、不改价格**。处理完毕条目即标记 `dismissed`（移出待办）
+- `accept`：请求体 `catalogId` 先按候选 `catalogKey` 精确匹配、再按 `model` 匹配兜底（同 model 多候选取首个）；写 `aliases[observedKey] = 候选 model`，并在目标 canonical 键不存在、不是 `manual` 且不是 `enabled === false` 时写/更新 `rules[model]`（`source: "models.dev"`，用候选价格）——**manual 规则与被用户停用的规则只挂 alias、不改价格**（停用即用户意图，不因 accept 复活）。处理完毕条目即标记 `dismissed`（移出待办）
 - `dismiss`：标记 `dismissed: true`，不再提示；**rematch 重扫时 upsert 保留 `dismissed`**（仅刷新候选与 `lastSeenAt`），用户忽略过的模型不会被复活提示
 - 手动填价：UI 跳表单预填，走正常规则新增
 
@@ -203,7 +205,7 @@ MCP：`get_pricing_config` 返回含 `revision`；`update_pricing_config` 入参
 pricing 页：
 
 - 头部：全局 enabled 开关旁加「忽略 provider」开关（附当前口径说明文案）；噪声后缀清单管理入口（高级区小弹窗）
-- **确认队列区**（可折叠，置顶于规则表上方）：排序为**唯一候选优先（候选数升序），再按 observed key 字典序**（pricing 页无模型调用量数据，原稿「按调用量排序」不可行）；每行 = observed key + 候选列表（catalogKey/model/provider/score/reason/价格）+ 操作（采纳某候选 / 手动填价 / 忽略）；**批量操作**：采纳所有唯一候选、忽略全部、勾选多条批量采纳
+- **确认队列区**（置顶于规则表上方）：排序为**唯一候选优先（候选数升序），再按 observed key 字典序**（pricing 页无模型调用量数据，原稿「按调用量排序」不可行）；每行 = observed key + 候选列表（catalogKey/model/provider/score/reason/价格）+ 操作（采纳某候选 / 手动填价 / 忽略）；**批量操作**：采纳所有唯一候选、忽略全部（实际交付无折叠区与勾选多条批量采纳——批量粒度即上述两个全量操作）
 - 规则表：source 徽标（手动 / models.dev / 高级规则）；行内编辑保留；新增规则 combobox 候选改为 canonical 名
 - models.dev 手动搜索弹窗保留为兜底入口
 - 409 冲突提示与重新加载；**其它保存错误（422/网络异常等）提示后同样触发重新加载**，避免本地状态与磁盘脱节

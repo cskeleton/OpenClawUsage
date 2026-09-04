@@ -12,8 +12,8 @@ import { loadCandidates, saveCandidates, upsertCandidateEntry } from './pricing-
  * 写入语义：内部 savePricingConfig 一律**不带 baseRevision**（best-effort 强制写）。
  * 自动匹配是后台批量路径，不持有用户会话的 revision；若与并发用户 PUT 撞车，
  * 由用户侧 409 重载兜底，而不是让批量匹配整体失败。
- * 另：unique 命中写入前会确认目标 canonical 键不存在或不是 manual——
- * manual 条目是用户意图，自动匹配绝不可覆盖。
+ * 另：unique 命中写入前会确认目标 canonical 键不存在、不是 manual、且不是
+ * `enabled === false`——manual 条目与被用户停用的条目都是用户意图，自动匹配绝不可覆盖/复活。
  *
  * @param {string[]} keys - `provider/model` 列表
  * @param {{ fetchImpl?: Function }} [options]
@@ -48,7 +48,9 @@ export async function rematchObservedKeys(keys, { fetchImpl } = {}) {
       const { model: catalogModel, prices } = result.match;
       if (prices.input == null || prices.output == null) continue; // 无价目不入库
       const existing = config.rules[catalogModel];
-      if (existing && existing.source === 'manual') continue; // manual 规则不可被自动匹配覆盖
+      // manual 规则与 enabled:false 规则（用户主动停用，无论 source）都不可被自动匹配覆盖/复活；
+      // 此时该 observed 键既不计 matched 也不计 queued（跳过写入即视为已处理）
+      if (existing && (existing.source === 'manual' || existing.enabled === false)) continue;
       config.rules[catalogModel] = {
         input: prices.input,
         output: prices.output,
@@ -79,9 +81,10 @@ export async function rematchObservedKeys(keys, { fetchImpl } = {}) {
 /**
  * 应用确认队列决议（批量）。单条失败计入 failed，不中断其余决议、不抛错。
  *
- * accept：写 `aliases[observedKey] = catalogModel`，并在目标 canonical 键不存在
- * 或不是 manual 时写入/刷新 `rules[catalogModel]`（source: 'models.dev'）；
- * manual 规则只挂 alias、不改动价格。dismiss：仅标记 dismissed。
+ * accept：写 `aliases[observedKey] = catalogModel`，并在目标 canonical 键不存在、
+ * 不是 manual 且不是 `enabled === false` 时写入/刷新 `rules[catalogModel]`（source: 'models.dev'）；
+ * manual 规则与被用户停用的规则只挂 alias、不改动价格（用户显式 accept 的是 alias 映射，
+ * 不构成复活已停用规则的理由）。dismiss：仅标记 dismissed。
  * 两种 action 都把条目标记 dismissed（已处理即移出待办）。
  *
  * 写入语义同 rematchObservedKeys：内部 savePricingConfig 不带 baseRevision
@@ -118,7 +121,9 @@ export async function applyCandidateResolutions(resolutions) {
         continue;
       }
       config.aliases[entry.observedKey] = chosen.model;
-      if (!config.rules[chosen.model] || config.rules[chosen.model].source !== 'manual') {
+      const target = config.rules[chosen.model];
+      // manual 规则与 enabled:false 规则（用户主动停用）只挂 alias，不覆盖/复活价格
+      if (!target || (target.source !== 'manual' && target.enabled !== false)) {
         config.rules[chosen.model] = {
           input: chosen.prices.input,
           output: chosen.prices.output,

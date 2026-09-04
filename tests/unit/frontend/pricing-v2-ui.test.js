@@ -114,15 +114,16 @@ function mountDom() {
     </div>`;
 }
 
-function stubFetch({ pricingGet, pricingPut, candidates } = {}) {
+function stubFetch({ pricingGet, pricingPut, candidates, resolve } = {}) {
   const getPayload = pricingGet ?? V2_CONFIG;
   const putResponse = pricingPut ?? { ok: true, revision: 8, updated: '2026-09-04T01:00:00.000Z' };
   const candidatesPayload = candidates ?? { candidates: [] };
+  const resolvePayload = resolve ?? { ok: true, applied: 1, failed: [] };
   return vi.fn(async (url, options = {}) => {
     const path = String(url);
     const method = options.method || 'GET';
     if (path.startsWith('/api/pricing/candidates/resolve')) {
-      return jsonResponse({ ok: true, applied: 1, failed: [] });
+      return resolvePayload instanceof Response ? resolvePayload : jsonResponse(resolvePayload);
     }
     if (path.startsWith('/api/pricing/candidates')) return jsonResponse(candidatesPayload);
     if (path.startsWith('/api/pricing/rematch')) {
@@ -243,6 +244,25 @@ describe('pricing v2 UI', () => {
         { observedKey: 'yyy/model-c', action: 'accept', catalogId: 'anthropic/claude-opus-5' },
         { observedKey: 'zzz/model-b', action: 'accept', catalogId: 'deepseek/deepseek-v4-pro' },
       ]),
+    );
+    // 等待 resolve 后的整页重载完成，避免测试结束后异步续跑
+    await vi.waitFor(() => expect(getCalls().length).toBeGreaterThan(1));
+  });
+
+  it('resolve partial failure surfaces failed count in toast', async () => {
+    vi.stubGlobal('fetch', stubFetch({
+      candidates: CANDIDATES,
+      resolve: { ok: true, applied: 2, failed: [{ observedKey: 'yyy/model-c', error: 'candidate not found' }] },
+    }));
+    await importPricing();
+    const section = document.getElementById('candidates-section');
+    await vi.waitFor(() => expect(section.hidden).toBe(false));
+
+    document.getElementById('btn-dismiss-all').click();
+    await vi.waitFor(() => expect(resolveCalls().length).toBe(1));
+    // 部分失败必须 surfaced：toast 展示失败条数，而不是静默当成功
+    await vi.waitFor(() =>
+      expect(document.getElementById('pricing-toast').textContent).toContain('失败 1 条'),
     );
     // 等待 resolve 后的整页重载完成，避免测试结束后异步续跑
     await vi.waitFor(() => expect(getCalls().length).toBeGreaterThan(1));

@@ -64,6 +64,28 @@ describe('rematchObservedKeys', () => {
     expect(loaded.rules['deepseek-v4-pro']).toMatchObject({ input: 1, source: 'models.dev' });
   });
 
+  it('rematch never resurrects or overwrites a disabled models.dev rule (user intent)', async () => {
+    const ws = await createTmpWorkspace();
+    disposables.push(ws.cleanup);
+    const cfg = defaultPricingConfigV2();
+    // 用户关掉了自动匹配来的 models.dev 规则：enabled:false 同样是用户意图，不可被 rematch 复活
+    cfg.rules['deepseek-v4-flash'] = { input: 9, output: 9, source: 'models.dev', enabled: false };
+    await savePricingConfig(cfg);
+    const catalog = {
+      deepseek: { models: {
+        'deepseek-v4-flash': { cost: { input: 0.14, output: 0.28 } },
+        'deepseek-v4-pro': { cost: { input: 1, output: 2 } },
+      } },
+    };
+    const r = await rematchObservedKeys(['cpa/zzz/deepseek-v4-flash', 'cpa/agy/deepseek-v4-pro'], { fetchImpl: async () => catalog });
+    expect(r.scanned).toBe(2);
+    expect(r.matched).toBe(1); // 只计 deepseek-v4-pro；disabled 规则既不算 matched 也不被覆盖
+    const loaded = await loadPricingConfig();
+    expect(loaded.rules['deepseek-v4-flash']).toMatchObject({ input: 9, source: 'models.dev', enabled: false }); // 原样存活
+    // 反向校验：无 disabled 规则的对照键正常写入（证明上面不是空转通过）
+    expect(loaded.rules['deepseek-v4-pro']).toMatchObject({ input: 1, source: 'models.dev', enabled: true });
+  });
+
   it('rematch preserves dismissed on previously dismissed entries', async () => {
     const ws = await createTmpWorkspace();
     disposables.push(ws.cleanup);
@@ -131,6 +153,39 @@ describe('applyCandidateResolutions', () => {
     expect(loaded.aliases['cpa/x/claude-opus-5-thinking']).toBe('claude-opus-5');
     expect(loaded.rules['claude-opus-5']).toMatchObject({ input: 99, output: 199, source: 'manual' }); // manual 不被覆盖
     expect((await loadCandidates()).candidates[0].dismissed).toBe(true);
+  });
+
+  it('accept keeps a disabled models.dev rule (prices untouched) but still writes alias + dismisses', async () => {
+    const ws = await createTmpWorkspace();
+    disposables.push(ws.cleanup);
+    const cfg = defaultPricingConfigV2();
+    // 用户关掉了自动匹配来的规则；accept 只挂 alias、不复活/覆盖价格
+    cfg.rules['claude-opus-5'] = { input: 99, output: 199, source: 'models.dev', enabled: false };
+    // 对照组：enabled 的 models.dev 规则允许被 accept 刷新（证明上面的保留不是空转通过）
+    cfg.rules['deepseek-v4-flash'] = { input: 9, output: 9, source: 'models.dev', enabled: true };
+    await savePricingConfig(cfg);
+    await saveCandidates({ candidates: [
+      {
+        observedKey: 'cpa/x/claude-opus-5-thinking',
+        candidates: [{ catalogKey: 'anthropic/claude-opus-5', provider: 'anthropic', model: 'claude-opus-5', prices: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 }, score: 0.9, reason: 'shared-model-tokens' }],
+        lastSeenAt: 'T', dismissed: false,
+      },
+      {
+        observedKey: 'cpa/y/deepseek-v4-flash-zzz',
+        candidates: [{ catalogKey: 'deepseek/deepseek-v4-flash', provider: 'deepseek', model: 'deepseek-v4-flash', prices: { input: 0.14, output: 0.28, cacheRead: null, cacheWrite: null }, score: 0.9, reason: 'shared-model-tokens' }],
+        lastSeenAt: 'T', dismissed: false,
+      },
+    ]});
+    const r = await applyCandidateResolutions([
+      { observedKey: 'cpa/x/claude-opus-5-thinking', action: 'accept', catalogId: 'anthropic/claude-opus-5' },
+      { observedKey: 'cpa/y/deepseek-v4-flash-zzz', action: 'accept', catalogId: 'deepseek/deepseek-v4-flash' },
+    ]);
+    expect(r.applied).toBe(2);
+    const loaded = await loadPricingConfig();
+    expect(loaded.aliases['cpa/x/claude-opus-5-thinking']).toBe('claude-opus-5'); // alias 照写
+    expect(loaded.rules['claude-opus-5']).toMatchObject({ input: 99, output: 199, source: 'models.dev', enabled: false }); // 不被复活/覆盖
+    expect(loaded.rules['deepseek-v4-flash']).toMatchObject({ input: 0.14, output: 0.28, enabled: true }); // 对照组被刷新
+    expect((await loadCandidates()).candidates.every((c) => c.dismissed)).toBe(true);
   });
 
   it('catalogId matches catalogKey first, then model (shared model id picks first)', async () => {

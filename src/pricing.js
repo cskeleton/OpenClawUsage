@@ -1155,6 +1155,12 @@ async function resolveCandidatesBatch(resolutions) {
       body: JSON.stringify({ resolutions }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const result = await res.json();
+    // 批量决议是逐条 best-effort：HTTP 200 也可能有 failed 项，必须 surfaced 而非静默吞掉
+    const failedCount = Array.isArray(result?.failed) ? result.failed.length : 0;
+    if (failedCount > 0) {
+      showToast(t('pricing.resolvePartialFailed', { count: failedCount }), { variant: 'error' });
+    }
     await loadData();
     return true;
   } catch (err) {

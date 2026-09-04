@@ -164,6 +164,7 @@ export const zhCNMessages = {
     manualFillHint: '已填入模型键，请填写 Input/Output 单价',
     rematchResult: '重新扫描完成：自动匹配 {matched} 个，进入确认队列 {queued} 个',
     rematchCatalogUnavailable: 'models.dev 目录不可用，未能重新扫描',
+    resolvePartialFailed: '批量处理完成，失败 {count} 条',
   },
   stats: {
     groupByCanonical: '按 canonical 分组',

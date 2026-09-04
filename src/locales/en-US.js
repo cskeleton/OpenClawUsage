@@ -164,6 +164,7 @@ export const enUSMessages = {
     manualFillHint: 'Model key filled; please enter Input/Output prices',
     rematchResult: 'Rescan done: {matched} auto-matched, {queued} queued for review',
     rematchCatalogUnavailable: 'models.dev catalog unavailable; rescan skipped',
+    resolvePartialFailed: 'Batch processed; {count} item(s) failed',
   },
   stats: {
     groupByCanonical: 'Group by canonical',
