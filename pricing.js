@@ -298,20 +298,50 @@ export async function loadPricingConfig() {
 }
 
 /**
- * 保存价格配置
- * @param {Object} config - 价格配置对象
- * @returns {Promise<void>}
+ * 去掉元字段（updated / revision）后的内容视图，供 no-op 比较使用
+ * @param {Object} config
+ * @returns {Object}
  */
-export async function savePricingConfig(config) {
-  // 验证配置
+function stripPricingMeta(config) {
+  const { updated, revision, ...rest } = config || {};
+  return rest;
+}
+
+/**
+ * 保存价格配置（乐观锁 + no-op 检测）。
+ * 注意：读-比较-写不是跨进程原子操作，baseRevision 只是 best-effort 乐观锁；
+ * 两个进程并发写同一文件时后写者仍可能覆盖先写者。
+ * @param {Object} config - v2 配置
+ * @param {{ baseRevision?: number }} [options] - 提供时与磁盘当前 revision 比较，不符则冲突
+ * @returns {Promise<{ revision: number, updated: string, changed: boolean }>}
+ */
+export async function savePricingConfig(config, { baseRevision } = {}) {
   validatePricingConfig(config);
-
-  // 更新时间戳
-  config.updated = new Date().toISOString();
-
-  // 写入规范路径
   const configPath = await resolvePricingConfigPath();
-  await writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
+  let current = null;
+  try {
+    current = JSON.parse(await readFile(configPath, 'utf-8'));
+  } catch (e) {
+    if (e.code !== 'ENOENT') throw e;
+  }
+  const currentRevision = typeof current?.revision === 'number' ? current.revision : 0;
+  if (baseRevision !== undefined && baseRevision !== currentRevision) {
+    const err = new Error('价格配置已被其他入口修改，请刷新后重试');
+    err.code = 'PRICING_REVISION_CONFLICT';
+    err.current = current;
+    throw err;
+  }
+  const changed = !current
+    || stablePricingStringify(stripPricingMeta(current)) !== stablePricingStringify(stripPricingMeta(config));
+  const next = {
+    ...config,
+    revision: currentRevision + (changed ? 1 : 0),
+    updated: changed ? new Date().toISOString() : (current?.updated || config.updated),
+  };
+  if (changed) {
+    await writeFile(configPath, JSON.stringify(next, null, 2), 'utf-8');
+  }
+  return { revision: next.revision, updated: next.updated, changed };
 }
 
 /**

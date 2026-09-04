@@ -60,7 +60,8 @@ export function computeSourceId(sqlitePath) {
 }
 
 /**
- * 构建定价指纹（保持 pricing 声明顺序）
+ * 构建定价指纹。savePricingConfig 保证「内容实质变化 ⇔ updated/revision 变化」，
+ * 因此指纹只需这四个字段，天然键序不敏感。candidates 文件不参与。
  * @param {object} pricingConfig
  * @returns {object}
  */
@@ -69,7 +70,7 @@ export function buildPricingFingerprint(pricingConfig) {
     version: pricingConfig?.version || 'none',
     enabled: pricingConfig?.enabled !== false,
     updated: pricingConfig?.updated || '',
-    pricing: pricingConfig?.pricing || {},
+    revision: typeof pricingConfig?.revision === 'number' ? pricingConfig.revision : 0,
   };
 }
 

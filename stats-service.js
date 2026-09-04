@@ -949,15 +949,14 @@ export async function getPricingConfig() {
 /**
  * 更新价格配置并失效聚合结果
  * @param {object} config
+ * @param {{ baseRevision?: number }} [options] - 提供时启用乐观锁（冲突抛 PRICING_REVISION_CONFLICT）
+ * @returns {Promise<{ ok: true, revision: number, updated: string }>}
  */
-export async function updatePricingConfig(config) {
+export async function updatePricingConfig(config, { baseRevision } = {}) {
   validatePricingConfig(config);
-  await savePricingConfig(config);
+  const { revision, updated } = await savePricingConfig(config, { baseRevision });
   invalidateStatsCache();
-  return {
-    ok: true,
-    updated: config.updated,
-  };
+  return { ok: true, revision, updated };
 }
 
 /**
