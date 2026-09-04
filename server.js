@@ -10,12 +10,15 @@ import {
 } from './pricing.js';
 import { listOpenClawPricedModels, listUnpricedModels } from './openclaw-config.js';
 import { getModelsDevCatalog } from './models-dev.js';
+import { rematchObservedKeys, applyCandidateResolutions } from './pricing-matching-service.js';
+import { loadCandidates } from './pricing-candidates-store.js';
 import {
   getStats,
   getPricingConfig,
   getPricingConfigDetailed,
   updatePricingConfig,
   refreshStatsCache,
+  invalidateStatsCache,
 } from './stats-service.js';
 import {
   getPublicSyncConfig,
@@ -349,6 +352,46 @@ export function createApp({ staticDir } = {}) {
       res.json(result);
     } catch (err) {
       console.error('Error resetting pricing config:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET /api/pricing/candidates - 确认队列（含 dismissed，前端过滤）
+  app.get('/api/pricing/candidates', async (req, res) => {
+    try {
+      res.json(await loadCandidates());
+    } catch (err) {
+      console.error('Error loading pricing candidates:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/pricing/candidates/resolve - 批量决议 { resolutions: [{ observedKey, action, catalogId? }] }
+  app.post('/api/pricing/candidates/resolve', async (req, res) => {
+    try {
+      const resolutions = req.body?.resolutions;
+      if (!Array.isArray(resolutions)) {
+        return res.status(400).json({ code: 'PRICING_BAD_REQUEST', error: '请求体须为 { resolutions: [...] }' });
+      }
+      const result = await applyCandidateResolutions(resolutions);
+      invalidateStatsCache(); // accept 会改 rules/aliases → 触发 re-merge
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      console.error('Error resolving pricing candidates:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/pricing/rematch - 对 stats 中未覆盖模型批量重扫 models.dev
+  app.post('/api/pricing/rematch', async (req, res) => {
+    try {
+      const data = await getStats();
+      const keys = Object.keys(data.byModel || {});
+      const result = await rematchObservedKeys(keys);
+      if (result.matched > 0) invalidateStatsCache();
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      console.error('Error rematching pricing:', err);
       res.status(500).json({ error: err.message });
     }
   });
