@@ -2,6 +2,7 @@ import { readFile, writeFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { homedir } from 'os';
+import { DEFAULT_NOISE_SUFFIXES } from './pricing-normalize.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -80,9 +81,6 @@ function isPatternMatchType(mt) {
 
 export const PRICING_SCHEMA_VERSION = '2.0';
 
-// Task 4 的 pricing-normalize.js 将提供 DEFAULT_NOISE_SUFFIXES，届时改为 import
-const DEFAULT_NOISE_SUFFIXES_INLINE = ['-high', '-thinking', '-low', '-medium'];
-
 /**
  * v2 默认价格配置
  * @returns {Object}
@@ -93,7 +91,7 @@ export function defaultPricingConfigV2() {
     enabled: true,
     updated: '0001-01-01T00:00:00.000Z',
     revision: 0,
-    matching: { ignoreProvider: true, noiseSuffixes: [...DEFAULT_NOISE_SUFFIXES_INLINE] },
+    matching: { ignoreProvider: true, noiseSuffixes: [...DEFAULT_NOISE_SUFFIXES] },
     rules: {},
     aliases: {},
     patterns: {},
@@ -125,7 +123,7 @@ export function migratePricingConfigV1toV2(v1) {
     enabled: v1?.enabled !== false,
     updated: typeof v1?.updated === 'string' ? v1.updated : '0001-01-01T00:00:00.000Z',
     revision: 1,
-    matching: { ignoreProvider: true, noiseSuffixes: [...DEFAULT_NOISE_SUFFIXES_INLINE] },
+    matching: { ignoreProvider: true, noiseSuffixes: [...DEFAULT_NOISE_SUFFIXES] },
     rules,
     aliases: {},
     patterns,
