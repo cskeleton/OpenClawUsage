@@ -6,6 +6,7 @@ import {
   loadCandidates,
   saveCandidates,
   upsertCandidateEntry,
+  withCandidatesLock,
 } from '../../../pricing-candidates-store.js';
 
 const disposables = [];
@@ -40,5 +41,20 @@ describe('candidates store', () => {
     disposables.push(ws.cleanup);
     await saveCandidates({ candidates: [{ observedKey: 'cpa/x', candidates: [], lastSeenAt: 'T', dismissed: false }] });
     expect((await loadCandidates()).candidates).toHaveLength(1);
+  });
+
+  it('withCandidatesLock serializes read-modify-write sections', async () => {
+    const order = [];
+    await Promise.all([
+      withCandidatesLock(async () => { await new Promise((r) => setTimeout(r, 20)); order.push('slow'); }),
+      withCandidatesLock(async () => { order.push('fast'); }),
+    ]);
+    // 无锁时 fast 会先完成；串行化后必须等 slow 释放
+    expect(order).toEqual(['slow', 'fast']);
+  });
+
+  it('withCandidatesLock keeps the chain alive after a failing section', async () => {
+    await expect(withCandidatesLock(async () => { throw new Error('boom'); })).rejects.toThrow('boom');
+    await expect(withCandidatesLock(async () => 'ok')).resolves.toBe('ok');
   });
 });

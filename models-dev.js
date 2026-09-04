@@ -1,5 +1,5 @@
 import { mkdir, readFile } from 'fs/promises';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { getCacheDir } from './stats-cache-store.js';
 import { writeTextFileAtomic } from './json-atomic-write.js';
 
@@ -80,9 +80,9 @@ async function fetchRemote() {
   }
 }
 
-async function readSnapshot() {
+async function readSnapshot(cacheFilePath) {
   try {
-    const raw = await readFile(getCacheFilePath(), 'utf-8');
+    const raw = await readFile(cacheFilePath, 'utf-8');
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed.fetchedAt !== 'string' || !Array.isArray(parsed.models)) return null;
     return parsed;
@@ -91,22 +91,22 @@ async function readSnapshot() {
   }
 }
 
-async function writeSnapshot(snapshot) {
+async function writeSnapshot(cacheFilePath, snapshot) {
   try {
-    await mkdir(getCacheDir(), { recursive: true });
-    await writeTextFileAtomic(getCacheFilePath(), JSON.stringify(snapshot));
+    await mkdir(dirname(cacheFilePath), { recursive: true });
+    await writeTextFileAtomic(cacheFilePath, JSON.stringify(snapshot));
   } catch (err) {
     console.warn('models.dev 缓存写入失败:', err?.message || err);
   }
 }
 
 /** 后台刷新：同一时间至多一个在途；失败仅记日志，不影响已返回的陈旧快照 */
-async function refreshInBackground() {
+async function refreshInBackground(cacheFilePath) {
   if (inflightRefresh) return inflightRefresh;
   inflightRefresh = (async () => {
     try {
       const json = await fetchJson(activeFetchImpl || fetchRemote);
-      await writeSnapshot({ fetchedAt: new Date().toISOString(), models: normalizeCatalog(json) });
+      await writeSnapshot(cacheFilePath, { fetchedAt: new Date().toISOString(), models: normalizeCatalog(json) });
     } catch (err) {
       console.warn('models.dev 后台刷新失败:', err?.message || err);
     } finally {
@@ -118,6 +118,7 @@ async function refreshInBackground() {
 
 /**
  * 获取 models.dev 目录（先旧后新：过期缓存立即返回 stale 并后台刷新）
+ * 入口同步钉住缓存文件路径：后台刷新的落盘不随 env 变化漂移（与定价配置同因，2026-09-04）。
  * @param {{ fetchImpl?: Function, nowMs?: number }} [options]
  * @returns {Promise<{ models: Array, fetchedAt: string, stale: boolean, source: 'models.dev' }>}
  */
@@ -125,7 +126,8 @@ export async function getModelsDevCatalog({ fetchImpl, nowMs } = {}) {
   if (fetchImpl) activeFetchImpl = fetchImpl;
   const doFetch = fetchImpl || fetchRemote;
   const now = nowMs ?? Date.now();
-  const snapshot = await readSnapshot();
+  const cacheFilePath = getCacheFilePath();
+  const snapshot = await readSnapshot(cacheFilePath);
 
   if (snapshot) {
     const age = now - Date.parse(snapshot.fetchedAt);
@@ -133,7 +135,7 @@ export async function getModelsDevCatalog({ fetchImpl, nowMs } = {}) {
       return { models: snapshot.models, fetchedAt: snapshot.fetchedAt, stale: false, source: 'models.dev' };
     }
     // 过期：先返回陈旧快照，后台刷新
-    refreshInBackground().catch(() => {});
+    refreshInBackground(cacheFilePath).catch(() => {});
     return { models: snapshot.models, fetchedAt: snapshot.fetchedAt, stale: true, source: 'models.dev' };
   }
 
@@ -146,7 +148,7 @@ export async function getModelsDevCatalog({ fetchImpl, nowMs } = {}) {
   }
   const models = normalizeCatalog(json);
   const fetchedAt = new Date(now).toISOString();
-  await writeSnapshot({ fetchedAt, models });
+  await writeSnapshot(cacheFilePath, { fetchedAt, models });
   return { models, fetchedAt, stale: false, source: 'models.dev' };
 }
 

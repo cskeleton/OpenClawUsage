@@ -1,8 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
 import { createTmpWorkspace } from '../../helpers/tmp-workspace.js';
+import { getCacheDir } from '../../../stats-cache-store.js';
 import {
   getModelsDevCatalog,
   __clearModelsDevCacheForTests,
+  MODELS_DEV_CACHE_FILENAME,
 } from '../../../models-dev.js';
 
 const SAMPLE = {
@@ -111,5 +115,34 @@ describe('cache behavior', () => {
     await vi.waitFor(() => expect(calls).toBeGreaterThan(0));
     await new Promise((r) => setTimeout(r, 60));
     expect(calls).toBe(1);
+  });
+
+  // 回归：后台刷新落盘晚于 env 切换时，写必须仍落在入口时刻的目录（2026-09-04 路径漂移事故同类）
+  it('pins cache file path at entry so background refresh writes survive env changes', async () => {
+    await getModelsDevCatalog({ fetchImpl: okFetch(), nowMs: 1_000 });
+    const cachePathA = join(getCacheDir(), MODELS_DEV_CACHE_FILENAME);
+    expect(existsSync(cachePathA)).toBe(true);
+
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const gatedFetch = async () => {
+      await gate;
+      return new Response(JSON.stringify(SAMPLE), { status: 200 });
+    };
+    const later = 1_000 + 25 * 60 * 60 * 1000;
+    const out = await getModelsDevCatalog({ fetchImpl: gatedFetch, nowMs: later });
+    expect(out.stale).toBe(true);
+
+    // env 切换到新 workspace（模拟测试间 env 还原/切换）
+    const ws2 = await createTmpWorkspace();
+    disposables.push(ws2.cleanup);
+    const cachePathB = join(getCacheDir(), MODELS_DEV_CACHE_FILENAME);
+
+    release();
+    await vi.waitFor(() => {
+      const snap = JSON.parse(readFileSync(cachePathA, 'utf-8'));
+      expect(Date.parse(snap.fetchedAt)).toBeGreaterThan(1_000);
+    });
+    expect(existsSync(cachePathB)).toBe(false);
   });
 });

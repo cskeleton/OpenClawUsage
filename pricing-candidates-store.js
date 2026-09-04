@@ -41,6 +41,20 @@ export async function saveCandidates(state, { configPath } = {}) {
   await writeTextFileAtomic(await getCandidatesPath(configPath), JSON.stringify(state, null, 2));
 }
 
+/** 进程内 candidates 读-改-写串行化：惰性 rematch 与 HTTP resolve 并发时防止丢 dismissed 标记 */
+let candidatesLock = Promise.resolve();
+
+/**
+ * 串行执行一段 candidates 的读-改-写（前一段失败不阻塞后续）。
+ * @param {() => Promise<any>} fn
+ * @returns {Promise<any>}
+ */
+export function withCandidatesLock(fn) {
+  const run = candidatesLock.then(fn, fn);
+  candidatesLock = run.then(() => {}, () => {});
+  return run;
+}
+
 /**
  * 按 observedKey 去重 upsert，刷新 lastSeenAt（同 key 旧条目被替换到队尾）。
  * @param {{ candidates: object[] }} state

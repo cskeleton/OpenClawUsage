@@ -2,7 +2,7 @@ import { loadPricingConfig, savePricingConfig, resolvePricingRule } from './pric
 import { splitModelKey } from './pricing-normalize.js';
 import { buildCatalogIndex, matchObservedKey } from './pricing-catalog-matcher.js';
 import { getModelsDevCatalog } from './models-dev.js';
-import { loadCandidates, saveCandidates, upsertCandidateEntry } from './pricing-candidates-store.js';
+import { loadCandidates, saveCandidates, upsertCandidateEntry, withCandidatesLock } from './pricing-candidates-store.js';
 
 /**
  * 对 observed keys 批量跑 models.dev 匹配：唯一命中写入 rules（source: 'models.dev'），
@@ -35,46 +35,49 @@ export async function rematchObservedKeys(keys, { fetchImpl, configPath } = {}) 
     return { scanned: uncovered.length, matched: 0, queued: 0, catalogUnavailable: true };
   }
   const index = buildCatalogIndex(catalog.models);
-  const candidatesState = await loadCandidates(configPath ? { configPath } : undefined);
   const ignoreProvider = config.matching?.ignoreProvider !== false;
   const noiseSuffixes = config.matching?.noiseSuffixes;
   let matched = 0;
   let queued = 0;
 
-  for (const key of uncovered) {
-    const { provider, model } = splitModelKey(key);
-    const result = matchObservedKey(provider, model, { index, noiseSuffixes, ignoreProvider });
-    if (result.status === 'unique') {
-      const { model: catalogModel, prices } = result.match;
-      if (prices.input == null || prices.output == null) continue; // 无价目不入库
-      const existing = config.rules[catalogModel];
-      // manual 规则与 enabled:false 规则（用户主动停用，无论 source）都不可被自动匹配覆盖/复活；
-      // 此时该 observed 键既不计 matched 也不计 queued（跳过写入即视为已处理）
-      if (existing && (existing.source === 'manual' || existing.enabled === false)) continue;
-      config.rules[catalogModel] = {
-        input: prices.input,
-        output: prices.output,
-        cacheRead: prices.cacheRead,
-        cacheWrite: prices.cacheWrite,
-        enabled: true,
-        source: 'models.dev',
-        syncedAt: catalog.fetchedAt,
-      };
-      matched++;
-    } else if (result.status === 'ambiguous') {
-      // 已 dismissed 的条目刷新候选/lastSeenAt 但保持 dismissed（用户决议不被 rematch 复活）
-      const prev = candidatesState.candidates.find((c) => c.observedKey === key);
-      upsertCandidateEntry(candidatesState, {
-        observedKey: key,
-        candidates: result.candidates,
-        lastSeenAt: new Date().toISOString(),
-        dismissed: prev?.dismissed === true,
-      });
-      queued++;
+  // candidates 读-改-写整体串行化：与并发 applyCandidateResolutions 互斥，防丢 dismissed 标记
+  await withCandidatesLock(async () => {
+    const candidatesState = await loadCandidates(configPath ? { configPath } : undefined);
+    for (const key of uncovered) {
+      const { provider, model } = splitModelKey(key);
+      const result = matchObservedKey(provider, model, { index, noiseSuffixes, ignoreProvider });
+      if (result.status === 'unique') {
+        const { model: catalogModel, prices } = result.match;
+        if (prices.input == null || prices.output == null) continue; // 无价目不入库
+        const existing = config.rules[catalogModel];
+        // manual 规则与 enabled:false 规则（用户主动停用，无论 source）都不可被自动匹配覆盖/复活；
+        // 此时该 observed 键既不计 matched 也不计 queued（跳过写入即视为已处理）
+        if (existing && (existing.source === 'manual' || existing.enabled === false)) continue;
+        config.rules[catalogModel] = {
+          input: prices.input,
+          output: prices.output,
+          cacheRead: prices.cacheRead,
+          cacheWrite: prices.cacheWrite,
+          enabled: true,
+          source: 'models.dev',
+          syncedAt: catalog.fetchedAt,
+        };
+        matched++;
+      } else if (result.status === 'ambiguous') {
+        // 已 dismissed 的条目刷新候选/lastSeenAt 但保持 dismissed（用户决议不被 rematch 复活）
+        const prev = candidatesState.candidates.find((c) => c.observedKey === key);
+        upsertCandidateEntry(candidatesState, {
+          observedKey: key,
+          candidates: result.candidates,
+          lastSeenAt: new Date().toISOString(),
+          dismissed: prev?.dismissed === true,
+        });
+        queued++;
+      }
     }
-  }
+    if (queued > 0) await saveCandidates(candidatesState, configPath ? { configPath } : {});
+  });
   if (matched > 0) await savePricingConfig(config, configPath ? { configPath } : {}); // 无 baseRevision：best-effort 强制写（见 JSDoc）
-  if (queued > 0) await saveCandidates(candidatesState, configPath ? { configPath } : {});
   return { scanned: uncovered.length, matched, queued };
 }
 
@@ -95,6 +98,8 @@ export async function rematchObservedKeys(keys, { fetchImpl, configPath } = {}) 
  * @returns {Promise<{ applied: number, failed: Array<{ observedKey: string, error: string }> }>}
  */
 export async function applyCandidateResolutions(resolutions) {
+  // 与 rematchObservedKeys 互斥：candidates 读-改-写串行化，防并发丢 dismissed 标记
+  return withCandidatesLock(async () => {
   const state = await loadCandidates();
   const config = await loadPricingConfig();
   let applied = 0;
@@ -145,4 +150,5 @@ export async function applyCandidateResolutions(resolutions) {
   if (configDirty) await savePricingConfig(config); // 无 baseRevision：best-effort 强制写（见 JSDoc）
   await saveCandidates(state);
   return { applied, failed };
+  });
 }
