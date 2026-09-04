@@ -84,13 +84,17 @@ export function createMcpServer() {
       },
       {
         name: "update_pricing_config",
-        description: "更新价格配置并失效缓存 / Update pricing configuration and invalidate cached stats.",
+        description: "更新价格配置并失效缓存；可选 baseRevision 启用乐观锁，冲突时返回 isError 与 { code, current } / Update pricing configuration and invalidate cached stats; optional baseRevision enables optimistic locking — conflicts return isError with { code, current }.",
         inputSchema: {
           type: "object",
           properties: {
             config: {
               type: "object",
               description: "完整价格配置对象 / Full pricing configuration object",
+            },
+            baseRevision: {
+              type: "number",
+              description: "Optimistic-lock revision from get_pricing_config / 来自 get_pricing_config 的乐观锁 revision",
             },
           },
           required: ["config"],
@@ -226,15 +230,30 @@ export function createMcpServer() {
           };
         }
         case "update_pricing_config": {
-          const result = await updatePricingConfig(args.config);
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(result, null, 2),
-              },
-            ],
-          };
+          try {
+            const result = await updatePricingConfig(args.config, { baseRevision: args.baseRevision });
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify(result, null, 2),
+                },
+              ],
+            };
+          } catch (error) {
+            if (error.code === "PRICING_REVISION_CONFLICT") {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: JSON.stringify({ code: error.code, current: error.current }, null, 2),
+                  },
+                ],
+                isError: true,
+              };
+            }
+            throw error;
+          }
         }
         case "refresh_stats_cache": {
           const result = await refreshStatsCache({ full: args?.full === true });

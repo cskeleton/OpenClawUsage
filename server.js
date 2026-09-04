@@ -6,12 +6,14 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import { getSqlitePath } from './sqlite-source.js';
 import {
   findMatchingPricing,
+  defaultPricingConfigV2,
 } from './pricing.js';
 import { listOpenClawPricedModels, listUnpricedModels } from './openclaw-config.js';
 import { getModelsDevCatalog } from './models-dev.js';
 import {
   getStats,
   getPricingConfig,
+  getPricingConfigDetailed,
   updatePricingConfig,
   refreshStatsCache,
 } from './stats-service.js';
@@ -310,38 +312,40 @@ export function createApp({ staticDir } = {}) {
     }
   });
 
-  // GET /api/pricing - 获取当前价格配置
+  // GET /api/pricing - 获取当前价格配置（含 revision；配置损坏时附 validationErrors）
   app.get('/api/pricing', async (req, res) => {
     try {
-      const config = await getPricingConfig();
-      res.json(config);
+      const { config, validationErrors } = await getPricingConfigDetailed();
+      res.json(validationErrors.length ? { ...config, validationErrors } : config);
     } catch (err) {
       console.error('Error loading pricing config:', err);
       res.status(500).json({ error: err.message });
     }
   });
 
-  // PUT /api/pricing - 更新价格配置
+  // PUT /api/pricing - 更新价格配置（信封 { config, baseRevision }，乐观锁）
   app.put('/api/pricing', async (req, res) => {
     try {
-      const result = await updatePricingConfig(req.body);
+      const body = req.body;
+      if (!body || typeof body !== 'object' || !body.config || typeof body.config !== 'object'
+          || typeof body.baseRevision !== 'number') {
+        return res.status(400).json({ code: 'PRICING_BAD_REQUEST', error: '请求体须为 { config, baseRevision }' });
+      }
+      const result = await updatePricingConfig(body.config, { baseRevision: body.baseRevision });
       res.json(result);
     } catch (err) {
+      if (err.code === 'PRICING_REVISION_CONFLICT') {
+        return res.status(409).json({ code: err.code, error: err.message, current: err.current });
+      }
       console.error('Error updating pricing config:', err);
-      res.status(400).json({ error: err.message });
+      res.status(422).json({ code: 'PRICING_VALIDATION_FAILED', error: err.message });
     }
   });
 
-  // POST /api/pricing/reset - 重置为默认（空）配置
+  // POST /api/pricing/reset - 重置为默认 v2（空）配置，无条件强制写入
   app.post('/api/pricing/reset', async (req, res) => {
     try {
-      const defaultConfig = {
-        version: '1.0',
-        enabled: true,
-        updated: new Date().toISOString(),
-        pricing: {}
-      };
-      const result = await updatePricingConfig(defaultConfig);
+      const result = await updatePricingConfig(defaultPricingConfigV2());
       res.json(result);
     } catch (err) {
       console.error('Error resetting pricing config:', err);

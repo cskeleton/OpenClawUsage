@@ -9,6 +9,18 @@ import { invalidateStatsCache, resetStatsServiceForTests } from '../../../stats-
 const disposables = [];
 let app;
 
+function v2Config(overrides = {}) {
+  return {
+    version: '2.0',
+    enabled: true,
+    matching: { ignoreProvider: true, noiseSuffixes: [] },
+    rules: {},
+    aliases: {},
+    patterns: {},
+    ...overrides,
+  };
+}
+
 beforeEach(async () => {
   resetStatsServiceForTests();
   const ws = await createTmpWorkspace();
@@ -69,22 +81,29 @@ describe('GET /api/refresh', () => {
 describe('/api/pricing CRUD', () => {
   it('GET returns current config', async () => {
     const res = await request(app).get('/api/pricing').expect(200);
-    expect(res.body.version).toBe('1.0');
+    expect(res.body.version).toBe('2.0');
+    expect(typeof res.body.revision).toBe('number');
   });
 
-  it('PUT with invalid config returns 400', async () => {
-    await request(app)
+  it('PUT with invalid config returns 422', async () => {
+    const res = await request(app)
       .put('/api/pricing')
-      .send({ version: '1.0', pricing: { 'openai/gpt-4o': { input: -1, output: 1 } } })
-      .expect(400);
+      .send({
+        config: v2Config({ rules: { 'openai/gpt-4o': { input: -1, output: 1 } } }),
+        baseRevision: 0,
+      })
+      .expect(422);
+    expect(res.body.code).toBe('PRICING_VALIDATION_FAILED');
   });
 
   it('PUT with valid config returns 200 ok', async () => {
     const res = await request(app)
       .put('/api/pricing')
       .send({
-        version: '1.0', enabled: true,
-        pricing: { 'openai/gpt-4o': { input: 2.5, output: 10 } },
+        config: v2Config({
+          rules: { 'openai/gpt-4o': { input: 2.5, output: 10, source: 'manual' } },
+        }),
+        baseRevision: 0,
       })
       .expect(200);
     expect(res.body.ok).toBe(true);
@@ -96,6 +115,9 @@ describe('/api/pricing CRUD', () => {
       .set('Content-Type', 'application/json')
       .expect(200);
     expect(res.body.ok).toBe(true);
+    const after = await request(app).get('/api/pricing').expect(200);
+    expect(after.body.version).toBe('2.0');
+    expect(after.body.rules).toEqual({});
   });
 });
 
@@ -104,7 +126,7 @@ describe('write endpoint CSRF guard', () => {
     const res = await request(app)
       .put('/api/pricing')
       .set('Origin', 'https://evil.example.com')
-      .send({ version: '1.0', enabled: true, pricing: {} })
+      .send({ config: v2Config(), baseRevision: 0 })
       .expect(403);
     expect(res.body.error).toMatch(/cross-origin/i);
   });
@@ -149,7 +171,7 @@ describe('write endpoint CSRF guard', () => {
       .put('/api/pricing')
       .set('Host', '127.0.0.1:3001')
       .set('Origin', 'http://127.0.0.1:3001')
-      .send({ version: '1.0', enabled: true, pricing: {} })
+      .send({ config: v2Config(), baseRevision: 0 })
       .expect(200);
     expect(res.body.ok).toBe(true);
   });
@@ -176,9 +198,10 @@ describe('write endpoint CSRF guard', () => {
       .put('/api/pricing')
       .set('Content-Type', 'application/vnd.test+json')
       .send({
-        version: '1.0',
-        enabled: true,
-        pricing: { 'openai/gpt-4o': { input: 2.5, output: 10 } },
+        config: v2Config({
+          rules: { 'openai/gpt-4o': { input: 2.5, output: 10, source: 'manual' } },
+        }),
+        baseRevision: 0,
       })
       .expect(200);
     expect(res.body.ok).toBe(true);
@@ -189,10 +212,10 @@ describe('write endpoint CSRF guard', () => {
       .put('/api/pricing')
       .set('Content-Type', 'application/vnd.test+json')
       .send({
-        version: '1.0',
-        pricing: { 'openai/gpt-4o': { input: -1, output: 1 } },
+        config: v2Config({ rules: { 'openai/gpt-4o': { input: -1, output: 1 } } }),
+        baseRevision: 0,
       })
-      .expect(400);
+      .expect(422);
     expect(res.body.error).toBeTruthy();
   });
 });

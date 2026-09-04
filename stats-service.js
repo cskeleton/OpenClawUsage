@@ -15,7 +15,7 @@ import {
   SYNC_CONFIG_FILENAME,
 } from './sync-config.js';
 import { loadImportedSnapshots } from './sync-snapshot.js';
-import { loadPricingConfig, savePricingConfig, validatePricingConfig } from './pricing.js';
+import { loadPricingConfig, loadPricingConfigDetailed, savePricingConfig, validatePricingConfig } from './pricing.js';
 import {
   CACHE_SCHEMA_VERSION,
   computeSourceId,
@@ -60,14 +60,29 @@ let lastManifestScan = null;
 let persistenceUnavailable = false;
 
 /**
- * 附加定价元数据到统计结果
+ * 附加定价元数据到统计结果（pricingConfig 为 null 表示配置损坏，已回退账面价）
  */
 function attachPricingMeta(stats, pricingConfig) {
   return {
     ...stats,
-    pricingUpdated: pricingConfig.updated || '',
-    pricingVersion: pricingConfig.version,
+    pricingUpdated: pricingConfig?.updated || '',
+    pricingVersion: pricingConfig?.version || '',
   };
+}
+
+/**
+ * 统计加载路径使用的「安全配置」：配置校验失败（含 JSON 损坏）时告警并返回 null，
+ * 使成本计算回退账面价（calculateCostFromUsage 对 null 走 OpenClaw 原始成本），
+ * 而不是带着无效配置或异常崩溃。
+ * @returns {Promise<object|null>}
+ */
+async function loadSafePricingConfig() {
+  const { config, validationErrors } = await loadPricingConfigDetailed();
+  if (validationErrors.length > 0) {
+    console.warn('[stats-service] 价格配置校验失败，统计回退账面价:', validationErrors);
+    return null;
+  }
+  return config;
 }
 
 /**
@@ -362,7 +377,7 @@ function canAdoptDiskSnapshot(diskCache, { sourceId, manifest, full, revisionBef
  * @param {{ full?: boolean }} options
  */
 async function executeRefresh({ full = false } = {}) {
-  const pricingConfig = await loadPricingConfig();
+  const pricingConfig = await loadSafePricingConfig();
   const fp = buildPricingFingerprint(pricingConfig);
   const sourceId = computeSourceId(getSqlitePath());
   let scan = rescanManifest();
@@ -579,7 +594,7 @@ async function ensureLoaded(pricingConfig, fp, sourceId, manifestScan) {
  *   waitForRefresh：仅在检测到变化时等待刷新完成（对应 HTTP `?fresh=1`）。
  */
 async function getLocalStats({ forceFresh = false, waitForRefresh = false } = {}) {
-  const pricingConfig = await loadPricingConfig();
+  const pricingConfig = await loadSafePricingConfig();
   const fp = buildPricingFingerprint(pricingConfig);
   const sourceId = computeSourceId(getSqlitePath());
   const manifestScan = await getManifestCoalesced();
@@ -817,7 +832,7 @@ export async function getStats(options = {}) {
   // 查看者时区偏移（分钟，UTC+X）：只影响日级归日，不影响 UTC 小时键与汇总合计
   const tzOffsetMinutes = normalizeTzOffsetMinutes(options.tzOffsetMinutes);
   const localResponse = await getLocalStats(options);
-  const pricingConfig = await loadPricingConfig();
+  const pricingConfig = await loadSafePricingConfig();
   const syncConfig = await loadSyncConfig();
   const publicSync = await getPublicSyncConfig({ syncConfig });
   const snapshots = await loadImportedSnapshots({ syncConfig });
@@ -944,6 +959,14 @@ export function resetStatsServiceForTests() {
  */
 export async function getPricingConfig() {
   return loadPricingConfig();
+}
+
+/**
+ * 读取价格配置（含校验结果），供 HTTP GET /api/pricing 暴露 validationErrors
+ * @returns {Promise<{ config: Object, validationErrors: string[] }>}
+ */
+export async function getPricingConfigDetailed() {
+  return loadPricingConfigDetailed();
 }
 
 /**

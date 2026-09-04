@@ -93,7 +93,8 @@ describe('MCP callTool', () => {
   it('get_pricing_config does not require stats aggregation', async () => {
     const res = await call('get_pricing_config');
     const parsed = JSON.parse(res.content[0].text);
-    expect(parsed.version).toBe('1.0');
+    expect(parsed.version).toBe('2.0');
+    expect(typeof parsed.revision).toBe('number');
   });
 
   it('get_pricing_config and update_pricing_config do not call getStats', async () => {
@@ -106,9 +107,12 @@ describe('MCP callTool', () => {
 
     await call('update_pricing_config', {
       config: {
-        version: '1.0',
+        version: '2.0',
         enabled: true,
-        pricing: { 'openai/gpt-4o': { input: 1, output: 2 } },
+        matching: { ignoreProvider: true, noiseSuffixes: [] },
+        rules: { 'openai/gpt-4o': { input: 1, output: 2, source: 'manual' } },
+        aliases: {},
+        patterns: {},
       },
     });
     expect(parseSpy).not.toHaveBeenCalled();
@@ -123,9 +127,12 @@ describe('MCP callTool', () => {
   it('update_pricing_config + refresh_stats_cache reflect change', async () => {
     await call('update_pricing_config', {
       config: {
-        version: '1.0',
+        version: '2.0',
         enabled: true,
-        pricing: { 'openai/gpt-4o': { input: 999, output: 999 } },
+        matching: { ignoreProvider: true, noiseSuffixes: [] },
+        rules: { 'openai/gpt-4o': { input: 999, output: 999, source: 'manual' } },
+        aliases: {},
+        patterns: {},
       },
     });
 
@@ -134,7 +141,43 @@ describe('MCP callTool', () => {
 
     const pricingRes = await call('get_pricing_config');
     const parsed = JSON.parse(pricingRes.content[0].text);
-    expect(parsed.pricing['openai/gpt-4o'].input).toBe(999);
+    expect(parsed.rules['openai/gpt-4o'].input).toBe(999);
+  });
+
+  it('update_pricing_config with stale baseRevision returns isError conflict JSON', async () => {
+    const config = {
+      version: '2.0',
+      enabled: true,
+      matching: { ignoreProvider: true, noiseSuffixes: [] },
+      rules: { 'openai/gpt-4o': { input: 5, output: 5, source: 'manual' } },
+      aliases: {},
+      patterns: {},
+    };
+
+    // 不带 baseRevision：向后兼容，不强制乐观锁
+    const first = await call('update_pricing_config', { config });
+    expect(first.isError).toBeUndefined();
+    expect(JSON.parse(first.content[0].text).ok).toBe(true);
+
+    const current = JSON.parse((await call('get_pricing_config')).content[0].text);
+
+    // 携带过期 baseRevision → isError + JSON { code, current }
+    const conflict = await call('update_pricing_config', {
+      config,
+      baseRevision: current.revision - 1,
+    });
+    expect(conflict.isError).toBe(true);
+    const payload = JSON.parse(conflict.content[0].text);
+    expect(payload.code).toBe('PRICING_REVISION_CONFLICT');
+    expect(payload.current.revision).toBe(current.revision);
+
+    // 携带正确 baseRevision → 成功
+    const okRes = await call('update_pricing_config', {
+      config,
+      baseRevision: current.revision,
+    });
+    expect(okRes.isError).toBeUndefined();
+    expect(JSON.parse(okRes.content[0].text).ok).toBe(true);
   });
 
   it('unknown tool throws Error handled by callToolHandler catch', async () => {
