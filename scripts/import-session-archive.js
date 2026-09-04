@@ -29,8 +29,9 @@ const IMPORTS_SUBDIR = join('cache', 'openclaw-usage', 'imports');
 const STATS_CACHE_FILE = join('cache', 'openclaw-usage', 'stats-v2.json');
 const ARCHIVE_DIR_NAME = 'session-sqlite-import-archive';
 
-// agent_main_<name>.<uuid>.jsonl.imported-<ms>；trajectory 变体不匹配（.trajectory.jsonl）
-const SESSION_FILE_RE = /\.([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl\.imported-(\d+)$/;
+// agent_main_<name>.<uuid>[-topic-<thread>].jsonl.imported-<ms>；trajectory 变体不匹配（.trajectory.jsonl）
+// Matrix 线程会话在 uuid 后带 -topic- 后缀，属于 main agent 的真实会话，一并导入
+const SESSION_FILE_RE = /\.([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:-topic-[^/]*)?\.jsonl\.imported-(\d+)$/;
 
 function parseArgs(argv) {
   const args = { configDir: null, dryRun: false };

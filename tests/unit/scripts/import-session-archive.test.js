@@ -128,6 +128,20 @@ describe('import-session-archive buildArchiveSnapshot', () => {
     expect(snapshot.contributions).toHaveLength(0);
   });
 
+  it('imports Matrix topic sessions with -topic- suffix in the filename', async () => {
+    const configDir = await makeConfigDir();
+    const archiveDir = join(configDir, 'agents', 'main', 'session-sqlite-import-archive');
+    mkdirSync(archiveDir, { recursive: true });
+    writeFileSync(
+      join(archiveDir, `agent_main_matrix_direct_x_thread_y.${UUID_A}-topic-_24ABCdef.jsonl.imported-1788177078528`),
+      usageLine({ timestamp: '2026-07-25T07:24:56.759Z' }),
+    );
+
+    const { snapshot, stats } = await buildArchiveSnapshot({ configDir });
+    expect(stats.imported).toBe(1);
+    expect(snapshot.contributions[0].session.id).toBe(UUID_A);
+  });
+
   it('is idempotent: contribution ids are stable across runs', async () => {
     const configDir = await makeConfigDir();
     const archiveDir = join(configDir, 'agents', 'main', 'session-sqlite-import-archive');
