@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { readFileSync, writeFileSync, renameSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, renameSync, existsSync, readdirSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { createTmpWorkspace } from '../../helpers/tmp-workspace.js';
@@ -128,6 +128,17 @@ describe('pricing path resolution', () => {
     disposables.push(stashLegacyPricingFile());
     await savePricingConfig(defaultPricingConfigV2());
     expect(existsSync(join(ws.configDir, 'openclaw-usage-pricing.json'))).toBe(true);
+  });
+
+  it('savePricingConfig 原子写：内容完整且无 tmp 残留', async () => {
+    const ws = await createTmpWorkspace();
+    disposables.push(ws.cleanup);
+    disposables.push(stashLegacyPricingFile());
+    await savePricingConfig(defaultPricingConfigV2());
+    const leftovers = readdirSync(ws.configDir).filter((f) => f.startsWith('.tmp-'));
+    expect(leftovers).toEqual([]);
+    const parsed = JSON.parse(readFileSync(join(ws.configDir, 'openclaw-usage-pricing.json'), 'utf-8'));
+    expect(parsed.version).toBe('2.0');
   });
 
   it('migrates a v1 file found at the workspace-detected legacy path', async () => {

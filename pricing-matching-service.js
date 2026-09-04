@@ -16,11 +16,11 @@ import { loadCandidates, saveCandidates, upsertCandidateEntry } from './pricing-
  * `enabled === false`——manual 条目与被用户停用的条目都是用户意图，自动匹配绝不可覆盖/复活。
  *
  * @param {string[]} keys - `provider/model` 列表
- * @param {{ fetchImpl?: Function }} [options]
+ * @param {{ fetchImpl?: Function, configPath?: string }} [options] - configPath 固定配置/队列文件路径（后台调用方在触发时刻钉住，防 env 变化后写偏）
  * @returns {Promise<{ scanned: number, matched: number, queued: number, catalogUnavailable?: true }>}
  */
-export async function rematchObservedKeys(keys, { fetchImpl } = {}) {
-  const config = await loadPricingConfig();
+export async function rematchObservedKeys(keys, { fetchImpl, configPath } = {}) {
+  const config = await loadPricingConfig(configPath ? { configPath } : undefined);
   if (config.enabled === false) return { scanned: 0, matched: 0, queued: 0 };
   const uncovered = [...new Set(keys)].filter((key) => {
     const { provider, model } = splitModelKey(key);
@@ -35,7 +35,7 @@ export async function rematchObservedKeys(keys, { fetchImpl } = {}) {
     return { scanned: uncovered.length, matched: 0, queued: 0, catalogUnavailable: true };
   }
   const index = buildCatalogIndex(catalog.models);
-  const candidatesState = await loadCandidates();
+  const candidatesState = await loadCandidates(configPath ? { configPath } : undefined);
   const ignoreProvider = config.matching?.ignoreProvider !== false;
   const noiseSuffixes = config.matching?.noiseSuffixes;
   let matched = 0;
@@ -73,8 +73,8 @@ export async function rematchObservedKeys(keys, { fetchImpl } = {}) {
       queued++;
     }
   }
-  if (matched > 0) await savePricingConfig(config); // 无 baseRevision：best-effort 强制写（见 JSDoc）
-  if (queued > 0) await saveCandidates(candidatesState);
+  if (matched > 0) await savePricingConfig(config, configPath ? { configPath } : {}); // 无 baseRevision：best-effort 强制写（见 JSDoc）
+  if (queued > 0) await saveCandidates(candidatesState, configPath ? { configPath } : {});
   return { scanned: uncovered.length, matched, queued };
 }
 

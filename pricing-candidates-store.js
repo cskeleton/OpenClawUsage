@@ -1,24 +1,30 @@
-import { readFile, writeFile } from 'fs/promises';
+import { readFile } from 'fs/promises';
 import { dirname, join } from 'path';
 import { resolvePricingConfigPath } from './pricing.js';
+import { writeTextFileAtomic } from './json-atomic-write.js';
 
 /**
  * 确认队列（candidates queue）持久化。
  * 机器产物：可由 rematchObservedKeys 重新生成，因此缺失/损坏一律回落空态，绝不抛错。
- * 文件与定价配置同目录：dirname(resolvePricingConfigPath())/openclaw-usage-pricing-candidates.json
+ * 文件与定价配置同目录：dirname(配置路径)/openclaw-usage-pricing-candidates.json
  */
 
-async function getCandidatesPath() {
-  return join(dirname(await resolvePricingConfigPath()), 'openclaw-usage-pricing-candidates.json');
+/**
+ * @param {string} [configPath] - 定价配置路径覆盖（后台任务钉住触发时刻的路径）
+ */
+async function getCandidatesPath(configPath) {
+  const base = configPath || await resolvePricingConfigPath();
+  return join(dirname(base), 'openclaw-usage-pricing-candidates.json');
 }
 
 /**
  * 读取确认队列。
+ * @param {{ configPath?: string }} [options]
  * @returns {Promise<{ candidates: Array<{ observedKey: string, candidates: object[], lastSeenAt: string, dismissed: boolean }> }>}
  */
-export async function loadCandidates() {
+export async function loadCandidates({ configPath } = {}) {
   try {
-    const parsed = JSON.parse(await readFile(await getCandidatesPath(), 'utf-8'));
+    const parsed = JSON.parse(await readFile(await getCandidatesPath(configPath), 'utf-8'));
     if (!parsed || !Array.isArray(parsed.candidates)) return { candidates: [] };
     return parsed;
   } catch {
@@ -27,11 +33,12 @@ export async function loadCandidates() {
 }
 
 /**
- * 持久化确认队列。
+ * 持久化确认队列（原子写：tmp + rename，中断不留截断文件）。
  * @param {{ candidates: object[] }} state
+ * @param {{ configPath?: string }} [options]
  */
-export async function saveCandidates(state) {
-  await writeFile(await getCandidatesPath(), JSON.stringify(state, null, 2), 'utf-8');
+export async function saveCandidates(state, { configPath } = {}) {
+  await writeTextFileAtomic(await getCandidatesPath(configPath), JSON.stringify(state, null, 2));
 }
 
 /**

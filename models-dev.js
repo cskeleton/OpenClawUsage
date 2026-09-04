@@ -1,6 +1,7 @@
-import { mkdir, readFile, writeFile } from 'fs/promises';
+import { mkdir, readFile } from 'fs/promises';
 import { join } from 'path';
 import { getCacheDir } from './stats-cache-store.js';
+import { writeTextFileAtomic } from './json-atomic-write.js';
 
 const MODELS_DEV_URL = 'https://models.dev/api.json';
 const TTL_MS = 24 * 60 * 60 * 1000;
@@ -93,7 +94,7 @@ async function readSnapshot() {
 async function writeSnapshot(snapshot) {
   try {
     await mkdir(getCacheDir(), { recursive: true });
-    await writeFile(getCacheFilePath(), JSON.stringify(snapshot), 'utf-8');
+    await writeTextFileAtomic(getCacheFilePath(), JSON.stringify(snapshot));
   } catch (err) {
     console.warn('models.dev 缓存写入失败:', err?.message || err);
   }

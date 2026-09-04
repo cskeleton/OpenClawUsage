@@ -1,4 +1,5 @@
-import { readFile, writeFile } from 'fs/promises';
+import { readFile } from 'fs/promises';
+import { writeTextFileAtomic } from './json-atomic-write.js';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { homedir } from 'os';
@@ -244,10 +245,11 @@ export async function legacyPricingPathCandidates() {
  * 加载价格配置（含校验结果）。
  * 文件不存在 → 尝试 legacy 路径；仍为 v1 或无 version → 自动迁移为 v2 并写回；
  * JSON 损坏 → 返回默认配置并附 validationErrors。
+ * @param {{ configPath?: string }} [options] - configPath 固定读取/迁移写回路径（供后台任务钉住触发时刻的路径，防 env 变化后写偏）
  * @returns {Promise<{ config: Object, validationErrors: string[] }>}
  */
-export async function loadPricingConfigDetailed() {
-  const configPath = await resolvePricingConfigPath();
+export async function loadPricingConfigDetailed({ configPath: pinnedPath } = {}) {
+  const configPath = pinnedPath || await resolvePricingConfigPath();
   let raw = null;
   try {
     raw = JSON.parse(await readFile(configPath, 'utf-8'));
@@ -273,7 +275,7 @@ export async function loadPricingConfigDetailed() {
   if (raw.version !== PRICING_SCHEMA_VERSION) {
     try {
       config = migratePricingConfigV1toV2(raw);
-      await savePricingConfig(config);
+      await savePricingConfig(config, pinnedPath ? { configPath: pinnedPath } : {});
     } catch (e) {
       validationErrors.push(`v1 配置迁移失败: ${e.message}`);
       config = defaultPricingConfigV2();
@@ -289,10 +291,11 @@ export async function loadPricingConfigDetailed() {
 
 /**
  * 加载价格配置
+ * @param {{ configPath?: string }} [options]
  * @returns {Promise<Object>} 价格配置对象
  */
-export async function loadPricingConfig() {
-  return (await loadPricingConfigDetailed()).config;
+export async function loadPricingConfig(options) {
+  return (await loadPricingConfigDetailed(options)).config;
 }
 
 /**
@@ -310,12 +313,12 @@ function stripPricingMeta(config) {
  * 注意：读-比较-写不是跨进程原子操作，baseRevision 只是 best-effort 乐观锁；
  * 两个进程并发写同一文件时后写者仍可能覆盖先写者。
  * @param {Object} config - v2 配置
- * @param {{ baseRevision?: number }} [options] - 提供时与磁盘当前 revision 比较，不符则冲突
+ * @param {{ baseRevision?: number, configPath?: string }} [options] - baseRevision 提供时与磁盘当前 revision 比较，不符则冲突；configPath 固定写入路径
  * @returns {Promise<{ revision: number, updated: string, changed: boolean }>}
  */
-export async function savePricingConfig(config, { baseRevision } = {}) {
+export async function savePricingConfig(config, { baseRevision, configPath: pinnedPath } = {}) {
   validatePricingConfig(config);
-  const configPath = await resolvePricingConfigPath();
+  const configPath = pinnedPath || await resolvePricingConfigPath();
   let current = null;
   try {
     current = JSON.parse(await readFile(configPath, 'utf-8'));
@@ -337,7 +340,7 @@ export async function savePricingConfig(config, { baseRevision } = {}) {
     updated: changed ? new Date().toISOString() : (current?.updated || config.updated),
   };
   if (changed) {
-    await writeFile(configPath, JSON.stringify(next, null, 2), 'utf-8');
+    await writeTextFileAtomic(configPath, JSON.stringify(next, null, 2));
   }
   return { revision: next.revision, updated: next.updated, changed };
 }

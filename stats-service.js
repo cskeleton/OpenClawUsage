@@ -15,7 +15,7 @@ import {
   SYNC_CONFIG_FILENAME,
 } from './sync-config.js';
 import { loadImportedSnapshots } from './sync-snapshot.js';
-import { loadPricingConfig, loadPricingConfigDetailed, savePricingConfig, validatePricingConfig } from './pricing.js';
+import { loadPricingConfig, loadPricingConfigDetailed, savePricingConfig, validatePricingConfig, resolvePricingConfigPath } from './pricing.js';
 import { rematchObservedKeys } from './pricing-matching-service.js';
 import {
   CACHE_SCHEMA_VERSION,
@@ -73,6 +73,8 @@ export function __setAutoRematchFetchImplForTests(fn) {
  * merge 产出 stats 后的惰性自动匹配：对账面回退（未覆盖）的模型后台跑一次 rematch。
  * fire-and-forget；matched>0 时 invalidate 使下次 getStats 以新价 re-merge。
  * 每次 merge 周期至多触发一轮（inflight 守卫 + 触发后短期内新规则使 uncovered 收敛）。
+ * 触发时刻同步钉住配置路径：fire-and-forget 落盘晚于调用方（如测试 afterEach 还原 env）
+ * 时，写仍落在触发时的目录，不随 env 漂移。
  */
 function maybeAutoRematch(stats, pricingConfig) {
   if (inflightAutoRematch) return;
@@ -81,9 +83,15 @@ function maybeAutoRematch(stats, pricingConfig) {
     (k) => stats.byModel[k].costSource === 'openclaw'
   );
   if (!uncovered.length) return;
+  // resolvePricingConfigPath 主体同步读 env，此处调用即锁定当前环境指向
+  const configPathPromise = resolvePricingConfigPath();
   inflightAutoRematch = (async () => {
     try {
-      const result = await rematchObservedKeys(uncovered, autoRematchFetchImpl ? { fetchImpl: autoRematchFetchImpl } : {});
+      const configPath = await configPathPromise;
+      const result = await rematchObservedKeys(uncovered, {
+        ...(autoRematchFetchImpl ? { fetchImpl: autoRematchFetchImpl } : {}),
+        configPath,
+      });
       if (result.matched > 0) invalidateStatsCache();
     } catch (err) {
       console.warn('自动价格匹配失败:', err?.message || err);

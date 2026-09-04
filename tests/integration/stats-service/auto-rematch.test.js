@@ -1,4 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import { existsSync } from 'fs';
+import { readFile } from 'fs/promises';
+import { join } from 'path';
 import { createTmpWorkspace } from '../../helpers/tmp-workspace.js';
 import { fixturePath } from '../../helpers/fixture-loader.js';
 import {
@@ -99,5 +102,28 @@ describe('stats-service lazy auto-rematch hook', () => {
 
     const again = await getStats();
     expect(again.byModel['bohe/kimi-k3'].costSource).toBe('openclaw');
+  });
+
+  // 回归：2026-09-04 本机 ~/.openclaw 配置被后台写打穿的根因之一是
+  // fire-and-forget 落盘晚于测试 afterEach 还原 env，写到了还原后的路径。
+  it('pins the config path at trigger time so background writes survive env changes', async () => {
+    const { fetchImpl, release } = gatedCatalog();
+    const ws = await setupWorkspace(fetchImpl);
+
+    await getStats(); // 触发后台 rematch，目录拉取被闸住（尚未写盘）
+
+    // 模拟下一个测试建 workspace：env 指向全新目录
+    const ws2 = await createTmpWorkspace();
+    disposables.push(ws2.cleanup);
+
+    release();
+    await vi.waitFor(async () => {
+      const raw = JSON.parse(await readFile(join(ws.configDir, 'openclaw-usage-pricing.json'), 'utf-8'));
+      expect(raw.rules['kimi-k3']?.source).toBe('models.dev');
+    });
+
+    // 写必须落在触发时的 ws，不得漂移到 env 切换后的 ws2
+    expect(existsSync(join(ws2.configDir, 'openclaw-usage-pricing.json'))).toBe(false);
+    expect(existsSync(join(ws2.configDir, 'openclaw-usage-pricing-candidates.json'))).toBe(false);
   });
 });
