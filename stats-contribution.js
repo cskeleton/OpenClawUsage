@@ -1,4 +1,4 @@
-import { calculateCostFromUsage } from './pricing.js';
+import { applyPricingResolution, resolvePricingRule } from './pricing.js';
 
 /**
  * 合并结果（`stats`）的形状版本。
@@ -7,8 +7,10 @@ import { calculateCostFromUsage } from './pricing.js';
  * v2：session 增加 `byDateModel`（日期 × provider/model 交叉表）
  * v3：贡献 bucket 按 UTC 小时分桶；合并输出新增 `byHourModel`（小时 × provider/model），
  *     `byDate` 等日级表由小时 bucket 上卷（bucket.date 截前 10 位）
+ * v4：merge 输出新增 canonical/costSource/costBreakdown/costBySource
+ *     （贡献结构不变，读盘形状不匹配时从 files 重合并）
  */
-export const STATS_SHAPE_VERSION = 3;
+export const STATS_SHAPE_VERSION = 4;
 
 function dynamicMap() {
   return Object.create(null);
@@ -78,12 +80,24 @@ function emptyOpenclawCost() {
 }
 
 /**
- * 计算单条 bucket 在当前定价下的费用
+ * 计算单条 bucket 在当前定价下的费用（返回完整成本对象，含来源与 canonical）。
+ * resolutionCache 以 `${provider}\0${model}` 为键缓存 resolvePricingRule 的结果
+ * （缓存的是解析结果而非成本——成本随 bucket 用量变化）；
+ * 配置缺失或 enabled === false 时 resolution 为 null，走账面价回退。
  * @param {object} bucket
  * @param {object} pricingConfig
- * @returns {number}
+ * @param {Map<string, null|object>} resolutionCache
+ * @returns {{ input: number, output: number, cacheRead: number, cacheWrite: number, total: number, source: string, canonical: string|null }}
  */
-function costForBucket(bucket, pricingConfig) {
+function costForBucket(bucket, pricingConfig, resolutionCache) {
+  const cacheKey = `${bucket.provider}\0${bucket.model}`;
+  let resolution;
+  if (resolutionCache.has(cacheKey)) {
+    resolution = resolutionCache.get(cacheKey);
+  } else {
+    resolution = pricingConfig ? resolvePricingRule(bucket.provider, bucket.model, pricingConfig) : null;
+    resolutionCache.set(cacheKey, resolution);
+  }
   const usageForCost = {
     input: bucket.usage.input,
     output: bucket.usage.output,
@@ -92,16 +106,11 @@ function costForBucket(bucket, pricingConfig) {
     totalTokens: bucket.usage.totalTokens,
     cost: bucket.openclawCost,
   };
-  const cost = calculateCostFromUsage(
-    usageForCost,
-    bucket.provider,
-    bucket.model,
-    pricingConfig
-  );
+  const cost = applyPricingResolution(usageForCost, resolution);
   if (!cost || typeof cost.total !== 'number' || !Number.isFinite(cost.total) || cost.total < 0) {
     throw new Error('unsafe statistics aggregate value: totalCost');
   }
-  return cost.total;
+  return cost;
 }
 
 /**
@@ -166,10 +175,16 @@ export function buildContributionFromRecords(session, records) {
 
 /**
  * 在日期+键维度上累加
+ * @param {object} [meta] - 可选 cell 元信息 `{ costSource, canonical }`，
+ *   仅 byHourModel / byDateModel 传入，cell 初始化时挂载
  */
-function addToCrossTable(table, date, key, usage, cost, requests) {
+function addToCrossTable(table, date, key, usage, cost, requests, meta) {
   if (!Object.hasOwn(table, date)) table[date] = dynamicMap();
-  if (!Object.hasOwn(table[date], key)) table[date][key] = emptyBucket();
+  if (!Object.hasOwn(table[date], key)) {
+    table[date][key] = meta
+      ? { ...emptyBucket(), costSource: meta.costSource, canonical: meta.canonical }
+      : emptyBucket();
+  }
   const b = table[date][key];
   addAggregate(b, 'input', usage.input);
   addAggregate(b, 'output', usage.output);
@@ -226,6 +241,7 @@ function localDayOfHourKey(hourKey, tzOffsetMinutes) {
  */
 export function mergeFileContributions(filesMap, pricingConfig, { tzOffsetMinutes = 0 } = {}) {
   const tz = normalizeTzOffsetMinutes(tzOffsetMinutes);
+  const resolutionCache = new Map();
   const summary = {
     totalInput: 0,
     totalOutput: 0,
@@ -235,6 +251,7 @@ export function mergeFileContributions(filesMap, pricingConfig, { tzOffsetMinute
     totalCost: 0,
     totalRequests: 0,
     totalSessions: 0,
+    costBySource: { manual: 0, 'models.dev': 0, pattern: 0, openclaw: 0 },
   };
 
   const byProvider = dynamicMap();
@@ -274,7 +291,8 @@ export function mergeFileContributions(filesMap, pricingConfig, { tzOffsetMinute
     };
 
     for (const bucket of contribution.buckets) {
-      const cost = costForBucket(bucket, pricingConfig);
+      const cost = costForBucket(bucket, pricingConfig, resolutionCache);
+      const costTotal = cost.total;
       const usage = bucket.usage;
 
       addAggregate(summary, 'totalInput', usage.input);
@@ -282,8 +300,15 @@ export function mergeFileContributions(filesMap, pricingConfig, { tzOffsetMinute
       addAggregate(summary, 'totalCacheRead', usage.cacheRead);
       addAggregate(summary, 'totalCacheWrite', usage.cacheWrite);
       addAggregate(summary, 'totalTokens', usage.totalTokens);
-      addAggregate(summary, 'totalCost', cost);
+      addAggregate(summary, 'totalCost', costTotal);
       addAggregate(summary, 'totalRequests', bucket.requests);
+
+      // 按成本来源分桶（普通 += + finite 检查，不走 addAggregate 的字段名约束）
+      const sourceTotal = summary.costBySource[cost.source] + costTotal;
+      if (!Number.isFinite(sourceTotal) || sourceTotal > MAX_SAFE_AGGREGATE) {
+        throw new Error('statistics aggregate exceeds safe range: costBySource');
+      }
+      summary.costBySource[cost.source] = sourceTotal;
 
       sessionStats.providers.add(bucket.provider);
       sessionStats.models.add(bucket.model);
@@ -292,7 +317,7 @@ export function mergeFileContributions(filesMap, pricingConfig, { tzOffsetMinute
       addAggregate(sessionStats, 'totalCacheRead', usage.cacheRead);
       addAggregate(sessionStats, 'totalCacheWrite', usage.cacheWrite);
       addAggregate(sessionStats, 'totalTokens', usage.totalTokens);
-      addAggregate(sessionStats, 'totalCost', cost);
+      addAggregate(sessionStats, 'totalCost', costTotal);
       addAggregate(sessionStats, 'requestCount', bucket.requests);
 
       if (!Object.hasOwn(byProvider, bucket.provider)) byProvider[bucket.provider] = emptyBucket();
@@ -302,12 +327,19 @@ export function mergeFileContributions(filesMap, pricingConfig, { tzOffsetMinute
       addAggregate(p, 'cacheRead', usage.cacheRead);
       addAggregate(p, 'cacheWrite', usage.cacheWrite);
       addAggregate(p, 'totalTokens', usage.totalTokens);
-      addAggregate(p, 'totalCost', cost);
+      addAggregate(p, 'totalCost', costTotal);
       addAggregate(p, 'requests', bucket.requests);
 
       const modelKey = `${bucket.provider}/${bucket.model}`;
       if (!Object.hasOwn(byModel, modelKey)) {
-        byModel[modelKey] = { provider: bucket.provider, model: bucket.model, ...emptyBucket() };
+        byModel[modelKey] = {
+          provider: bucket.provider,
+          model: bucket.model,
+          canonical: cost.canonical ?? bucket.model,
+          costSource: cost.source,
+          costBreakdown: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          ...emptyBucket(),
+        };
       }
       const m = byModel[modelKey];
       addAggregate(m, 'input', usage.input);
@@ -315,8 +347,12 @@ export function mergeFileContributions(filesMap, pricingConfig, { tzOffsetMinute
       addAggregate(m, 'cacheRead', usage.cacheRead);
       addAggregate(m, 'cacheWrite', usage.cacheWrite);
       addAggregate(m, 'totalTokens', usage.totalTokens);
-      addAggregate(m, 'totalCost', cost);
+      addAggregate(m, 'totalCost', costTotal);
       addAggregate(m, 'requests', bucket.requests);
+      m.costBreakdown.input += cost.input;
+      m.costBreakdown.output += cost.output;
+      m.costBreakdown.cacheRead += cost.cacheRead;
+      m.costBreakdown.cacheWrite += cost.cacheWrite;
 
       if (bucket.date) {
         // bucket.date 为 UTC 小时键（"YYYY-MM-DDTHH"）：日级表按查看者时区归日；
@@ -325,7 +361,10 @@ export function mergeFileContributions(filesMap, pricingConfig, { tzOffsetMinute
           ? localDayOfHourKey(bucket.date, tz)
           : bucket.date;
         if (bucket.date.length > 10) {
-          addToCrossTable(byHourModel, bucket.date, modelKey, usage, cost, bucket.requests);
+          addToCrossTable(byHourModel, bucket.date, modelKey, usage, costTotal, bucket.requests, {
+            costSource: cost.source,
+            canonical: cost.canonical ?? bucket.model,
+          });
         }
         if (!Object.hasOwn(byDate, date)) byDate[date] = emptyBucket();
         const d = byDate[date];
@@ -334,11 +373,14 @@ export function mergeFileContributions(filesMap, pricingConfig, { tzOffsetMinute
         addAggregate(d, 'cacheRead', usage.cacheRead);
         addAggregate(d, 'cacheWrite', usage.cacheWrite);
         addAggregate(d, 'totalTokens', usage.totalTokens);
-        addAggregate(d, 'totalCost', cost);
+        addAggregate(d, 'totalCost', costTotal);
         addAggregate(d, 'requests', bucket.requests);
 
-        addToCrossTable(byDateProvider, date, bucket.provider, usage, cost, bucket.requests);
-        addToCrossTable(byDateModel, date, modelKey, usage, cost, bucket.requests);
+        addToCrossTable(byDateProvider, date, bucket.provider, usage, costTotal, bucket.requests);
+        addToCrossTable(byDateModel, date, modelKey, usage, costTotal, bucket.requests, {
+          costSource: cost.source,
+          canonical: cost.canonical ?? bucket.model,
+        });
 
         if (!Object.hasOwn(sessionStats.byDate, date)) sessionStats.byDate[date] = emptyBucket();
         const sd = sessionStats.byDate[date];
@@ -347,10 +389,10 @@ export function mergeFileContributions(filesMap, pricingConfig, { tzOffsetMinute
         addAggregate(sd, 'cacheRead', usage.cacheRead);
         addAggregate(sd, 'cacheWrite', usage.cacheWrite);
         addAggregate(sd, 'totalTokens', usage.totalTokens);
-        addAggregate(sd, 'totalCost', cost);
+        addAggregate(sd, 'totalCost', costTotal);
         addAggregate(sd, 'requests', bucket.requests);
 
-        addToCrossTable(sessionStats.byDateModel, date, modelKey, usage, cost, bucket.requests);
+        addToCrossTable(sessionStats.byDateModel, date, modelKey, usage, costTotal, bucket.requests);
       }
     }
 
@@ -395,6 +437,7 @@ export function buildEmptyStats() {
       totalCost: 0,
       totalRequests: 0,
       totalSessions: 0,
+      costBySource: { manual: 0, 'models.dev': 0, pattern: 0, openclaw: 0 },
     },
     byProvider: dynamicMap(),
     byModel: dynamicMap(),
