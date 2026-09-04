@@ -87,12 +87,12 @@ describe('loadPricingConfig / savePricingConfig', () => {
     expect(typeof loaded.updated).toBe('string');
   });
 
-  it('persists file under OPENCLAW_DIR', async () => {
+  it('persists file under OPENCLAW_CONFIG_DIR', async () => {
     const ws = await createTmpWorkspace();
     disposables.push(ws.cleanup);
 
     await savePricingConfig(defaultPricingConfigV2());
-    const persistedPath = join(ws.workspaceDir, 'openclaw-usage-pricing.json');
+    const persistedPath = join(ws.configDir, 'openclaw-usage-pricing.json');
     expect(existsSync(persistedPath)).toBe(true);
     const parsed = JSON.parse(readFileSync(persistedPath, 'utf-8'));
     expect(parsed.version).toBe('2.0');
@@ -132,13 +132,13 @@ describe('legacy migration', () => {
       pricing: { 'legacy/model': { input: 7, output: 7 } },
     }));
 
-    // 旧版 v1 文件加载时自动迁移为 v2 并写回新路径
+    // 旧版 v1 文件加载时自动迁移为 v2 并写回规范路径（OPENCLAW_CONFIG_DIR）
     const cfg = await loadPricingConfig();
     expect(cfg.version).toBe('2.0');
     expect(cfg.rules['legacy/model']).toBeTruthy();
 
     const migrated = JSON.parse(readFileSync(
-      join(ws.workspaceDir, 'openclaw-usage-pricing.json'), 'utf-8',
+      join(ws.configDir, 'openclaw-usage-pricing.json'), 'utf-8',
     ));
     expect(migrated.rules['legacy/model']).toBeTruthy();
   });

@@ -186,10 +186,11 @@ export function findMatchingPricing(modelKey, pricingMap) {
 }
 
 /**
- * 动态检测 OpenClaw 工作目录（用于定位 openclaw-usage-pricing.json）。
+ * 动态检测 OpenClaw 工作目录。
  * 优先级：OPENCLAW_DIR env > openclaw.json 里的 agents.defaults.workspace > ~/.openclaw
- * 注意：这是 **定价配置文件** 的存储位置；会话数据（openclaw-agent.sqlite）与
- * openclaw.json 走 `openclaw-config.js` 的 `OPENCLAW_CONFIG_DIR`（通常默认 `~/.openclaw`）。
+ * @deprecated 定价配置的规范位置已由 `resolvePricingConfigPath()` 统一为
+ * `OPENCLAW_CONFIG_DIR`（见下）；本函数仅为 legacy 迁移候选
+ * （`legacyPricingPathCandidates`）保留 workspace 探测逻辑。
  * @returns {Promise<string>} OpenClaw 工作目录路径
  */
 export async function detectOpenClawDir() {
@@ -213,14 +214,33 @@ export async function detectOpenClawDir() {
     return join(homedir(), '.openclaw');
 }
 
-// 配置文件路径：每次动态检测，避免长期运行时缓存过期
-async function getPricingConfigPath() {
-    const openclawDir = await detectOpenClawDir();
-    return join(openclawDir, 'openclaw-usage-pricing.json');
+/**
+ * 定价配置文件规范路径（文件名固定为 openclaw-usage-pricing.json）。
+ * 优先级：OPENCLAW_USAGE_PRICING_PATH > OPENCLAW_CONFIG_DIR > OPENCLAW_DIR（deprecated alias）> ~/.openclaw
+ * @returns {Promise<string>}
+ */
+export async function resolvePricingConfigPath() {
+  const explicit = process.env.OPENCLAW_USAGE_PRICING_PATH;
+  if (explicit) return explicit;
+  const dir = process.env.OPENCLAW_CONFIG_DIR
+    || process.env.OPENCLAW_DIR
+    || join(homedir(), '.openclaw');
+  return join(dir, 'openclaw-usage-pricing.json');
 }
 
-// 旧路径兼容（用于首次迁移）
-const LEGACY_PRICING_PATH = join(homedir(), '.openclaw', 'openclaw-usage-pricing.json');
+/**
+ * legacy 候选（迁移来源），按优先级；去重且不含规范路径自身
+ * @returns {Promise<string[]>}
+ */
+export async function legacyPricingPathCandidates() {
+  const canonical = await resolvePricingConfigPath();
+  const detected = await detectOpenClawDir();
+  const candidates = [
+    join(detected, 'openclaw-usage-pricing.json'),
+    join(homedir(), '.openclaw', 'openclaw-usage-pricing.json'),
+  ];
+  return [...new Set(candidates)].filter((p) => p !== canonical);
+}
 
 /**
  * 加载价格配置（含校验结果）。
@@ -229,16 +249,19 @@ const LEGACY_PRICING_PATH = join(homedir(), '.openclaw', 'openclaw-usage-pricing
  * @returns {Promise<{ config: Object, validationErrors: string[] }>}
  */
 export async function loadPricingConfigDetailed() {
-  const configPath = await getPricingConfigPath();
+  const configPath = await resolvePricingConfigPath();
   let raw = null;
   try {
     raw = JSON.parse(await readFile(configPath, 'utf-8'));
   } catch (error) {
     if (error.code === 'ENOENT') {
-      // legacy 回退（保留现有 LEGACY_PRICING_PATH 迁移逻辑，Task 2 扩展）
-      try {
-        raw = JSON.parse(await readFile(LEGACY_PRICING_PATH, 'utf-8'));
-      } catch { /* 不存在 */ }
+      // legacy 迁移来源：按候选顺序取第一个可读文件（不存在或不可读则跳过）
+      for (const legacyPath of await legacyPricingPathCandidates()) {
+        try {
+          raw = JSON.parse(await readFile(legacyPath, 'utf-8'));
+          break;
+        } catch { /* 继续下一个候选 */ }
+      }
     } else if (error instanceof SyntaxError) {
       return { config: defaultPricingConfigV2(), validationErrors: [`价格配置 JSON 解析失败: ${error.message}`] };
     } else {
@@ -286,8 +309,8 @@ export async function savePricingConfig(config) {
   // 更新时间戳
   config.updated = new Date().toISOString();
 
-  // 写入动态路径
-  const configPath = await getPricingConfigPath();
+  // 写入规范路径
+  const configPath = await resolvePricingConfigPath();
   await writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
 }
 
