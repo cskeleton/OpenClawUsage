@@ -6,7 +6,8 @@ import { loadCandidates, saveCandidates, upsertCandidateEntry } from './pricing-
 
 /**
  * 对 observed keys 批量跑 models.dev 匹配：唯一命中写入 rules（source: 'models.dev'），
- * 歧义进确认队列。已被 rules/aliases/patterns 覆盖的键（以完整 resolvePricingRule 口径判定）跳过。
+ * 歧义进确认队列（同 key 已 dismissed 的条目保持 dismissed，仅刷新候选与 lastSeenAt）。
+ * 已被 rules/aliases/patterns 覆盖的键（以完整 resolvePricingRule 口径判定）跳过。
  *
  * 写入语义：内部 savePricingConfig 一律**不带 baseRevision**（best-effort 强制写）。
  * 自动匹配是后台批量路径，不持有用户会话的 revision；若与并发用户 PUT 撞车，
@@ -59,11 +60,13 @@ export async function rematchObservedKeys(keys, { fetchImpl } = {}) {
       };
       matched++;
     } else if (result.status === 'ambiguous') {
+      // 已 dismissed 的条目刷新候选/lastSeenAt 但保持 dismissed（用户决议不被 rematch 复活）
+      const prev = candidatesState.candidates.find((c) => c.observedKey === key);
       upsertCandidateEntry(candidatesState, {
         observedKey: key,
         candidates: result.candidates,
         lastSeenAt: new Date().toISOString(),
-        dismissed: false,
+        dismissed: prev?.dismissed === true,
       });
       queued++;
     }
@@ -85,6 +88,7 @@ export async function rematchObservedKeys(keys, { fetchImpl } = {}) {
  * （best-effort 强制写）；并发用户 PUT 若基于旧 revision 将收到 409 并重载。
  *
  * @param {Array<{ observedKey: string, action: 'accept'|'dismiss', catalogId?: string }>} resolutions
+ *   - `catalogId`：先按 `catalogKey` 精确匹配候选，再按 `model` 匹配（同 model 多候选取首个）
  * @returns {Promise<{ applied: number, failed: Array<{ observedKey: string, error: string }> }>}
  */
 export async function applyCandidateResolutions(resolutions) {
@@ -106,7 +110,9 @@ export async function applyCandidateResolutions(resolutions) {
       continue;
     }
     if (r.action === 'accept') {
-      const chosen = entry.candidates.find((c) => c.model === r.catalogId || c.catalogKey === r.catalogId);
+      // catalogId 匹配顺序：catalogKey 精确匹配优先，其次 model（同 model 多候选时取首个）
+      const chosen = entry.candidates.find((c) => c.catalogKey === r.catalogId)
+        ?? entry.candidates.find((c) => c.model === r.catalogId);
       if (!chosen || chosen.prices.input == null || chosen.prices.output == null) {
         failed.push({ observedKey: r.observedKey, error: 'catalogId not in candidates or missing prices' });
         continue;
