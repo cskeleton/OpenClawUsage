@@ -1,8 +1,10 @@
 # 设计规格：OpenClaw 内置价格参考与自定义价格开关
 
 **日期**：2026-04-19  
-**状态**：已实现  
+**状态**：⚠️ 部分被取代（2026-09-04 价格机制重构）  
 **修订**：2026-04-20 — 与实现对齐：`unpricedModels` 的 `custom` 对照、缺少价格表列与文案、`agents.defaults.models` 说明；主页汇总卡片「总费用」置末。
+
+> **Superseded（2026-09-04，部分）**：被 `2026-09-04-pricing-mechanism-redesign-design.md` 取代的范围——「配置模型」节（v1 `pricing` map 结构 → v2 `rules`/`patterns`/`aliases`，见新规格）；`custom` 对照的判定方式（`findMatchingPricing` → `resolvePricingRule` 完整管线，含 aliases/归一化/patterns）。另注意数据源已先行变更：OpenClaw 2026.8.2 起 `agents/main/agent/models.json` 不再生成，参考表改读 `openclaw.json` 的 `models.providers`（兼容顶层 `providers` 旧形态）。仍有效的部分：参考表/缺价表互为补集的概念、`agents.defaults.models` 与参考表非一一对应的说明、两级开关语义（顶层/条目级 `enabled`）。
 
 ## 目标
 

@@ -1,7 +1,9 @@
 # 设计规格：价格规则通配符与正则匹配
 
 **日期**：2026-04-19  
-**状态**：已实现
+**状态**：⚠️ 已被取代（2026-09-04 价格机制重构，整体取代）
+
+> **Superseded（2026-09-04，整体）**：本篇描述的 v1 定价结构（单一 `pricing` map + 每条 `matchType: exact|wildcard|regex`、exact 优先于 pattern 的匹配优先级、前端 pattern 校验）已被 `2026-09-04-pricing-mechanism-redesign-design.md` 的 v2 schema（`rules` / `patterns` / `aliases` / `matching` 分层 + 归一化匹配管线）整体取代。v1 配置加载时自动迁移为 v2：exact 条目移入 `rules`（`source: 'manual'`），wildcard/regex 条目原样移入 `patterns`（最低优先级，语义保留）。
 
 ## 目标
 

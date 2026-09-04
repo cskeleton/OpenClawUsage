@@ -1,7 +1,9 @@
 # 设计规格：models.dev 在线价格参考（价格配置页弹窗填价）
 
 **日期**：2026-08-09
-**状态**：已实现（同步审计后回写）
+**状态**：⚠️ 部分被取代（2026-09-04 价格机制重构）；原实现说明保留于下
+
+> **Superseded（2026-09-04，部分）**：`2026-09-04-pricing-mechanism-redesign-design.md` 引入 models.dev 自动匹配（惰性 + `POST /api/pricing/rematch` 批量 + 确认队列）后，本篇描述的「手动搜索弹窗」不再是唯一入口，降级为**兜底入口**保留（交互与字段映射仍有效）。磁盘缓存层（`models-dev-v1.json`，24h TTL + stale-while-revalidate）被新匹配器沿用不变。
 
 > 实现说明（2026-08-09 Post-Implementation Sync Audit）：
 > - 按钮实际位于「添加」按钮（`#add-pricing-btn`）左侧同行。

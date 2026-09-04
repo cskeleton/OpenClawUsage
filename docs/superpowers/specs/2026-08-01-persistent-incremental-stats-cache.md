@@ -1,7 +1,9 @@
 # 设计规格：持久化增量统计缓存
 
 **日期**：2026-08-01
-**状态**：已实施（2026-08-01）
+**状态**：已实施（2026-08-01）；定价指纹定义部分已被 2026-09-04 价格机制重构取代（见附录 3）
+
+> **Superseded（2026-09-04，部分）**：本篇 `pricingFingerprint` 的定义（「覆盖 `version`、`enabled`、`updated` 和保持声明顺序的 `pricing` 内容」）已被 `2026-09-04-pricing-mechanism-redesign-design.md` 取代——v2 指纹仅含 `{ version, enabled, updated, revision }` 四字段，键序天然不敏感。缓存架构（manifest/贡献/锁/三态）其余部分不受影响，仍有效。
 
 ## 实施摘要
 
@@ -250,3 +252,8 @@
 - 内存/磁盘缓存的 `stats` 始终保持 UTC 合并（内部缓存），时区只在 `getStats` 的每次重合并时应用，不进缓存指纹。
 - 前端：`fetchStats` 自动带浏览器时区；`sliceHourTable` 用浏览器本地日匹配小时键，与服务端口径一致；趋势图小时标签转本地时区。
 - 已知边界：legacy 日级桶无小时信息，保留原 UTC 日；半/三刻钟时区（+5:30/+5:45 等）日界线切开小时桶，边界最多 1 小时归属误差；全天偏移时区（含 UTC+8）精确。
+
+## 附录 3：价格机制重构对缓存的影响（2026-09-04）
+
+- `pricingFingerprint` 改为仅含 `{ version, enabled, updated, revision }` 四字段：`savePricingConfig` 保证「内容实质变化 ⇔ `updated`/`revision` 变化」（no-op 保存不动这两个字段），指纹因此无需展开规则内容、天然键序不敏感；candidates 文件不参与指纹。取代正文「持久化文件至少包含」节的旧定义。
+- merge 输出新增 `canonical` / `costSource` / `costBreakdown` / `costBySource`（含 `byHourModel` 与 `byDateModel` cell meta）：`STATS_SHAPE_VERSION` 3 → 4，磁盘快照带 `statsShapeVersion` 字段，不符即弃用并按当前源重建；`CACHE_SCHEMA_VERSION`（3）与贡献缓存结构不变。
