@@ -56,6 +56,14 @@
               </span>
             </span>
           </label>
+          <span style="display: inline-flex; align-items: center; gap: 6px; margin-left: 12px; font-size: 0.85rem; font-weight: 400; -webkit-text-fill-color: currentColor; color: var(--text-secondary);">
+            <label class="toggle-switch" title="开启后匹配价格时忽略 Provider 前缀（官方价口径）">
+              <input type="checkbox" id="ignore-provider-toggle" aria-label="忽略 Provider（官方价口径）" />
+              <span class="toggle-slider" aria-hidden="true"></span>
+            </label>
+            <span data-i18n="pricing.ignoreProvider">忽略 Provider（官方价口径）</span>
+            <button id="btn-noise-suffixes" class="btn-openclaw-row btn-secondary" type="button" data-i18n="pricing.noiseSuffixes">噪声后缀</button>
+          </span>
           <div class="tooltip-wrapper">
             <button
               type="button"
@@ -101,7 +109,21 @@
       </div>
     </div>
 
+    <!-- 配置校验警告 banner（GET /api/pricing 返回 validationErrors 时展示） -->
+    <div id="pricing-validation-banner" class="glass-card" style="margin-bottom: 20px;" hidden></div>
+
     <div id="pricing-config-stack" class="pricing-config-stack">
+    <!-- 待确认匹配（models.dev 歧义候选确认队列） -->
+    <div id="candidates-section" class="glass-card" style="margin-bottom: 20px;" hidden>
+      <h3 style="margin-bottom: 15px;" data-i18n="pricing.candidatesTitle">待确认匹配</h3>
+      <div class="pricing-add-row" style="margin-bottom: 15px;">
+        <button id="btn-accept-all-unique" class="btn-primary" type="button" data-i18n="pricing.acceptAllUnique">采纳所有唯一候选</button>
+        <button id="btn-dismiss-all" class="btn-secondary" type="button" data-i18n="pricing.dismissAll">忽略全部</button>
+        <button id="btn-rematch" class="btn-secondary" type="button" data-i18n="pricing.rematch">重新扫描匹配</button>
+      </div>
+      <div id="candidates-list"></div>
+    </div>
+
     <!-- 已配置价格 -->
     <div class="glass-card">
       <h3 style="margin-bottom: 15px;">已配置价格</h3>

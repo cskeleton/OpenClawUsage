@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { getSqlitePath } from './sqlite-source.js';
 import {
-  findMatchingPricing,
+  resolvePricingRule,
   defaultPricingConfigV2,
 } from './pricing.js';
 import { listOpenClawPricedModels, listUnpricedModels } from './openclaw-config.js';
@@ -130,11 +130,12 @@ export function writeRequestGuard(req, res, next) {
 }
 
 /**
- * 为 openclaw.json 的一条模型记录附加 custom 对比字段
+ * 为 openclaw.json 的一条模型记录附加 custom 对比字段。
+ * v2：按完整匹配管线（resolvePricingRule，含 aliases / 归一化 / patterns）判定覆盖。
  */
-function attachCustomRule(row, customMap) {
-  const key = `${row.provider}/${row.model}`;
-  const rule = findMatchingPricing(key, customMap);
+function attachCustomRule(row, config) {
+  const hit = resolvePricingRule(row.provider, row.model, config);
+  const rule = hit?.rule ?? null;
   const custom = rule
     ? {
         input: rule.input,
@@ -145,7 +146,7 @@ function attachCustomRule(row, customMap) {
       }
     : null;
   return {
-    key,
+    key: `${row.provider}/${row.model}`,
     provider: row.provider,
     model: row.model,
     displayName: row.displayName,
@@ -404,9 +405,8 @@ export function createApp({ staticDir } = {}) {
         getPricingConfig(),
         listUnpricedModels(),
       ]);
-      const customMap = pricingConfig.pricing || {};
-      const rows = priced.map((row) => attachCustomRule(row, customMap));
-      const unpricedModels = unpriced.map((row) => attachCustomRule(row, customMap));
+      const rows = priced.map((row) => attachCustomRule(row, pricingConfig));
+      const unpricedModels = unpriced.map((row) => attachCustomRule(row, pricingConfig));
       res.json({ models: rows, unpricedModels });
     } catch (err) {
       console.error('Error listing OpenClaw priced models:', err);

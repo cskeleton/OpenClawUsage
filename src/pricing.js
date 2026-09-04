@@ -11,13 +11,32 @@ async function fetchPricingConfig() {
   return res.json();
 }
 
+/** 最近一次 GET /api/pricing 记录的配置 revision（乐观锁基线） */
+let currentRevision = 0;
+
+/**
+ * PUT /api/pricing（v2 信封 { config, baseRevision }）。
+ * 409 → 提示并重新加载，返回 null；其它非 2xx → 提示并重新加载，返回 null。
+ * @param {Object} config
+ * @returns {Promise<{ ok: true, revision: number, updated: string }|null>}
+ */
 async function updatePricingConfig(config) {
   const res = await fetch('/api/pricing', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(config),
+    body: JSON.stringify({ config, baseRevision: currentRevision }),
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (res.status === 409) {
+    alert(t('pricing.conflictReload'));
+    await loadData();
+    return null;
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    alert(err.error || t('pricing.saveFailed'));
+    await loadData();
+    return null;
+  }
   return res.json();
 }
 
@@ -53,19 +72,24 @@ function syncCustomPricingDisabledUI() {
 }
 
 /**
- * 将当前 pricingConfig 同步到服务端（自动保存）
+ * 将当前 pricingConfig 同步到服务端（自动保存，v2 信封 + 乐观锁）
+ * @returns {Promise<boolean>} true 表示已保存；false 表示冲突/校验失败（已提示并重载）
  */
 async function persistPricingConfigToServer() {
-  if (!pricingConfig) return;
+  if (!pricingConfig) return false;
   const globalEl = document.getElementById('custom-pricing-enabled');
   if (globalEl) {
     pricingConfig.enabled = globalEl.checked;
   }
   try {
     const res = await updatePricingConfig(pricingConfig);
-    if (res && res.updated) {
+    if (!res) return false; // 409 / 校验失败：updatePricingConfig 已提示并 loadData
+    currentRevision = typeof res.revision === 'number' ? res.revision : currentRevision;
+    pricingConfig.revision = currentRevision;
+    if (res.updated) {
       pricingConfig.updated = res.updated;
     }
+    return true;
   } catch (err) {
     showToast(t('pricing.syncFailed', { message: err.message }), { variant: 'error' });
     await loadData();
@@ -243,7 +267,7 @@ function renderUnpricedModels(rows, { resetPage = true } = {}) {
 async function refreshSupplementaryTables() {
   try {
     const { models } = await fetchAvailableModels();
-    populateModelDatalist(models, pricingConfig?.pricing || {});
+    populateModelDatalist(models, configuredRuleKeys());
   } catch (err) {
     console.warn('刷新可用模型失败:', err);
   }
@@ -349,6 +373,8 @@ function ensureModelDatalistOption(key) {
 
 /** 当前正在编辑的行（原始键），与 pricingConfig 中的 key 一致 */
 let pricingTableEditingKey = null;
+/** 当前正在编辑的行所在层（'rules' | 'patterns'） */
+let pricingTableEditingSection = null;
 
 /**
  * 只读单元格展示价格数字
@@ -375,12 +401,31 @@ function matchTypeBadgeHtml(mt) {
 }
 
 /**
- * 渲染价格表格（默认只读；一行「编辑」后进入编辑模式）
+ * 规则来源徽标：rules 按 source（手动 / models.dev），patterns 一律「高级规则」
+ * @param {'rules'|'patterns'} section
+ * @param {Object} entry
+ */
+function sourceBadgeHtml(section, entry) {
+  if (section === 'patterns') {
+    return `<span class="badge badge-warn">${t('pricing.sourcePattern')}</span>`;
+  }
+  if (entry.source === 'models.dev') {
+    return `<span class="badge badge-ok">${t('pricing.sourceModelsDev')}</span>`;
+  }
+  return `<span class="badge badge-muted">${t('pricing.sourceManual')}</span>`;
+}
+
+/**
+ * 渲染规则表（v2：rules 精确层与 patterns 通配符/正则层合并展示；
+ * 默认只读，一行「编辑」后进入编辑模式）
  * @param {Object} config
  */
-function renderPricingTable(config) {
+function renderRulesTable(config) {
   const tbody = document.getElementById('pricing-tbody');
-  const models = Object.entries(config.pricing || {});
+  const models = [
+    ...Object.entries(config.rules || {}).map(([key, entry]) => ['rules', key, entry]),
+    ...Object.entries(config.patterns || {}).map(([key, entry]) => ['patterns', key, entry]),
+  ];
 
   if (models.length === 0) {
     tbody.innerHTML = `
@@ -394,16 +439,18 @@ function renderPricingTable(config) {
   }
 
   const rows = models
-    .map(([model, prices]) => {
+    .map(([section, model, prices]) => {
       const enabled = prices.enabled !== false;
       const mt =
-        prices.matchType === 'wildcard' || prices.matchType === 'regex' ? prices.matchType : 'exact';
-      const isEditing = pricingTableEditingKey === model;
+        section === 'patterns' &&
+        (prices.matchType === 'wildcard' || prices.matchType === 'regex') ? prices.matchType : 'exact';
+      const isEditing = pricingTableEditingKey === model && pricingTableEditingSection === section;
       const mtSel = (v) => (mt === v ? ' selected' : '');
+      const sourceBadge = sourceBadgeHtml(section, prices);
 
       if (isEditing) {
         return `
-    <tr data-model="${escapeAttr(model)}" data-row-editing="true">
+    <tr data-model="${escapeAttr(model)}" data-section="${section}" data-row-editing="true">
       <td class="col-center">
         <label class="toggle-switch" title="关闭则该行使用 OpenClaw 账面价">
           <input type="checkbox" class="row-enabled-toggle" data-field="enabled" ${enabled ? 'checked' : ''} aria-label="启用该行自定义单价" />
@@ -412,6 +459,7 @@ function renderPricingTable(config) {
       </td>
       <td class="col-model-key">
         <input type="text" class="pricing-key-input" data-field="modelKey" value="${escapeAttr(model)}" list="new-model-datalist" spellcheck="false" autocomplete="off" />
+        ${sourceBadge}
       </td>
       <td class="col-center">
         <select class="pricing-match-select" data-field="matchType" title="匹配类型">
@@ -425,7 +473,7 @@ function renderPricingTable(config) {
       <td class="col-numeric"><input type="number" class="pricing-input pricing-input--cache" data-field="cacheRead" value="${prices.cacheRead ?? ''}" step="0.01" placeholder="留空按 Input 原价" title="留空时按该行 Input 单价计算 Cache Read 费用"></td>
       <td class="col-numeric"><input type="number" class="pricing-input pricing-input--cache" data-field="cacheWrite" value="${prices.cacheWrite ?? ''}" step="0.01" placeholder="留空按 Input 原价" title="留空时按该行 Input 单价计算 Cache Write 费用"></td>
       <td class="col-center pricing-actions-cell">
-        <button type="button" class="btn-row-done btn-primary" data-original-model="${escapeAttr(model)}">完成</button>
+        <button type="button" class="btn-row-done btn-primary" data-original-model="${escapeAttr(model)}" data-section="${section}">完成</button>
         <button type="button" class="btn-row-cancel btn-secondary">取消</button>
       </td>
     </tr>
@@ -433,22 +481,22 @@ function renderPricingTable(config) {
       }
 
       return `
-    <tr data-model="${escapeAttr(model)}">
+    <tr data-model="${escapeAttr(model)}" data-section="${section}">
       <td class="col-center">
         <label class="toggle-switch" title="关闭则该行使用 OpenClaw 账面价">
           <input type="checkbox" class="row-enabled-toggle" data-field="enabled" ${enabled ? 'checked' : ''} aria-label="启用该行自定义单价" />
           <span class="toggle-slider" aria-hidden="true"></span>
         </label>
       </td>
-      <td class="col-model-key"><span class="pricing-cell-readonly"><strong>${escapeHtml(model)}</strong></span></td>
+      <td class="col-model-key"><span class="pricing-cell-readonly"><strong>${escapeHtml(model)}</strong></span> ${sourceBadge}</td>
       <td class="col-center">${matchTypeBadgeHtml(mt)}</td>
       <td class="col-numeric"><span class="pricing-cell-readonly pricing-cell-num">${fmtDisplayPrice(prices.input)}</span></td>
       <td class="col-numeric"><span class="pricing-cell-readonly pricing-cell-num">${fmtDisplayPrice(prices.output)}</span></td>
       <td class="col-numeric"><span class="pricing-cell-readonly pricing-cell-num">${fmtDisplayPrice(prices.cacheRead != null ? prices.cacheRead : null)}</span></td>
       <td class="col-numeric"><span class="pricing-cell-readonly pricing-cell-num">${fmtDisplayPrice(prices.cacheWrite != null ? prices.cacheWrite : null)}</span></td>
       <td class="col-center pricing-actions-cell">
-        <button type="button" class="btn-row-edit btn-secondary" data-model="${escapeAttr(model)}">编辑</button>
-        <button type="button" class="btn-delete" data-model="${escapeAttr(model)}">删除</button>
+        <button type="button" class="btn-row-edit btn-secondary" data-model="${escapeAttr(model)}" data-section="${section}">编辑</button>
+        <button type="button" class="btn-delete" data-model="${escapeAttr(model)}" data-section="${section}">删除</button>
       </td>
     </tr>
   `;
@@ -459,18 +507,21 @@ function renderPricingTable(config) {
 
 /**
  * 进入行编辑
+ * @param {'rules'|'patterns'} section
  * @param {string} model
  */
-function beginRowEdit(model) {
-  if (pricingTableEditingKey !== null && pricingTableEditingKey !== model) {
+function beginRowEdit(section, model) {
+  if (pricingTableEditingKey !== null &&
+      (pricingTableEditingKey !== model || pricingTableEditingSection !== section)) {
     showToast('请先完成或取消正在编辑的行', { variant: 'error' });
     return;
   }
   pricingTableEditingKey = model;
-  renderPricingTable(pricingConfig);
+  pricingTableEditingSection = section;
+  renderRulesTable(pricingConfig);
   requestAnimationFrame(() => {
     document
-      .querySelector(`#pricing-tbody tr[data-model="${CSS.escape(model)}"] .pricing-key-input`)
+      .querySelector(`#pricing-tbody tr[data-model="${CSS.escape(model)}"][data-section="${section}"] .pricing-key-input`)
       ?.focus();
   });
 }
@@ -480,15 +531,19 @@ function beginRowEdit(model) {
  */
 function cancelRowEdit() {
   pricingTableEditingKey = null;
-  renderPricingTable(pricingConfig);
+  pricingTableEditingSection = null;
+  renderRulesTable(pricingConfig);
 }
 
 /**
- * 将编辑行写回 pricingConfig（内存），并退出编辑
+ * 将编辑行写回 pricingConfig（内存），并退出编辑。
+ * matchType 为 exact 时写入 rules，否则写入 patterns；
+ * 编辑 source:'models.dev' 的条目保存后即升级为 manual（去掉 syncedAt）。
+ * @param {'rules'|'patterns'} originalSection
  * @param {string} originalModel
  */
-async function applyRowEdit(originalModel) {
-  const row = document.querySelector(`#pricing-tbody tr[data-model="${CSS.escape(originalModel)}"]`);
+async function applyRowEdit(originalSection, originalModel) {
+  const row = document.querySelector(`#pricing-tbody tr[data-model="${CSS.escape(originalModel)}"][data-section="${originalSection}"]`);
   if (!row) return;
 
   const newKey = (row.querySelector('[data-field="modelKey"]')?.value ?? '').trim();
@@ -517,8 +572,12 @@ async function applyRowEdit(originalModel) {
     return;
   }
 
-  if (!pricingConfig.pricing) pricingConfig.pricing = {};
-  if (newKey !== originalModel && pricingConfig.pricing[newKey]) {
+  if (!pricingConfig.rules) pricingConfig.rules = {};
+  if (!pricingConfig.patterns) pricingConfig.patterns = {};
+  const targetSection = matchType === 'exact' ? 'rules' : 'patterns';
+  const targetMap = targetSection === 'rules' ? pricingConfig.rules : pricingConfig.patterns;
+  const originalMap = originalSection === 'rules' ? pricingConfig.rules : pricingConfig.patterns;
+  if ((newKey !== originalModel || targetSection !== originalSection) && targetMap[newKey]) {
     showToast('已存在相同键的规则，请使用其他键名', { variant: 'error' });
     return;
   }
@@ -530,18 +589,22 @@ async function applyRowEdit(originalModel) {
     cacheWrite: cacheWrite ? parseFloat(cacheWrite) : null,
     enabled,
   };
-  if (matchType !== 'exact') {
+  if (targetSection === 'patterns') {
     entry.matchType = matchType;
+  } else {
+    // 任何编辑保存都视为用户意图：source 升级 manual，去掉同步时间戳
+    entry.source = 'manual';
   }
 
-  if (newKey !== originalModel) {
-    delete pricingConfig.pricing[originalModel];
+  if (newKey !== originalModel || targetSection !== originalSection) {
+    delete originalMap[originalModel];
   }
-  pricingConfig.pricing[newKey] = entry;
+  targetMap[newKey] = entry;
   pricingTableEditingKey = null;
+  pricingTableEditingSection = null;
   try {
     await persistPricingConfigToServer();
-    renderPricingTable(pricingConfig);
+    renderRulesTable(pricingConfig);
     await refreshSupplementaryTables();
   } catch {
     /* persistPricingConfigToServer 已 loadData */
@@ -567,12 +630,68 @@ function populateModelDatalist(availableModels, configuredModels) {
     });
 }
 
+/** 已配置键集合（rules + patterns），供 datalist 过滤已配置模型 */
+function configuredRuleKeys() {
+  return { ...(pricingConfig?.patterns || {}), ...(pricingConfig?.rules || {}) };
+}
+
 // 加载数据
 let pricingConfig = null;
 
+/**
+ * 拉取确认队列（失败时回落空队列，不阻塞主配置加载）
+ * @returns {Promise<Array>}
+ */
+async function fetchPricingCandidates() {
+  try {
+    const res = await fetch('/api/pricing/candidates');
+    if (!res.ok) return [];
+    const body = await res.json();
+    return Array.isArray(body?.candidates) ? body.candidates : [];
+  } catch (e) {
+    console.warn('确认队列加载失败:', e);
+    return [];
+  }
+}
+
+/**
+ * 页面顶部 banner：GET /api/pricing 返回 validationErrors 时逐条展示
+ * @param {string[]|undefined} errors
+ */
+function renderValidationBanner(errors) {
+  const banner = document.getElementById('pricing-validation-banner');
+  if (!banner) return;
+  if (!Array.isArray(errors) || errors.length === 0) {
+    banner.hidden = true;
+    banner.innerHTML = '';
+    return;
+  }
+  banner.hidden = false;
+  banner.innerHTML = `
+    <h3 style="margin-bottom: 10px;">${t('pricing.validationErrorsTitle')}</h3>
+    <ul style="margin: 0; padding-left: 20px;">
+      ${errors.map((msg) => `<li>${escapeHtml(msg)}</li>`).join('')}
+    </ul>
+  `;
+}
+
+/** 「忽略 Provider」开关按配置回显（缺省视为 true，与后端口径一致） */
+function syncIgnoreProviderUI() {
+  const el = document.getElementById('ignore-provider-toggle');
+  if (!el || !pricingConfig) return;
+  el.checked = pricingConfig.matching?.ignoreProvider !== false;
+}
+
 async function loadData() {
   try {
-    pricingConfig = await fetchPricingConfig();
+    const [pricingBody, candidates] = await Promise.all([
+      fetchPricingConfig(),
+      fetchPricingCandidates(),
+    ]);
+    // validationErrors 是响应的附加字段，不属于配置本体，不能随 PUT 回写
+    const { validationErrors, ...config } = pricingBody;
+    pricingConfig = config;
+    currentRevision = typeof config.revision === 'number' ? config.revision : 0;
     const { models } = await fetchAvailableModels();
     let openclawData = { models: [] };
     try {
@@ -586,12 +705,16 @@ async function loadData() {
       globalEl.checked = pricingConfig.enabled !== false;
     }
     syncCustomPricingDisabledUI();
+    syncIgnoreProviderUI();
+    renderValidationBanner(validationErrors);
 
     pricingTableEditingKey = null;
-    renderPricingTable(pricingConfig);
-    populateModelDatalist(models, pricingConfig.pricing || {});
+    pricingTableEditingSection = null;
+    renderRulesTable(pricingConfig);
+    populateModelDatalist(models, configuredRuleKeys());
     renderOpenClawReference(openclawData.models || [], { resetPage: true });
     renderUnpricedModels(openclawData.unpricedModels || [], { resetPage: true });
+    renderCandidatesQueue(candidates);
     syncNewModelClearVisibility();
   } catch (error) {
     showToast(t('pricing.loadFailed', { message: error.message }), { variant: 'error' });
@@ -658,8 +781,9 @@ async function addPricing() {
   const cacheRead = cacheReadPrice.value ? parseFloat(cacheReadPrice.value) : null;
   const cacheWrite = cacheWritePrice.value ? parseFloat(cacheWritePrice.value) : null;
 
-  if (!pricingConfig.pricing) pricingConfig.pricing = {};
-  if (pricingConfig.pricing[model]) {
+  if (!pricingConfig.rules) pricingConfig.rules = {};
+  if (!pricingConfig.patterns) pricingConfig.patterns = {};
+  if (pricingConfig.rules[model] || pricingConfig.patterns[model]) {
     showToast('已存在相同键的规则，请删除后再添加或保存后编辑', { variant: 'error' });
     return;
   }
@@ -671,10 +795,14 @@ async function addPricing() {
     cacheWrite,
     enabled: true,
   };
-  if (matchType !== 'exact') {
+  // exact 键进 rules（source: manual）；通配符/正则进 patterns（保留 matchType）
+  if (matchType === 'exact') {
+    row.source = 'manual';
+    pricingConfig.rules[model] = row;
+  } else {
     row.matchType = matchType;
+    pricingConfig.patterns[model] = row;
   }
-  pricingConfig.pricing[model] = row;
 
   // 清空输入
   if (modelInput) modelInput.value = '';
@@ -688,7 +816,7 @@ async function addPricing() {
 
   try {
     await persistPricingConfigToServer();
-    renderPricingTable(pricingConfig);
+    renderRulesTable(pricingConfig);
     await refreshSupplementaryTables();
   } catch {
     /* persistPricingConfigToServer 已 loadData */
@@ -696,18 +824,20 @@ async function addPricing() {
 }
 
 // 删除价格
-async function deletePricing(model) {
+async function deletePricing(section, model) {
   if (!confirm(`确定要删除 ${model} 的价格配置吗？`)) {
     return;
   }
 
-  if (pricingTableEditingKey === model) {
+  if (pricingTableEditingKey === model && pricingTableEditingSection === section) {
     pricingTableEditingKey = null;
+    pricingTableEditingSection = null;
   }
-  delete pricingConfig.pricing[model];
+  const map = section === 'patterns' ? pricingConfig.patterns : pricingConfig.rules;
+  if (map) delete map[model];
   try {
     await persistPricingConfigToServer();
-    renderPricingTable(pricingConfig);
+    renderRulesTable(pricingConfig);
     await refreshSupplementaryTables();
   } catch {
     /* persistPricingConfigToServer 已 loadData */
@@ -739,9 +869,10 @@ function onRowEnabledChange(e) {
   const t = e.target;
   if (!t.classList.contains('row-enabled-toggle')) return;
   const row = t.closest('tr[data-model]');
-  if (!row || !pricingConfig?.pricing) return;
+  if (!row || !pricingConfig) return;
+  const map = row.dataset.section === 'patterns' ? pricingConfig.patterns : pricingConfig.rules;
   const model = row.dataset.model;
-  const entry = pricingConfig.pricing[model];
+  const entry = map?.[model];
   if (!entry) return;
   entry.enabled = t.checked;
   persistPricingConfigToServer();
@@ -860,7 +991,7 @@ document.getElementById('pricing-tbody').addEventListener('click', (e) => {
   const editBtn = e.target.closest('.btn-row-edit');
   const delBtn = e.target.closest('.btn-delete');
   if (doneBtn) {
-    applyRowEdit(doneBtn.dataset.originalModel);
+    applyRowEdit(doneBtn.dataset.section === 'patterns' ? 'patterns' : 'rules', doneBtn.dataset.originalModel);
     return;
   }
   if (cancelBtn) {
@@ -868,11 +999,11 @@ document.getElementById('pricing-tbody').addEventListener('click', (e) => {
     return;
   }
   if (editBtn) {
-    beginRowEdit(editBtn.dataset.model);
+    beginRowEdit(editBtn.dataset.section === 'patterns' ? 'patterns' : 'rules', editBtn.dataset.model);
     return;
   }
   if (delBtn) {
-    deletePricing(delBtn.dataset.model);
+    deletePricing(delBtn.dataset.section === 'patterns' ? 'patterns' : 'rules', delBtn.dataset.model);
   }
 });
 
@@ -940,6 +1071,225 @@ function initPricingCollapsibles() {
 }
 
 initPricingCollapsibles();
+
+// ============================================
+// 确认队列（models.dev 歧义候选）与匹配口径控制
+// ============================================
+
+/** 最近一次 GET /api/pricing/candidates 返回的原始队列（含 dismissed） */
+let lastCandidates = [];
+
+/**
+ * 渲染确认队列：过滤 dismissed；单候选条目优先，其余按 observedKey 排序
+ * @param {Array} candidates
+ */
+function renderCandidatesQueue(candidates) {
+  const section = document.getElementById('candidates-section');
+  const list = document.getElementById('candidates-list');
+  if (!section || !list) return;
+  lastCandidates = Array.isArray(candidates) ? candidates : [];
+
+  const visible = lastCandidates
+    .filter((c) => !c.dismissed)
+    .sort((a, b) => {
+      const la = Array.isArray(a.candidates) ? a.candidates.length : 0;
+      const lb = Array.isArray(b.candidates) ? b.candidates.length : 0;
+      return la - lb || String(a.observedKey).localeCompare(String(b.observedKey));
+    });
+
+  if (visible.length === 0) {
+    section.hidden = true;
+    list.innerHTML = '';
+    return;
+  }
+  section.hidden = false;
+
+  const fmtPrice = (n) => (typeof n === 'number' && !Number.isNaN(n) ? `$${n}` : '—');
+  list.innerHTML = visible
+    .map((entry) => {
+      const cands = Array.isArray(entry.candidates) ? entry.candidates : [];
+      const items = cands
+        .map((cand) => {
+          const prices = cand.prices || {};
+          const score = typeof cand.score === 'number' ? ` ${(cand.score * 100).toFixed(0)}%` : '';
+          const priceText =
+            `I:${fmtPrice(prices.input)} O:${fmtPrice(prices.output)} ` +
+            `CR:${fmtPrice(prices.cacheRead)} CW:${fmtPrice(prices.cacheWrite)}`;
+          return `
+        <li style="margin-bottom: 6px;">
+          <strong>${escapeHtml(cand.catalogKey)}</strong>
+          <span style="color: var(--text-secondary); font-size: 0.85rem;"> ${escapeHtml(cand.provider || '')}${score}</span>
+          <span style="color: var(--text-secondary); font-size: 0.85rem;"> ${escapeHtml(priceText)}</span>
+          <button type="button" class="btn-openclaw-row btn-openclaw-row-accent btn-candidate-accept"
+            data-observed-key="${escapeAttr(entry.observedKey)}" data-catalog-id="${escapeAttr(cand.catalogKey)}">${t('pricing.candidateAccept')}</button>
+        </li>`;
+        })
+        .join('');
+      return `
+      <div class="candidate-entry" data-observed-key="${escapeAttr(entry.observedKey)}" style="margin-bottom: 14px;">
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px;">
+          <strong>${escapeHtml(entry.observedKey)}</strong>
+          <span style="flex: 1;"></span>
+          <button type="button" class="btn-openclaw-row btn-secondary btn-candidate-manual"
+            data-observed-key="${escapeAttr(entry.observedKey)}">${t('pricing.candidateManualFill')}</button>
+          <button type="button" class="btn-openclaw-row btn-secondary btn-candidate-dismiss"
+            data-observed-key="${escapeAttr(entry.observedKey)}">${t('pricing.candidateDismiss')}</button>
+        </div>
+        <ul style="margin: 0; padding-left: 18px; list-style: none;">${items}</ul>
+      </div>`;
+    })
+    .join('');
+}
+
+/**
+ * 批量提交确认队列决议，成功后整页重载（规则表与队列一并刷新）
+ * @param {Array<{ observedKey: string, action: 'accept'|'dismiss', catalogId?: string }>} resolutions
+ * @returns {Promise<boolean>}
+ */
+async function resolveCandidatesBatch(resolutions) {
+  if (!Array.isArray(resolutions) || resolutions.length === 0) return false;
+  try {
+    const res = await fetch('/api/pricing/candidates/resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ resolutions }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await loadData();
+    return true;
+  } catch (err) {
+    showToast(t('pricing.syncFailed', { message: err.message }), { variant: 'error' });
+    return false;
+  }
+}
+
+/** 「采纳所有唯一候选」：对所有非 dismissed 且仅一个候选的条目批量 accept */
+function acceptAllUniqueCandidates() {
+  const resolutions = lastCandidates
+    .filter((c) => !c.dismissed && Array.isArray(c.candidates) && c.candidates.length === 1)
+    .map((c) => ({ observedKey: c.observedKey, action: 'accept', catalogId: c.candidates[0].catalogKey }));
+  resolveCandidatesBatch(resolutions);
+}
+
+/** 「忽略全部」：对所有非 dismissed 条目批量 dismiss */
+function dismissAllCandidates() {
+  const resolutions = lastCandidates
+    .filter((c) => !c.dismissed)
+    .map((c) => ({ observedKey: c.observedKey, action: 'dismiss' }));
+  resolveCandidatesBatch(resolutions);
+}
+
+/** 「重新扫描匹配」：对 stats 中未覆盖模型批量重扫 models.dev */
+async function rematchAll() {
+  const btn = document.getElementById('btn-rematch');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch('/api/pricing/rematch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const result = await res.json();
+    if (result.catalogUnavailable) {
+      showToast(t('pricing.rematchCatalogUnavailable'), { variant: 'error' });
+    } else {
+      showToast(t('pricing.rematchResult', { matched: result.matched, queued: result.queued }), { variant: 'success' });
+    }
+    await loadData();
+  } catch (err) {
+    showToast(t('pricing.syncFailed', { message: err.message }), { variant: 'error' });
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+/**
+ * 确认队列「手动填价」：observed key 预填进「添加新价格」表单（不带价格）
+ * @param {string} observedKey
+ */
+function fillCandidateToForm(observedKey) {
+  if (pricingTableEditingKey !== null) {
+    showToast('请先完成或取消表格中正在编辑的行', { variant: 'error' });
+    return;
+  }
+
+  const mtEl = document.getElementById('new-match-type');
+  if (mtEl) mtEl.value = 'exact';
+  syncNewMatchTypeUI();
+
+  ensureModelDatalistOption(observedKey);
+  const modelInput = document.getElementById('new-model-input');
+  if (modelInput) modelInput.value = observedKey;
+  syncNewModelClearVisibility();
+
+  document.getElementById('new-input-price').value = '';
+  document.getElementById('new-output-price').value = '';
+  document.getElementById('new-cache-read-price').value = '';
+  document.getElementById('new-cache-write-price').value = '';
+
+  const section = document.getElementById('add-pricing-section');
+  if (section && typeof section.scrollIntoView === 'function') {
+    section.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  showPricingToast(t('pricing.manualFillHint'));
+}
+
+/**
+ * 「忽略 Provider」开关：写回 config.matching.ignoreProvider 并立即同步
+ * @param {Event} e
+ */
+async function onIgnoreProviderChange(e) {
+  if (!pricingConfig) return;
+  const checked = e.target.checked;
+  if (!pricingConfig.matching) pricingConfig.matching = {};
+  pricingConfig.matching.ignoreProvider = checked;
+  try {
+    await persistPricingConfigToServer();
+  } catch {
+    e.target.checked = !checked;
+    pricingConfig.matching.ignoreProvider = !checked;
+  }
+}
+
+/** 「噪声后缀」：prompt 编辑逗号分隔列表并写回 config.matching.noiseSuffixes */
+async function onNoiseSuffixesClick() {
+  if (!pricingConfig) return;
+  const current = (pricingConfig.matching?.noiseSuffixes || []).join(', ');
+  const input = prompt(t('pricing.noiseSuffixesPrompt'), current);
+  if (input == null) return;
+  if (!pricingConfig.matching) pricingConfig.matching = {};
+  pricingConfig.matching.noiseSuffixes = input
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  try {
+    await persistPricingConfigToServer();
+  } catch {
+    /* persistPricingConfigToServer 已 loadData */
+  }
+}
+
+document.getElementById('btn-accept-all-unique')?.addEventListener('click', acceptAllUniqueCandidates);
+document.getElementById('btn-dismiss-all')?.addEventListener('click', dismissAllCandidates);
+document.getElementById('btn-rematch')?.addEventListener('click', rematchAll);
+document.getElementById('ignore-provider-toggle')?.addEventListener('change', onIgnoreProviderChange);
+document.getElementById('btn-noise-suffixes')?.addEventListener('click', onNoiseSuffixesClick);
+
+document.getElementById('candidates-list')?.addEventListener('click', (e) => {
+  const acceptBtn = e.target.closest('.btn-candidate-accept');
+  const dismissBtn = e.target.closest('.btn-candidate-dismiss');
+  const manualBtn = e.target.closest('.btn-candidate-manual');
+  if (acceptBtn) {
+    resolveCandidatesBatch([
+      { observedKey: acceptBtn.dataset.observedKey, action: 'accept', catalogId: acceptBtn.dataset.catalogId },
+    ]);
+  } else if (dismissBtn) {
+    resolveCandidatesBatch([{ observedKey: dismissBtn.dataset.observedKey, action: 'dismiss' }]);
+  } else if (manualBtn) {
+    fillCandidateToForm(manualBtn.dataset.observedKey);
+  }
+});
 
 // ============================================
 // models.dev 在线价格参考弹窗
