@@ -29,6 +29,7 @@
   - **两级开关**：可关闭「启用自定义价格」（全局），或对单条规则关闭「启用」，以便在**自定义单价重算的理论成本**与**会话中 OpenClaw 写入的账面成本**之间切换。
   - 价格配置页提供 **OpenClaw 内置价格（参考）** 与 **缺少价格的模型（参考）**：数据来自 `OPENCLAW_CONFIG_DIR`（默认 `~/.openclaw`）下 `openclaw.json` 的 **`models.providers`**（OpenClaw 2026.8.2 起，旧版 `agents/main/agent/models.json` 不再生成），两表在同一来源内按「有/无有效单价」划分；每张表可查看是否已被自定义规则覆盖（含通配符/正则），并对未覆盖项支持一键填入「添加新价格」。**实际在 OpenClaw 里可选的模型**由 `openclaw.json` 的 **`agents.defaults.models`** 决定，与参考表列出的条目并非一一对应。
   - 价格配置页「添加新价格」区提供 **从 models.dev 获取参考价** 按钮：弹出可搜索、单选的 [models.dev](https://models.dev) 公开模型目录，确认后**只填入 Input/Output/Cache Read/Cache Write 四个价格格**，不会写入模型键；价格格已有内容时可选择**全部覆盖 / 只填空白 / 取消**。目录在本地缓存 24 小时（`$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/models-dev-v1.json`），过期后先展示上次快照并后台刷新，首次拉取失败则直接报错（fail-closed）；填入后请自行确认 Provider/Model 再保存。
+  - 未被自定义规则覆盖的模型会**自动与 models.dev 目录匹配**：唯一高置信命中直接生效并落盘为规则（`source: "models.dev"`），歧义则进入价格页顶部的**待确认匹配**队列（采纳 / 忽略 / 手动填价，支持批量操作与一键重扫）。
   - 支持 Input、Output、Cache Read、Cache Write 四种价格类型。
   - Cache 价格可选；留空时不设单独缓存价，**统一按 Input 原价计算**（读写都用 Input）。
   - 独立的价格配置页面，支持添加、编辑、删除和重置价格配置。
@@ -40,17 +41,18 @@
 
 ## 💰 价格配置文件路径
 
-价格配置文件（`openclaw-usage-pricing.json`）采用**动态路径检测**，优先跟随 OpenClaw 工作目录而非固定路径，以确保多机器使用时配置可跟随。
+价格配置文件（`openclaw-usage-pricing.json`）有统一的规范路径：**`$OPENCLAW_CONFIG_DIR/openclaw-usage-pricing.json`**（`OPENCLAW_CONFIG_DIR` 未设置时默认为 `~/.openclaw`）。定价是全局参考表，不随 OpenClaw workspace 变化。
 
 ### 路径优先级（由高到低）
 
 | 优先级 | 来源 | 示例 |
 |--------|------|------|
-| 1️⃣ | `OPENCLAW_DIR` 环境变量 | `OPENCLAW_DIR=/自定义/path` |
-| 2️⃣ | `openclaw.json` 中的 `agents.defaults.workspace` 配置 | `$OPENCLAW_WORKSPACE` → 存到该 workspace 目录 |
-| 3️⃣ | 回退 `~/.openclaw/` | 默认 fallback |
+| 1️⃣ | `OPENCLAW_USAGE_PRICING_PATH` 环境变量（显式覆盖，便于测试/多实例） | `OPENCLAW_USAGE_PRICING_PATH=/自定义/path/my-pricing.json` |
+| 2️⃣ | `OPENCLAW_CONFIG_DIR` 环境变量 | `$OPENCLAW_CONFIG_DIR/openclaw-usage-pricing.json` |
+| 3️⃣ | `OPENCLAW_DIR` 环境变量（deprecated alias，保留兼容） | `$OPENCLAW_DIR/openclaw-usage-pricing.json` |
+| 4️⃣ | 回退 `~/.openclaw/` | 默认 fallback |
 
-> ⚠️ 上表只决定**定价配置文件**的位置；**会话数据库与模型目录（openclaw.json）** 始终读取 `$OPENCLAW_CONFIG_DIR`（默认 `~/.openclaw`），**不跟随 workspace**。
+> ℹ️ 会话数据库与模型目录（openclaw.json）同样读取 `$OPENCLAW_CONFIG_DIR`（默认 `~/.openclaw`），与定价配置同根。
 
 ### 模型目录（openclaw.json `models.providers`，用于价格参考 API）
 
@@ -59,32 +61,31 @@
 | `OPENCLAW_CONFIG_DIR` | 配置根目录；未设置时默认为 `~/.openclaw` |
 | 模型目录来源 | `$OPENCLAW_CONFIG_DIR/openclaw.json` 的 `models.providers` |
 
-与 `OPENCLAW_DIR`（用于定价配置文件路径探测）相互独立，可分别指向不同根目录。
-
 ### 迁移逻辑
 
-工具启动时会自动检查路径兼容性和迁移需求：
+工具读取价格配置时会自动处理路径兼容与 schema 迁移：
 
-1. 优先读取新路径（跟随 OpenClaw 工作目录）。
-2. 若新路径不存在，尝试旧路径 `~/.openclaw/openclaw-usage-pricing.json`。
-3. 若旧路径存在，自动将其内容复制到新路径，完成无缝迁移。
-4. 若两个路径均不存在，创建空配置（使用 OpenClaw 内置价格）。
+1. 优先读取规范路径（`$OPENCLAW_CONFIG_DIR/openclaw-usage-pricing.json`）。
+2. 若规范路径不存在，依次尝试旧路径：`openclaw.json` 的 `agents.defaults.workspace` 探测到的 workspace 目录、`~/.openclaw/openclaw-usage-pricing.json`。
+3. 找到旧文件即以其为来源加载。
+4. 若配置为 v1 schema（无 `version` 或 `version` 不是 `"2.0"`），加载时自动迁移为 v2 并写回规范路径：精确条目移入 `rules`（标记 `source: "manual"`），通配符/正则条目原样移入 `patterns`，计价语义不变。
+5. 若所有路径均不存在，使用空配置（全部按 OpenClaw 账面成本计价）。
 
 ### 示例
 
-假设 `openclaw.json` 配置了 `"workspace": "$OPENCLAW_WORKSPACE"`，则价格配置实际存储在：
+未设置任何环境变量时，价格配置实际存储在：
 
 ```
-$OPENCLAW_WORKSPACE/openclaw-usage-pricing.json
+~/.openclaw/openclaw-usage-pricing.json
 ```
 
-而非 `~/.openclaw/` 下。这确保了配置与 OpenClaw 工作空间绑定，便于多机器共享或通过 dotfiles 管理。
+设置 `OPENCLAW_CONFIG_DIR=/custom/config` 后则存储在 `/custom/config/openclaw-usage-pricing.json`，与会话数据库、模型目录同根，便于整体迁移或通过 dotfiles 管理。
 
 ## 📊 数据来源与原理
 
 本工具通过只读访问 OpenClaw 本地 SQLite 会话数据库实现统计（OpenClaw 2026.8.2+ 架构；旧版 JSONL 会话文件已废弃，历史数据在首次启动时从旧缓存一次性冻结迁移）：
 
-- **目标数据库**：`$OPENCLAW_CONFIG_DIR/agents/main/agent/openclaw-agent.sqlite`（未设置环境变量时默认为 `~/.openclaw/agents/main/agent/openclaw-agent.sqlite`）；以只读模式打开，不影响 OpenClaw 网关写入。**该路径不受 `agents.defaults.workspace` 影响**——workspace 只决定定价配置文件位置（见下文）。
+- **目标数据库**：`$OPENCLAW_CONFIG_DIR/agents/main/agent/openclaw-agent.sqlite`（未设置环境变量时默认为 `~/.openclaw/agents/main/agent/openclaw-agent.sqlite`）；以只读模式打开，不影响 OpenClaw 网关写入。**该路径不受 `agents.defaults.workspace` 影响**——workspace 仅是 legacy 定价文件的探测来源之一（见上文「价格配置文件路径」）。
 - **覆盖数据表**：
   - `transcript_events`：全部活跃会话的消息与事件日志（`event_json` 与旧 JSONL 行同构）。
   - `session_transcript_archives`：迁移后被删除/重置会话的整包归档（zstd 压缩 blob，解压后即原 JSONL 文本），与活跃事件天然不重叠。
@@ -355,29 +356,38 @@ npm run mcp
 
 > ⚠️ `update_pricing_config` 会写入价格配置文件，请确认参数后再执行。
 
-- `get_pricing_config`：读取当前价格配置（只读）。
-- `update_pricing_config`：更新价格配置（写入）。
+- `get_pricing_config`：读取当前价格配置（只读，含 `revision` 乐观锁版本号）。
+- `update_pricing_config`：更新价格配置（写入；可传 `baseRevision` 做乐观锁，冲突时返回结构化错误）。
 - `refresh_stats_cache`：刷新统计缓存（不改业务数据，仅刷新聚合结果）。**默认执行增量刷新**（只解析新增/变化的 Session 文件），可通过 `full: true` 请求全量重建。
 
-`update_pricing_config` 的 `config` 参数示例（完整配置对象）：
+`update_pricing_config` 的 `config` 参数示例（v2 完整配置对象）：
 
 ```json
 {
-  "version": "1.0",
+  "version": "2.0",
   "enabled": true,
-  "updated": "2026-04-20T00:00:00.000Z",
-  "pricing": {
-    "openai/gpt-4": {
-      "input": 30,
-      "output": 60,
-      "cacheRead": 3,
-      "cacheWrite": 6
-    }
-  }
+  "matching": { "ignoreProvider": true, "noiseSuffixes": ["-high", "-thinking", "-low", "-medium"] },
+  "rules": {
+    "openai/gpt-4": { "input": 30, "output": 60, "cacheRead": 3, "cacheWrite": 6, "source": "manual" }
+  },
+  "aliases": {},
+  "patterns": {}
 }
 ```
 
 ## 💰 自定义价格配置
+
+### 配置结构（Schema v2）
+
+配置文件为 v2 schema，主要字段：
+
+- `enabled`：顶层口径开关（见下文「价格计算规则」）。
+- `matching`：匹配行为——`ignoreProvider`（默认 `true`，计价忽略 provider，官方价口径）、`noiseSuffixes`（归一化时可剥离的推理档位后缀，如 `-high` / `-thinking`）。
+- `rules`：精确规则层，键为 canonical 模型名（如 `gpt-4`）或 `provider/model`；每条含 `input` / `output` / `cacheRead` / `cacheWrite`（$/M）、可选 `enabled` 与 `source`（`manual` 手填 / `models.dev` 自动同步）。
+- `aliases`：确认队列产物，observed key → canonical 模型名（如 `cpa/agy/gemini-3.8-flash-high` → `gemini-3.8-flash`）。
+- `patterns`：legacy 通配符 / 正则规则层（`matchType: "wildcard" | "regex"`，作用于整串 `provider/model`），优先级最低；v1 配置迁移时原样归入此层。
+
+匹配优先级：`aliases` → 精确规则 → 归一化候选（大小写 / 渠道前缀 / 噪声后缀）→ `patterns`。每个 model 行的计价结果会透传成本来源徽标：`manual` / `models.dev` / `pattern` / `openclaw`（账面价）。
 
 ### 配置方式
 
@@ -389,45 +399,61 @@ npm run mcp
 
 2. **通过 API 配置**：
    ```bash
-   # 获取当前价格配置
+   # 获取当前价格配置（含 revision 乐观锁版本号）
    curl http://localhost:3001/api/pricing
 
-   # 更新价格配置
+   # 更新价格配置（信封 { config, baseRevision }；baseRevision 与当前不符时返回 409 + 当前配置）
    curl -X PUT http://localhost:3001/api/pricing \
      -H "Content-Type: application/json" \
      -d '{
-       "version": "1.0",
-       "updated": "2026-04-12T00:00:00.000Z",
-       "pricing": {
-         "openai/gpt-4": {
-           "input": 30,
-           "output": 60,
-           "cacheRead": 3,
-           "cacheWrite": 6
-         }
-       }
+       "config": {
+         "version": "2.0",
+         "enabled": true,
+         "matching": { "ignoreProvider": true, "noiseSuffixes": ["-high", "-thinking", "-low", "-medium"] },
+         "rules": {
+           "openai/gpt-4": { "input": 30, "output": 60, "cacheRead": 3, "cacheWrite": 6, "source": "manual" }
+         },
+         "aliases": {},
+         "patterns": {}
+       },
+       "baseRevision": 12
      }'
 
-   # 列出 openclaw.json models.providers 中有单价 / 缺少价格的模型（与当前自定义价对照，含 findMatchingPricing）
+   # models.dev 自动匹配：查看待确认队列 / 批量决议 / 重新扫描
+   curl http://localhost:3001/api/pricing/candidates
+   curl -X POST http://localhost:3001/api/pricing/candidates/resolve \
+     -H "Content-Type: application/json" \
+     -d '{ "resolutions": [{ "observedKey": "cpa/agy/gemini-3.8-flash-high", "action": "accept", "catalogId": "gemini-3.8-flash" }] }'
+   curl -X POST http://localhost:3001/api/pricing/rematch -H "Content-Type: application/json"
+
+   # 列出 openclaw.json models.providers 中有单价 / 缺少价格的模型（与当前自定义价对照）
    curl http://localhost:3001/api/openclaw/models
 
-   # 重置为默认配置（使用 OpenClaw 内置价格）
+   # 重置为默认配置（使用 OpenClaw 账面成本）
    curl -X POST http://localhost:3001/api/pricing/reset \
      -H "Content-Type: application/json"
    ```
 
-   > 写接口（`PUT /api/pricing`、`POST /api/pricing/reset`）要求 `Content-Type: application/json`；
+   > 写接口（`PUT /api/pricing`、`POST /api/pricing/reset`、`POST /api/pricing/candidates/resolve`、`POST /api/pricing/rematch`）要求 `Content-Type: application/json`；
    > 若请求携带 `Origin`，必须来自同源或本机 loopback，否则返回 403。这是为了阻止其它网站
    > 通过跨站表单静默修改本机价格配置。
+
+### models.dev 自动匹配与确认队列
+
+未被自定义规则覆盖的模型会自动与 models.dev 公开目录匹配（本地缓存 24 小时，过期后 stale-while-revalidate）：
+
+- **唯一高置信命中**：自动生效——本次统计直接使用匹配价格，并异步持久化为 `rules` 条目（`source: "models.dev"`）；自动匹配绝不覆盖 `source: "manual"` 的条目。
+- **多候选或弱命中**：进入价格页顶部的「待确认匹配」队列；采纳后写入 `aliases` + `rules`，忽略（dismiss）后不再提示。
+- 对 `models.dev` 条目做任何手动编辑即升级为 `source: "manual"`。
 
 ### 价格计算规则
 
 - **价格单位**：$/M（每百万 tokens 的美元价，例如 Input $30/M）
 - **计算公式**：成本 = (用量 / 1,000,000) × 价格
-- **Cache 价格**：留空表示不设单独缓存价；**统一按 Input 原价计算**（读取量与写入量都用 Input 单价）
-- **全局开关 `enabled`**（可选，默认视为开启）：为 `false` 时，**全部**模型使用会话数据中的 OpenClaw 账面成本（`usage.cost`），不进行自定义重算。
-- **单条规则 `pricing[k].enabled`**（可选，默认视为开启）：为 `false` 时，**仅该** `provider/model` 使用 OpenClaw 账面成本；其余仍按自定义规则计算（在全局开启的前提下）。
-- **可选计价**：仅当全局开启、且某模型存在自定义规则且该规则启用时，对该模型使用自定义单价；否则使用 OpenClaw 账面成本。
+- **Cache 价格**：留空（`null`）表示不设单独缓存价；**统一按 Input 原价计算**（读取量与写入量都用 Input 单价）；显式 `0` 就是 0
+- **全局开关 `enabled`**（口径开关，默认开启）：为 `false` 时，**全部**模型使用会话数据中的 OpenClaw 账面成本（`usage.cost`），不进行自定义重算——即「账面价口径」；开启且命中自定义规则时按自定义单价重算——即「理论价口径」。
+- **单条规则 `enabled`**（`rules` / `patterns` 条目均支持，默认开启）：为 `false` 时，**仅该**规则跳过重算；其余仍按自定义规则计算（在全局开启的前提下）。
+- **可选计价**：仅当全局开启、且某模型命中自定义规则且该规则启用时，对该模型使用自定义单价；否则使用 OpenClaw 账面成本。
 
 ### 示例
 
@@ -448,7 +474,7 @@ npm run mcp
 - `stats-cache-store.js`: 磁盘缓存读写（`stats-v2.json`）、跨进程锁与定价指纹；含 v1 历史缓存读取。
 - `sqlite-source.js`: SQLite 会话数据源；只读访问 `openclaw-agent.sqlite`（`transcript_events` / `session_transcript_archives` / `session_windows`），构建增量 manifest 与逐会话贡献。
 - `stats-contribution.js`: 逐会话贡献构建与合并聚合。
-- `pricing.js`: 价格配置加载与保存，支持动态路径检测与成本计算；`findMatchingPricing` 负责 exact/wildcard/regex 优先级匹配。
+- `pricing.js`: 价格配置加载与保存（v2 schema、统一规范路径、v1 自动迁移、乐观锁写入）；`resolvePricingRule` 负责 别名 → 精确规则 → 归一化候选 → patterns 的分层匹配，`findMatchingPricing` 负责 wildcard/regex 模式匹配。
 - `openclaw-config.js`: 读取 `openclaw.json` 的 `models.providers`（`OPENCLAW_CONFIG_DIR` 或默认 `~/.openclaw`），划分有/无有效单价模型（供参考 API 使用）。
 - `pricing.json.example`: 价格配置模板（git 跟踪）。
 - `index.html` & `src/`: 前端可视化界面代码；`src/util.js` 内是共享的 HTML 转义与 toast 工具。

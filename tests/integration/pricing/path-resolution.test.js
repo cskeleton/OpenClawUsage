@@ -20,9 +20,9 @@ afterEach(async () => {
   while (disposables.length) await disposables.pop()();
 });
 
-// 注意：当前 vitest.config.js 的顶层 setupFiles 在 projects 模式下不生效，
-// tests/setup.js 的 env 保存/还原实际不会执行。因此本文件凡改动
-// OPENCLAW_USAGE_PRICING_PATH 的用例都通过 disposables 自行还原。
+// 双保险：tests/setup.js 已在每个 test 后还原 env（vitest.config.js 将
+// setupFiles 挂在各 project 下，projects 模式下顶层 setupFiles 不生效），
+// 本文件凡改动 OPENCLAW_USAGE_PRICING_PATH 的用例仍通过 disposables 自行还原。
 function setPricingPathEnv(value) {
   const prev = process.env.OPENCLAW_USAGE_PRICING_PATH;
   if (value === undefined) delete process.env.OPENCLAW_USAGE_PRICING_PATH;

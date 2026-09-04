@@ -26,9 +26,10 @@ A standalone token usage statistics and visualization tool for OpenClaw. It read
   - The pricing page includes **OpenClaw built-in prices (reference)** and **Models missing prices (reference)**: both are derived from `models.providers` in `openclaw.json` under `OPENCLAW_CONFIG_DIR` (default `~/.openclaw`; OpenClaw 2026.8.2+ — the legacy `agents/main/agent/models.json` is no longer generated), split by whether input/output rates are present. Each table shows whether a row is already covered by custom rules (including wildcard/regex matches) and lets you copy uncovered keys into “Add price”. **Models actually selectable in OpenClaw** are governed by **`agents.defaults.models`** in `openclaw.json`, which is not the same as the rows listed in these reference tables.
   - The “Add price” area on the pricing page provides a **Fetch reference prices from models.dev** button: it opens a searchable, single-select dialog backed by the public [models.dev](https://models.dev) catalog, and on confirm it **only fills the Input/Output/Cache Read/Cache Write price fields** — it never writes the model key. If any price field already has a value, you can choose **Overwrite all / Fill blanks only / Cancel**. The catalog is cached locally for 24 hours (`$OPENCLAW_CONFIG_DIR/cache/openclaw-usage/models-dev-v1.json`); when expired, the last snapshot is shown first while a background refresh runs, and a failed first fetch fails closed with an error. Confirm Provider/Model yourself before saving.
   - Supports 4 price types: Input, Output, Cache Read, Cache Write.
+  - Models not covered by any custom rule are **automatically matched against the models.dev catalog**: a unique high-confidence hit takes effect immediately and is persisted as a rule (`source: "models.dev"`); ambiguous cases go to the **pending confirmation queue** at the top of the pricing page (accept / dismiss / fill manually, with batch operations and one-click re-scan).
   - Cache prices are optional; when left empty, costs are computed **at the Input list price** (both cache read and cache write traffic use Input $/M; no separate cache rate).
   - Dedicated pricing configuration page with add/edit/delete/reset functionality.
-  - **Dynamic config path**: The pricing file (`openclaw-usage-pricing.json`) auto-detects the OpenClaw workspace directory, so it travels with your config across machines.
+  - **Unified config path**: The pricing file (`openclaw-usage-pricing.json`) lives under `$OPENCLAW_CONFIG_DIR` (default `~/.openclaw`), alongside the session database and model catalog.
 
 - **Persistent Incremental Stats Cache**:
   - The page will still request the server, but unchanged sessions and pricing will reuse the persistent cache without reparsing the database.
@@ -39,7 +40,7 @@ A standalone token usage statistics and visualization tool for OpenClaw. It read
 
 The tool reads OpenClaw's local SQLite session database in read-only mode (OpenClaw 2026.8.2+ architecture; the legacy JSONL session files are obsolete — their history is frozen in one shot from the old cache on first launch):
 
-- **Target Database**: `$OPENCLAW_CONFIG_DIR/agents/main/agent/openclaw-agent.sqlite` (defaults to `~/.openclaw/agents/main/agent/openclaw-agent.sqlite` when the env var is unset), opened read-only so the OpenClaw gateway keeps writing unaffected. **This path is NOT affected by `agents.defaults.workspace`** — workspace only controls where the pricing config file lives (see below).
+- **Target Database**: `$OPENCLAW_CONFIG_DIR/agents/main/agent/openclaw-agent.sqlite` (defaults to `~/.openclaw/agents/main/agent/openclaw-agent.sqlite` when the env var is unset), opened read-only so the OpenClaw gateway keeps writing unaffected. **This path is NOT affected by `agents.defaults.workspace`** — workspace is only one of the legacy pricing-file probe sources (see "Pricing Config File Path" below).
 - **Covered Tables**:
   - `transcript_events`: the full message/event log of active sessions (`event_json` mirrors the old JSONL rows).
   - `session_transcript_archives`: whole-session archives for post-migration deleted/reset sessions (zstd blobs that decompress to the original JSONL text); they never overlap with active events.
@@ -310,25 +311,22 @@ Add the following to your OpenClaw or Claude Desktop MCP config:
 
 > ⚠️ `update_pricing_config` writes to the pricing configuration file. Verify the payload before running it.
 
-- `get_pricing_config`: Read the current pricing config (read-only).
-- `update_pricing_config`: Update pricing config (write operation).
+- `get_pricing_config`: Read the current pricing config (read-only; includes the `revision` optimistic-lock version).
+- `update_pricing_config`: Update pricing config (write operation; accepts an optional `baseRevision` for optimistic locking and returns a structured error on conflict).
 - `refresh_stats_cache`: Refreshes the aggregate cache without altering business data. It performs an **incremental refresh by default** (only added/changed sessions are reparsed) and accepts `full: true` for a full rebuild.
 
-Example `config` payload for `update_pricing_config` (full config object):
+Example `config` payload for `update_pricing_config` (full v2 config object):
 
 ```json
 {
-  "version": "1.0",
+  "version": "2.0",
   "enabled": true,
-  "updated": "2026-04-20T00:00:00.000Z",
-  "pricing": {
-    "openai/gpt-4": {
-      "input": 30,
-      "output": 60,
-      "cacheRead": 3,
-      "cacheWrite": 6
-    }
-  }
+  "matching": { "ignoreProvider": true, "noiseSuffixes": ["-high", "-thinking", "-low", "-medium"] },
+  "rules": {
+    "openai/gpt-4": { "input": 30, "output": 60, "cacheRead": 3, "cacheWrite": 6, "source": "manual" }
+  },
+  "aliases": {},
+  "patterns": {}
 }
 ```
 
@@ -336,17 +334,18 @@ Example `config` payload for `update_pricing_config` (full config object):
 
 ### Pricing Config File Path
 
-The pricing config file (`openclaw-usage-pricing.json`) uses **dynamic path detection** to follow the OpenClaw workspace directory, ensuring the config travels with your setup across different machines.
+The pricing config file (`openclaw-usage-pricing.json`) has a single canonical location: **`$OPENCLAW_CONFIG_DIR/openclaw-usage-pricing.json`** (`OPENCLAW_CONFIG_DIR` defaults to `~/.openclaw`). Pricing is a global reference table and does not follow the OpenClaw workspace.
 
 #### Path Priority (highest to lowest)
 
 | Priority | Source | Example |
 |----------|--------|---------|
-| 1️⃣ | `OPENCLAW_DIR` environment variable | `OPENCLAW_DIR=/custom/path` |
-| 2️⃣ | `agents.defaults.workspace` in `openclaw.json` | `$OPENCLAW_WORKSPACE` → stored under that workspace |
-| 3️⃣ | Fallback `~/.openclaw/` | Default fallback |
+| 1️⃣ | `OPENCLAW_USAGE_PRICING_PATH` environment variable (explicit override, useful for tests/multi-instance) | `OPENCLAW_USAGE_PRICING_PATH=/custom/path/my-pricing.json` |
+| 2️⃣ | `OPENCLAW_CONFIG_DIR` environment variable | `$OPENCLAW_CONFIG_DIR/openclaw-usage-pricing.json` |
+| 3️⃣ | `OPENCLAW_DIR` environment variable (deprecated alias, kept for compatibility) | `$OPENCLAW_DIR/openclaw-usage-pricing.json` |
+| 4️⃣ | Fallback `~/.openclaw/` | Default fallback |
 
-> ⚠️ The table above applies **only to the pricing config file**. **The session database and model catalog (openclaw.json)** are always read from `$OPENCLAW_CONFIG_DIR` (default `~/.openclaw`) and do **not** follow the workspace.
+> ℹ️ The session database and model catalog (openclaw.json) are also read from `$OPENCLAW_CONFIG_DIR` (default `~/.openclaw`), sharing the same root as the pricing config.
 
 #### Model catalog (`openclaw.json` `models.providers`, pricing reference API)
 
@@ -355,26 +354,37 @@ The pricing config file (`openclaw-usage-pricing.json`) uses **dynamic path dete
 | `OPENCLAW_CONFIG_DIR` | Config root; defaults to `~/.openclaw` if unset |
 | Model catalog source | `models.providers` in `$OPENCLAW_CONFIG_DIR/openclaw.json` |
 
-Independent of `OPENCLAW_DIR` (used for pricing file path detection).
-
 #### Migration Logic
 
-On startup, the tool automatically handles path compatibility and migration:
+When loading the pricing config, the tool automatically handles path compatibility and schema migration:
 
-1. Reads from the new path (following the OpenClaw workspace directory).
-2. If the new path doesn't exist, tries the legacy path `~/.openclaw/openclaw-usage-pricing.json`.
-3. If the legacy path exists, automatically copies its content to the new path for seamless migration.
-4. If neither path exists, creates an empty config (falls back to OpenClaw built-in pricing).
+1. Reads from the canonical path (`$OPENCLAW_CONFIG_DIR/openclaw-usage-pricing.json`).
+2. If the canonical path doesn't exist, tries the legacy paths in order: the workspace directory detected via `agents.defaults.workspace` in `openclaw.json`, then `~/.openclaw/openclaw-usage-pricing.json`.
+3. The first legacy file found is used as the load source.
+4. If the config is v1 schema (no `version`, or `version` is not `"2.0"`), it is automatically migrated to v2 and written back to the canonical path on load: exact entries move into `rules` (tagged `source: "manual"`), wildcard/regex entries move unchanged into `patterns`; pricing semantics stay identical.
+5. If no file exists anywhere, an empty config is used (all costs fall back to OpenClaw's per-session `usage.cost`).
 
 #### Example
 
-If `openclaw.json` has `"workspace": "$OPENCLAW_WORKSPACE"`, the pricing config is stored at:
+With no environment variables set, the pricing config is stored at:
 
 ```
-$OPENCLAW_WORKSPACE/openclaw-usage-pricing.json
+~/.openclaw/openclaw-usage-pricing.json
 ```
 
-Instead of under `~/.openclaw/`. This keeps the pricing config bound to the OpenClaw workspace, making it easy to manage via dotfiles or share across machines.
+With `OPENCLAW_CONFIG_DIR=/custom/config` it is stored at `/custom/config/openclaw-usage-pricing.json`, alongside the session database and model catalog — easy to migrate as a whole or manage via dotfiles.
+
+### Config Structure (Schema v2)
+
+The config file uses the v2 schema. Main fields:
+
+- `enabled`: top-level pricing-mode toggle (see "Pricing Calculation Rules" below).
+- `matching`: matching behavior — `ignoreProvider` (default `true`; pricing ignores the provider, i.e. official-rate mode), `noiseSuffixes` (inference-tier suffixes stripped during normalization, e.g. `-high` / `-thinking`).
+- `rules`: exact-rule layer; keys are canonical model names (e.g. `gpt-4`) or `provider/model`. Each entry has `input` / `output` / `cacheRead` / `cacheWrite` ($/M), plus optional `enabled` and `source` (`manual` hand-entered / `models.dev` auto-synced).
+- `aliases`: confirmation-queue output, mapping an observed key to a canonical model name (e.g. `cpa/agy/gemini-3.8-flash-high` → `gemini-3.8-flash`).
+- `patterns`: legacy wildcard/regex layer (`matchType: "wildcard" | "regex"`, matched against the full `provider/model` string), lowest priority; v1 configs migrate unchanged into this layer.
+
+Match priority: `aliases` → exact rules → normalized candidates (case / channel prefix / noise suffixes) → `patterns`. Every model row carries a cost-source badge: `manual` / `models.dev` / `pattern` / `openclaw` (book cost).
 
 ### Configuration Methods
 
@@ -386,46 +396,62 @@ Instead of under `~/.openclaw/`. This keeps the pricing config bound to the Open
 
 2. **Via API**:
    ```bash
-   # Get current pricing configuration
+   # Get current pricing configuration (includes the revision optimistic-lock version)
    curl http://localhost:3001/api/pricing
 
-   # Update pricing configuration
+   # Update pricing configuration (envelope { config, baseRevision }; a mismatched baseRevision returns 409 + current config)
    curl -X PUT http://localhost:3001/api/pricing \
      -H "Content-Type: application/json" \
      -d '{
-       "version": "1.0",
-       "updated": "2026-04-12T00:00:00.000Z",
-       "pricing": {
-         "openai/gpt-4": {
-           "input": 30,
-           "output": 60,
-           "cacheRead": 3,
-           "cacheWrite": 6
-         }
-       }
+       "config": {
+         "version": "2.0",
+         "enabled": true,
+         "matching": { "ignoreProvider": true, "noiseSuffixes": ["-high", "-thinking", "-low", "-medium"] },
+         "rules": {
+           "openai/gpt-4": { "input": 30, "output": 60, "cacheRead": 3, "cacheWrite": 6, "source": "manual" }
+         },
+         "aliases": {},
+         "patterns": {}
+       },
+       "baseRevision": 12
      }'
 
-   # List models with / without prices from openclaw.json models.providers (joined via findMatchingPricing)
+   # models.dev auto-matching: view the confirmation queue / batch-resolve / re-scan
+   curl http://localhost:3001/api/pricing/candidates
+   curl -X POST http://localhost:3001/api/pricing/candidates/resolve \
+     -H "Content-Type: application/json" \
+     -d '{ "resolutions": [{ "observedKey": "cpa/agy/gemini-3.8-flash-high", "action": "accept", "catalogId": "gemini-3.8-flash" }] }'
+   curl -X POST http://localhost:3001/api/pricing/rematch -H "Content-Type: application/json"
+
+   # List models with / without prices from openclaw.json models.providers (compared against current custom pricing)
    curl http://localhost:3001/api/openclaw/models
 
-   # Reset to default configuration (use OpenClaw built-in pricing)
+   # Reset to default configuration (use OpenClaw book costs)
    curl -X POST http://localhost:3001/api/pricing/reset \
      -H "Content-Type: application/json"
    ```
 
-   > Write endpoints (`PUT /api/pricing`, `POST /api/pricing/reset`) require
+   > Write endpoints (`PUT /api/pricing`, `POST /api/pricing/reset`, `POST /api/pricing/candidates/resolve`, `POST /api/pricing/rematch`) require
    > `Content-Type: application/json`. If an `Origin` header is present it must be same-origin
    > or a local loopback origin, otherwise the request is rejected with 403. This blocks other
    > websites from silently changing your local pricing config via cross-site forms.
+
+### models.dev Auto-Matching & Confirmation Queue
+
+Models not covered by any custom rule are automatically matched against the public models.dev catalog (cached locally for 24 hours, stale-while-revalidate afterwards):
+
+- **Unique high-confidence hit**: takes effect automatically — the current aggregation uses the matched price right away, and the rule is persisted asynchronously as a `rules` entry (`source: "models.dev"`); auto-matching never overwrites `source: "manual"` entries.
+- **Multiple candidates or weak hits**: queued under "Pending confirmation" at the top of the pricing page; accepting writes `aliases` + `rules`, dismissing silences the entry.
+- Any manual edit to a `models.dev` entry promotes it to `source: "manual"`.
 
 ### Pricing Calculation Rules
 
 - **Price Unit**: $/M (USD per million tokens per field)
 - **Calculation Formula**: Cost = (Usage / 1,000,000) × Price
-- **Cache prices**: Optional. When left empty there is no separate cache rate; **both cache read and cache write volume are priced at the Input rate** ($/M).
-- **Global `enabled`** (optional, defaults to on): When `false`, **all** models use session `usage.cost` (OpenClaw’s per-message cost breakdown); no custom recalculation.
-- **Per-rule `pricing[k].enabled`** (optional, defaults to on): When `false`, **only that** `provider/model` uses session `usage.cost`; other models still use custom rates (if global custom pricing is on).
-- **Optional Pricing**: Custom $/M applies only when global custom pricing is on, a rule exists for that model, and that rule is enabled; otherwise session `usage.cost` is used.
+- **Cache prices**: Optional. When left empty (`null`) there is no separate cache rate; **both cache read and cache write volume are priced at the Input rate** ($/M). An explicit `0` means 0.
+- **Global `enabled`** (pricing-mode toggle, defaults to on): When `false`, **all** models use session `usage.cost` (OpenClaw’s per-message cost breakdown) — the "book cost" mode. When on and a custom rule matches, costs are recalculated from your custom rates — the "theoretical price" mode.
+- **Per-rule `enabled`** (on both `rules` and `patterns` entries, defaults to on): When `false`, **only that** rule is skipped; other models still use custom rates (if global custom pricing is on).
+- **Optional Pricing**: Custom $/M applies only when global custom pricing is on, a rule matches that model, and that rule is enabled; otherwise session `usage.cost` is used.
 
 ### Example
 

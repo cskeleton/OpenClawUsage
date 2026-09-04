@@ -1,26 +1,39 @@
 {
-  "version": "1.0",
+  "version": "2.0",
   "enabled": true,
-  "updated": "2026-04-19T00:00:00.000Z",
-  "pricing": {
+  "updated": "2026-09-04T00:00:00.000Z",
+  "revision": 1,
+  "matching": {
+    "ignoreProvider": true,
+    "noiseSuffixes": ["-high", "-thinking", "-low", "-medium"]
+  },
+  "rules": {
     "minimax-portal/MiniMax-M2.7": {
       "input": 0.30,
       "output": 1.20,
       "cacheRead": 0.06,
       "cacheWrite": 0.375,
-      "enabled": true
+      "enabled": true,
+      "source": "manual"
     },
-    "google-vertex/gemini-3.1-pro-preview": {
+    "gemini-3.1-pro-preview": {
       "input": 0.30,
       "output": 1.20,
       "cacheRead": null,
-      "cacheWrite": null
-    },
-    "openrouter/qwen/qwen3.6-plus": {
+      "cacheWrite": null,
+      "source": "manual"
+    }
+  },
+  "aliases": {
+    "google-vertex/gemini-3.1-pro-preview": "gemini-3.1-pro-preview"
+  },
+  "patterns": {
+    "*qwen3.6-plus*": {
       "input": 0.50,
       "output": 3.00,
       "cacheRead": null,
-      "cacheWrite": null
+      "cacheWrite": null,
+      "matchType": "wildcard"
     }
   }
 }
