@@ -78,6 +78,73 @@ function isPatternMatchType(mt) {
   return mt === 'wildcard' || mt === 'regex';
 }
 
+export const PRICING_SCHEMA_VERSION = '2.0';
+
+// Task 4 的 pricing-normalize.js 将提供 DEFAULT_NOISE_SUFFIXES，届时改为 import
+const DEFAULT_NOISE_SUFFIXES_INLINE = ['-high', '-thinking', '-low', '-medium'];
+
+/**
+ * v2 默认价格配置
+ * @returns {Object}
+ */
+export function defaultPricingConfigV2() {
+  return {
+    version: PRICING_SCHEMA_VERSION,
+    enabled: true,
+    updated: '0001-01-01T00:00:00.000Z',
+    revision: 0,
+    matching: { ignoreProvider: true, noiseSuffixes: [...DEFAULT_NOISE_SUFFIXES_INLINE] },
+    rules: {},
+    aliases: {},
+    patterns: {},
+  };
+}
+
+/**
+ * v1 → v2 结构迁移（语义不变）：
+ * exact 条目移入 rules（source: 'manual'，去掉 matchType）；
+ * wildcard/regex 条目原样移入 patterns（保留 matchType）。
+ * @param {Object} v1 - v1 配置对象
+ * @returns {Object} v2 配置对象
+ */
+export function migratePricingConfigV1toV2(v1) {
+  const rules = {};
+  const patterns = {};
+  for (const [key, entry] of Object.entries(v1?.pricing || {})) {
+    if (!entry || typeof entry !== 'object') continue;
+    const mt = normalizeMatchType(entry.matchType);
+    if (mt === 'exact') {
+      const { matchType, ...rest } = entry;
+      rules[key] = { ...rest, source: 'manual' };
+    } else {
+      patterns[key] = entry;
+    }
+  }
+  return {
+    version: PRICING_SCHEMA_VERSION,
+    enabled: v1?.enabled !== false,
+    updated: typeof v1?.updated === 'string' ? v1.updated : '0001-01-01T00:00:00.000Z',
+    revision: 1,
+    matching: { ignoreProvider: true, noiseSuffixes: [...DEFAULT_NOISE_SUFFIXES_INLINE] },
+    rules,
+    aliases: {},
+    patterns,
+  };
+}
+
+/**
+ * 键排序后的稳定序列化（供指纹比较使用）
+ * @param {*} value
+ * @returns {string}
+ */
+export function stablePricingStringify(value) {
+  if (Array.isArray(value)) return `[${value.map(stablePricingStringify).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${stablePricingStringify(value[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
 /**
  * 在 pricing 表中查找适用于 modelKey 的一条规则（含优先级）
  * @param {string} modelKey - `provider/model`
@@ -156,36 +223,55 @@ async function getPricingConfigPath() {
 const LEGACY_PRICING_PATH = join(homedir(), '.openclaw', 'openclaw-usage-pricing.json');
 
 /**
+ * 加载价格配置（含校验结果）。
+ * 文件不存在 → 尝试 legacy 路径；仍为 v1 或无 version → 自动迁移为 v2 并写回；
+ * JSON 损坏 → 返回默认配置并附 validationErrors。
+ * @returns {Promise<{ config: Object, validationErrors: string[] }>}
+ */
+export async function loadPricingConfigDetailed() {
+  const configPath = await getPricingConfigPath();
+  let raw = null;
+  try {
+    raw = JSON.parse(await readFile(configPath, 'utf-8'));
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      // legacy 回退（保留现有 LEGACY_PRICING_PATH 迁移逻辑，Task 2 扩展）
+      try {
+        raw = JSON.parse(await readFile(LEGACY_PRICING_PATH, 'utf-8'));
+      } catch { /* 不存在 */ }
+    } else if (error instanceof SyntaxError) {
+      return { config: defaultPricingConfigV2(), validationErrors: [`价格配置 JSON 解析失败: ${error.message}`] };
+    } else {
+      throw error;
+    }
+  }
+  if (!raw) return { config: defaultPricingConfigV2(), validationErrors: [] };
+
+  let config = raw;
+  const validationErrors = [];
+  if (raw.version !== PRICING_SCHEMA_VERSION) {
+    try {
+      config = migratePricingConfigV1toV2(raw);
+      await savePricingConfig(config);
+    } catch (e) {
+      validationErrors.push(`v1 配置迁移失败: ${e.message}`);
+      config = defaultPricingConfigV2();
+    }
+  }
+  try {
+    validatePricingConfig(config);
+  } catch (e) {
+    validationErrors.push(e.message);
+  }
+  return { config, validationErrors };
+}
+
+/**
  * 加载价格配置
  * @returns {Promise<Object>} 价格配置对象
  */
 export async function loadPricingConfig() {
-  const configPath = await getPricingConfigPath();
-
-  // 尝试新路径
-  try {
-    const data = await readFile(configPath, 'utf-8');
-    return JSON.parse(data);
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-  }
-
-  // 新路径不存在时，尝试旧路径（用于从旧配置迁移）
-  try {
-    const legacyData = await readFile(LEGACY_PRICING_PATH, 'utf-8');
-    const config = JSON.parse(legacyData);
-    // 自动迁移到新路径
-    await savePricingConfig(config);
-    return config;
-  } catch {}
-
-  // 全部不存在时返回默认配置（updated 使用稳定值，避免每次读取指纹变化）
-  return {
-    version: '1.0',
-    enabled: true,
-    updated: '0001-01-01T00:00:00.000Z',
-    pricing: {},
-  };
+  return (await loadPricingConfigDetailed()).config;
 }
 
 /**
@@ -206,9 +292,45 @@ export async function savePricingConfig(config) {
 }
 
 /**
- * 验证价格配置结构
- * @param {Object} config - 价格配置对象
+ * 校验单条规则条目（rules / patterns 共用）
+ * @param {string} fieldPath - 错误消息前缀，如 `rules.openai/gpt-4o`
+ * @param {Object} entry
  * @throws {Error} 验证失败时抛出错误
+ */
+function validateRuleEntry(fieldPath, entry) {
+  if (!entry || typeof entry !== 'object') {
+    throw new Error(`${fieldPath} 的价格配置必须是一个对象`);
+  }
+
+  if (entry.enabled !== undefined && typeof entry.enabled !== 'boolean') {
+    throw new Error(`${fieldPath} 的 enabled 必须为布尔值`);
+  }
+
+  if (typeof entry.input !== 'number' || entry.input < 0) {
+    throw new Error(`${fieldPath} 的 Input 价格必须是非负数`);
+  }
+
+  if (typeof entry.output !== 'number' || entry.output < 0) {
+    throw new Error(`${fieldPath} 的 Output 价格必须是非负数`);
+  }
+
+  if (entry.cacheRead !== null && entry.cacheRead !== undefined) {
+    if (typeof entry.cacheRead !== 'number' || entry.cacheRead < 0) {
+      throw new Error(`${fieldPath} 的 Cache Read 价格必须是非负数或 null`);
+    }
+  }
+
+  if (entry.cacheWrite !== null && entry.cacheWrite !== undefined) {
+    if (typeof entry.cacheWrite !== 'number' || entry.cacheWrite < 0) {
+      throw new Error(`${fieldPath} 的 Cache Write 价格必须是非负数或 null`);
+    }
+  }
+}
+
+/**
+ * 验证 v2 价格配置结构
+ * @param {Object} config - 价格配置对象
+ * @throws {Error} 验证失败时抛出错误（消息含字段路径）
  */
 export function validatePricingConfig(config) {
   if (!config || typeof config !== 'object') {
@@ -223,70 +345,83 @@ export function validatePricingConfig(config) {
     throw new Error('价格配置的 enabled 必须为布尔值');
   }
 
-  if (!config.pricing || typeof config.pricing !== 'object') {
-    throw new Error('价格配置必须包含 pricing 字段');
+  if (config.matching !== undefined) {
+    if (!config.matching || typeof config.matching !== 'object' || Array.isArray(config.matching)) {
+      throw new Error('价格配置的 matching 必须是一个对象');
+    }
+    const { ignoreProvider, noiseSuffixes } = config.matching;
+    if (ignoreProvider !== undefined && typeof ignoreProvider !== 'boolean') {
+      throw new Error('matching.ignoreProvider 必须为布尔值');
+    }
+    if (noiseSuffixes !== undefined) {
+      if (!Array.isArray(noiseSuffixes) || noiseSuffixes.some((s) => typeof s !== 'string')) {
+        throw new Error('matching.noiseSuffixes 必须为字符串数组');
+      }
+    }
   }
 
-  // 验证每个模型的价格配置
-  for (const [modelKey, pricing] of Object.entries(config.pricing)) {
-    if (typeof modelKey !== 'string' || modelKey.trim() === '') {
-      throw new Error('模型键必须是非空字符串');
+  for (const section of ['rules', 'patterns', 'aliases']) {
+    if (!config[section] || typeof config[section] !== 'object' || Array.isArray(config[section])) {
+      throw new Error(`价格配置必须包含 ${section} 字段（对象）`);
     }
+  }
 
-    if (!pricing || typeof pricing !== 'object') {
-      throw new Error(`模型 ${modelKey} 的价格配置必须是一个对象`);
+  // 精确规则层：逐条校验 + source 白名单 + 不允许 matchType
+  for (const [key, entry] of Object.entries(config.rules)) {
+    if (key.trim() === '') {
+      throw new Error('rules 的键必须是非空字符串');
     }
-
-    if (pricing.enabled !== undefined && typeof pricing.enabled !== 'boolean') {
-      throw new Error(`模型 ${modelKey} 的 enabled 必须为布尔值`);
+    const fieldPath = `rules.${key}`;
+    validateRuleEntry(fieldPath, entry);
+    if (entry.source !== undefined && entry.source !== 'manual' && entry.source !== 'models.dev') {
+      throw new Error(`${fieldPath} 的 source 必须为 manual 或 models.dev`);
     }
-
-    if (typeof pricing.input !== 'number' || pricing.input < 0) {
-      throw new Error(`模型 ${modelKey} 的 Input 价格必须是非负数`);
+    if (entry.matchType !== undefined) {
+      throw new Error(`${fieldPath} 不允许携带 matchType；wildcard/regex 规则请放入 patterns`);
     }
+  }
 
-    if (typeof pricing.output !== 'number' || pricing.output < 0) {
-      throw new Error(`模型 ${modelKey} 的 Output 价格必须是非负数`);
+  // legacy wildcard/regex 模式层：沿用现有 matchType/wildcard/regex 校验
+  for (const [key, entry] of Object.entries(config.patterns)) {
+    if (key.trim() === '') {
+      throw new Error('patterns 的键必须是非空字符串');
     }
+    const fieldPath = `patterns.${key}`;
+    validateRuleEntry(fieldPath, entry);
 
-    if (pricing.cacheRead !== null && pricing.cacheRead !== undefined) {
-      if (typeof pricing.cacheRead !== 'number' || pricing.cacheRead < 0) {
-        throw new Error(`模型 ${modelKey} 的 Cache Read 价格必须是非负数或 null`);
-      }
-    }
-
-    if (pricing.cacheWrite !== null && pricing.cacheWrite !== undefined) {
-      if (typeof pricing.cacheWrite !== 'number' || pricing.cacheWrite < 0) {
-        throw new Error(`模型 ${modelKey} 的 Cache Write 价格必须是非负数或 null`);
-      }
-    }
-
-    const mtRaw = pricing.matchType;
+    const mtRaw = entry.matchType;
     if (mtRaw !== undefined && mtRaw !== null && mtRaw !== '') {
       if (mtRaw !== 'exact' && mtRaw !== 'wildcard' && mtRaw !== 'regex') {
-        throw new Error(`模型 ${modelKey} 的 matchType 必须为 exact、wildcard 或 regex`);
+        throw new Error(`${fieldPath} 的 matchType 必须为 exact、wildcard 或 regex`);
       }
     }
 
-    const mt = normalizeMatchType(pricing.matchType);
+    const mt = normalizeMatchType(entry.matchType);
     if (mt === 'regex') {
-      const re = parseRegexEntry(modelKey);
+      const re = parseRegexEntry(key);
       if (!re) {
-        throw new Error(`模型 ${modelKey} 的正则键格式无效（需为 /pattern/flags 且正则可编译）`);
+        throw new Error(`${fieldPath} 的正则键格式无效（需为 /pattern/flags 且正则可编译）`);
       }
     }
     if (mt === 'wildcard') {
-      if (!modelKey.includes('*') && !modelKey.includes('?')) {
-        throw new Error(`模型 ${modelKey} 声明为 wildcard 但键不含 * 或 ?；请改为 exact 或使用通配符`);
+      if (!key.includes('*') && !key.includes('?')) {
+        throw new Error(`${fieldPath} 声明为 wildcard 但键不含 * 或 ?；请改用 rules 精确规则或使用通配符`);
       }
       try {
-        wildcardToRegex(modelKey);
+        wildcardToRegex(key);
       } catch (e) {
-        throw new Error(`模型 ${modelKey} 的通配符模式无效: ${e.message}`);
+        throw new Error(`${fieldPath} 的通配符模式无效: ${e.message}`);
       }
     }
-    if (mt === 'exact' && !modelKey.includes('/')) {
-      throw new Error(`模型 ${modelKey} 的 exact 键应形如 provider/model（含 /）`);
+  }
+
+  // 别名层：非空字符串 → 非空字符串
+  for (const [key, target] of Object.entries(config.aliases)) {
+    if (key.trim() === '') {
+      throw new Error('aliases 的键必须是非空字符串');
+    }
+    if (typeof target !== 'string' || target.trim() === '') {
+      throw new Error(`aliases.${key} 的目标必须是非空字符串`);
     }
   }
 }
@@ -355,13 +490,4 @@ export function calculateCostFromUsage(usage, provider, model, pricingConfig) {
     total: total,
     source: 'custom'
   };
-}
-
-/**
- * 获取价格版本号
- * @param {Object} config - 价格配置对象
- * @returns {string} 版本号
- */
-export function getPricingVersion(config) {
-  return config?.version || 'none';
 }

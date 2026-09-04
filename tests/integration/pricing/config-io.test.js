@@ -14,6 +14,7 @@ import {
   detectOpenClawDir,
   loadPricingConfig,
   savePricingConfig,
+  defaultPricingConfigV2,
 } from '../../../pricing.js';
 
 // 说明：pricing.js 在调用时读取环境变量，无模块级缓存，
@@ -66,8 +67,9 @@ describe('loadPricingConfig / savePricingConfig', () => {
     disposables.push(stashLegacyPricingFile());
 
     const cfg = await loadPricingConfig();
-    expect(cfg.version).toBe('1.0');
-    expect(cfg.pricing).toEqual({});
+    expect(cfg.version).toBe('2.0');
+    expect(cfg.rules).toEqual({});
+    expect(cfg.patterns).toEqual({});
   });
 
   it('saves and loads round-trip', async () => {
@@ -75,13 +77,12 @@ describe('loadPricingConfig / savePricingConfig', () => {
     disposables.push(ws.cleanup);
 
     await savePricingConfig({
-      version: '1.0',
-      enabled: true,
-      pricing: { 'openai/gpt-4o': { input: 2.5, output: 10 } },
+      ...defaultPricingConfigV2(),
+      rules: { 'openai/gpt-4o': { input: 2.5, output: 10, source: 'manual' } },
     });
 
     const loaded = await loadPricingConfig();
-    expect(loaded.pricing['openai/gpt-4o'].input).toBe(2.5);
+    expect(loaded.rules['openai/gpt-4o'].input).toBe(2.5);
     expect(loaded.enabled).toBe(true);
     expect(typeof loaded.updated).toBe('string');
   });
@@ -90,15 +91,11 @@ describe('loadPricingConfig / savePricingConfig', () => {
     const ws = await createTmpWorkspace();
     disposables.push(ws.cleanup);
 
-    await savePricingConfig({
-      version: '1.0',
-      enabled: true,
-      pricing: {},
-    });
+    await savePricingConfig(defaultPricingConfigV2());
     const persistedPath = join(ws.workspaceDir, 'openclaw-usage-pricing.json');
     expect(existsSync(persistedPath)).toBe(true);
     const parsed = JSON.parse(readFileSync(persistedPath, 'utf-8'));
-    expect(parsed.version).toBe('1.0');
+    expect(parsed.version).toBe('2.0');
   });
 });
 
@@ -135,12 +132,14 @@ describe('legacy migration', () => {
       pricing: { 'legacy/model': { input: 7, output: 7 } },
     }));
 
+    // 旧版 v1 文件加载时自动迁移为 v2 并写回新路径
     const cfg = await loadPricingConfig();
-    expect(cfg.pricing['legacy/model']).toBeTruthy();
+    expect(cfg.version).toBe('2.0');
+    expect(cfg.rules['legacy/model']).toBeTruthy();
 
     const migrated = JSON.parse(readFileSync(
       join(ws.workspaceDir, 'openclaw-usage-pricing.json'), 'utf-8',
     ));
-    expect(migrated.pricing['legacy/model']).toBeTruthy();
+    expect(migrated.rules['legacy/model']).toBeTruthy();
   });
 });
