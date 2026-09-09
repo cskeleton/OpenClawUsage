@@ -22,11 +22,10 @@ export const MAX_CONTRIBUTIONS = 10_000;
 export const MAX_BUCKETS_PER_CONTRIBUTION = 10_000;
 export const MAX_SNAPSHOT_TEXT_LENGTH = 512;
 // Every accepted snapshot can contain at most this many numeric bucket values.
-// Keep each value below this bound so a worst-case aggregate remains a safe
-// JavaScript number instead of becoming Infinity or an unsafe integer.
-export const MAX_SAFE_SNAPSHOT_VALUE = Math.floor(
-  Number.MAX_SAFE_INTEGER / (MAX_CONTRIBUTIONS * MAX_BUCKETS_PER_CONTRIBUTION)
-);
+// Modern models with million-token contexts and massive cache reads easily exceed 100M tokens
+// in a single session bucket. Cap each bucket at 1e12 (1 trillion tokens), which safely aggregates
+// well below Number.MAX_SAFE_INTEGER (~9e15) while accommodating large real-world usage.
+export const MAX_SAFE_SNAPSHOT_VALUE = 1_000_000_000_000;
 
 const IDENTIFIER_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const STATUSES = new Set(['active', 'done', 'reset', 'deleted']);
