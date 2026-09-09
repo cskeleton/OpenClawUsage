@@ -299,12 +299,31 @@ function getTooltipConfig() {
 
 // ---- Timeline Chart ----
 
-/** 趋势图配色：缓存命中=靛蓝、未命中输入=琥珀（虚线）、输出=翠绿（右轴），三色尽量远离 */
+/** 趋势图配色：缓存命中=靛蓝、未命中输入=琥珀、输出=翠绿（右轴），三色尽量远离 */
 const TIMELINE_COLORS = {
-  cacheRead: { border: '#6366f1', fill: 'rgba(99, 102, 241, 0.10)' },
-  input: { border: '#f59e0b' },
-  output: { border: '#34d399' },
+  cacheRead: { border: '#6366f1', bg: 'rgba(99, 102, 241, 0.75)' },
+  input: { border: '#f59e0b', bg: 'rgba(245, 158, 11, 0.55)' },
+  output: { border: '#34d399', bg: 'rgba(52, 211, 153, 0.65)' },
 };
+
+/** 堆叠柱的圆角只给可见分段的最上/最下一段，中间分段保持直角 */
+const TIMELINE_INPUT_SEGMENTS = ['cacheRead', 'input'];
+
+function getTimelineSegmentRadius(buckets, segment) {
+  return (context) => {
+    const bucket = buckets[context.dataIndex] ?? {};
+    const visible = TIMELINE_INPUT_SEGMENTS.filter((name) => (
+      Number.isFinite(bucket[name]) && bucket[name] > 0
+    ));
+    if (!visible.includes(segment)) return 0;
+    return {
+      bottomLeft: visible[0] === segment ? 4 : 0,
+      bottomRight: visible[0] === segment ? 4 : 0,
+      topLeft: visible.at(-1) === segment ? 4 : 0,
+      topRight: visible.at(-1) === segment ? 4 : 0,
+    };
+  };
+}
 
 /**
  * @param {Record<string, object>} byDate 日级桶（UTC 日期键）
@@ -353,73 +372,71 @@ function renderTimelineChart(byDate, metric = 'tokens', byHour = null) {
   }
 
   const isCost = metric === 'cost';
-  const hidePoints = buckets.length > 30;
   const datasets = isCost
     ? [
         {
           label: t('dashboard.metricCost'),
           data: buckets.map((b) => b.totalCost),
+          backgroundColor: 'rgba(251, 191, 36, 0.7)',
           borderColor: COLORS.amber.border,
-          backgroundColor: 'rgba(251, 191, 36, 0.12)',
-          fill: true,
-          tension: 0.4,
-          pointRadius: hidePoints ? 0 : 2,
-          pointHoverRadius: 6,
-          borderWidth: 2,
+          borderWidth: 1,
+          borderRadius: 4,
+          maxBarThickness: 56,
         },
       ]
     : [
         {
-          // 命中缓存的输入（左轴）
+          // 命中缓存的输入（左轴，与 input 堆叠为总输入）
           label: 'Cache Read Tokens',
           data: buckets.map((b) => b.cacheRead),
+          backgroundColor: TIMELINE_COLORS.cacheRead.bg,
           borderColor: TIMELINE_COLORS.cacheRead.border,
-          backgroundColor: TIMELINE_COLORS.cacheRead.fill,
-          fill: true,
-          tension: 0.4,
-          pointRadius: hidePoints ? 0 : 2,
-          pointHoverRadius: 6,
-          borderWidth: 2,
+          borderWidth: 1,
+          borderRadius: getTimelineSegmentRadius(buckets, 'cacheRead'),
+          borderSkipped: false,
+          stack: 'input',
+          maxBarThickness: 56,
           yAxisID: 'y',
         },
         {
           // 未命中缓存的输入（左轴）
           label: 'Input Tokens',
           data: buckets.map((b) => b.input),
+          backgroundColor: TIMELINE_COLORS.input.bg,
           borderColor: TIMELINE_COLORS.input.border,
-          fill: false,
-          tension: 0.4,
-          borderDash: [5, 4],
-          pointRadius: hidePoints ? 0 : 2,
-          pointHoverRadius: 6,
-          borderWidth: 2,
+          borderWidth: 1,
+          borderRadius: getTimelineSegmentRadius(buckets, 'input'),
+          borderSkipped: false,
+          stack: 'input',
+          maxBarThickness: 56,
           yAxisID: 'y',
         },
         {
           // 输出量级远小于输入，挂到右侧独立纵轴
           label: 'Output Tokens',
           data: buckets.map((b) => b.output),
+          backgroundColor: TIMELINE_COLORS.output.bg,
           borderColor: TIMELINE_COLORS.output.border,
-          fill: false,
-          tension: 0.4,
-          pointRadius: hidePoints ? 0 : 2,
-          pointHoverRadius: 6,
-          borderWidth: 2,
+          borderWidth: 1,
+          borderRadius: 4,
+          borderSkipped: false,
+          stack: 'output',
+          maxBarThickness: 56,
           yAxisID: 'y1',
         },
       ];
 
   // 右轴（输出）上限收敛：至少盖住输出峰值的 1.25 倍，且不小于左轴峰值的 1/100，
-  // 让输出曲线保持在图表下部约一半以内，不与输入曲线争夺视觉权重
+  // 让输出柱保持在图表下部约一半以内，不与输入柱争夺视觉权重
   let y1SuggestedMax;
   if (!isCost) {
-    const leftPeak = buckets.reduce((m, b) => Math.max(m, b.cacheRead || 0, b.input || 0), 0);
+    const leftPeak = buckets.reduce((m, b) => Math.max(m, (b.cacheRead || 0) + (b.input || 0)), 0);
     const outputPeak = buckets.reduce((m, b) => Math.max(m, b.output || 0), 0);
     y1SuggestedMax = Math.max(outputPeak * 1.25, leftPeak / 100, 1);
   }
 
   chartInstances.timeline = new Chart(ctx, {
-    type: 'line',
+    type: 'bar',
     data: { labels, datasets },
     options: {
       responsive: true,

@@ -584,6 +584,37 @@ function getFilteredSessions(sessions) {
 }
 
 /**
+ * 复制文本到剪贴板：优先 navigator.clipboard（需要安全上下文），
+ * 非安全上下文（如 LAN IP 直连 http）回退到 execCommand('copy')。
+ * @param {string} text
+ * @returns {Promise<boolean>} 是否复制成功
+ */
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // 继续走回退路径
+    }
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none;';
+  document.body.appendChild(ta);
+  ta.select();
+  ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {
+    ok = false;
+  }
+  ta.remove();
+  return ok;
+}
+
+/**
  * 列排序箭头指示：当前排序列高亮并显示 ▲/▼，其余列清除状态。
  * @param {string} tableSelector 表选择器
  * @param {string} attrName 排序字段所在的 data 属性名（如 data-sort）
@@ -1041,12 +1072,8 @@ function bindEventsOnce() {
   document.getElementById('sessions-tbody').addEventListener('click', async (e) => {
     const btn = e.target.closest('.session-id-copy');
     if (!btn) return;
-    try {
-      await navigator.clipboard.writeText(btn.dataset.sessionId);
-      showToast(t('dashboard.sessionIdCopied'));
-    } catch {
-      showToast(t('dashboard.sessionIdCopyFailed'), true);
-    }
+    const ok = await copyTextToClipboard(btn.dataset.sessionId);
+    showToast(t(ok ? 'dashboard.sessionIdCopied' : 'dashboard.sessionIdCopyFailed'), !ok);
   });
 
   document.getElementById('status-filter').addEventListener('change', () => {
