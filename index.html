@@ -178,14 +178,6 @@
         </div>
       </section>
 
-      <!-- Cost by pricing source -->
-      <section class="table-section glass-card" id="cost-source-section" hidden aria-labelledby="cost-source-title">
-        <div class="table-header">
-          <h3 id="cost-source-title" data-i18n="stats.costBySourceTitle">成本构成（按计费来源）</h3>
-        </div>
-        <div class="cost-source-rows" id="cost-source-rows"></div>
-      </section>
-
       <!-- Provider / Model Breakdown -->
       <section class="table-section glass-card">
         <div class="table-header">
@@ -240,6 +232,19 @@
         </div>
         <div class="table-wrapper">
           <table id="sessions-table">
+            <colgroup>
+              <col class="col-status" />
+              <col class="col-source" />
+              <col class="col-session-id" />
+              <col class="col-provider" />
+              <col class="col-model" />
+              <col class="col-total-tokens" />
+              <col class="col-input" />
+              <col class="col-output" />
+              <col class="col-cost" />
+              <col class="col-requests" />
+              <col class="col-last-active" />
+            </colgroup>
             <thead>
               <tr>
                 <th data-sort="status" data-i18n="dashboard.tableStatus">状态</th>

@@ -252,7 +252,7 @@ describe('Dashboard multi-source DOM flow', () => {
     expect(row('remote').querySelector('.source-overview-tokens').textContent).toBe('7.8K');
     expect(row('remote').querySelector('.source-overview-share').textContent).toBe('98.6%');
     expect(row('missing').querySelector('.source-overview-tokens').textContent).toBe('0');
-    expect(row('missing').querySelector('.source-overview-cost').textContent).toBe('$0.000000');
+    expect(row('missing').querySelector('.source-overview-cost').textContent).toBe('$0');
 
     const provider = document.getElementById('provider-filter');
     provider.value = 'anthropic';

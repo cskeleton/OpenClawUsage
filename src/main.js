@@ -8,7 +8,6 @@ import {
   modelOfKey,
   selectSourceData,
   sourceOptions,
-  buildKeyMatcher,
 } from './data-filter.js';
 
 // ---- Utility functions ----
@@ -21,6 +20,7 @@ function formatNumber(num) {
 }
 
 function formatCost(cost) {
+  if (!cost) return '$0';
   if (cost >= 1) return '$' + cost.toFixed(2);
   if (cost >= 0.01) return '$' + cost.toFixed(3);
   return '$' + cost.toFixed(6);
@@ -67,7 +67,6 @@ const COST_SOURCE_META = {
   pattern: { cls: 'badge-warn', color: 'var(--accent-amber)', labelKey: 'pricing.sourcePattern' },
   openclaw: { cls: 'badge-muted', color: 'var(--accent-orange)', labelKey: 'pricing.sourceOpenclaw' },
 };
-const COST_SOURCE_ORDER = ['manual', 'models.dev', 'pattern', 'openclaw'];
 
 function costSourceBadgeHtml(costSource) {
   const meta = COST_SOURCE_META[costSource];
@@ -472,6 +471,8 @@ function renderBreakdownTable(filteredData) {
     ? t('dashboard.tableProvider')
     : t('dashboard.tableProviderModel');
 
+  updateSortIndicators('#breakdown-table', 'data-breakdown-sort', breakdownSort, breakdownAsc);
+
   if (rows.length === 0) {
     tbody.innerHTML = `
       <tr>
@@ -538,60 +539,6 @@ function renderBreakdownTable(filteredData) {
   `;
 }
 
-// ---- 成本构成（按计费来源）----
-
-/**
- * 当前筛选口径下的 costBySource。无筛选时 filterData 直通 merge 输出的
- * summary.costBySource；有日期/维度筛选时 summary 由 byDate 重算、不含该字段，
- * 此时从 byDateModel cell（携带 costSource meta）按同一口径展示层聚合。
- * cell 缺 costSource（旧快照）按 openclaw（账面价）计——重设计前的成本即账面价。
- */
-function computeCostBySource(filteredData, filter) {
-  const direct = filteredData.summary?.costBySource;
-  if (direct && typeof direct === 'object') return direct;
-
-  const totals = { manual: 0, 'models.dev': 0, pattern: 0, openclaw: 0 };
-  const matches = buildKeyMatcher({ provider: filter.provider, model: filter.model });
-  for (const [date, keyMap] of Object.entries(filteredData.byDateModel || {})) {
-    if (filter.from && date < filter.from) continue;
-    if (filter.to && date > filter.to) continue;
-    for (const [key, cell] of Object.entries(keyMap)) {
-      if (matches && !matches(key)) continue;
-      const src = COST_SOURCE_META[cell.costSource] ? cell.costSource : 'openclaw';
-      totals[src] += cell.totalCost || 0;
-    }
-  }
-  return totals;
-}
-
-/** 占比条复用明细表的 share-bar/share-bar-fill，分段颜色用现有 accent 变量 */
-function renderCostBySource(filteredData, filter) {
-  const section = document.getElementById('cost-source-section');
-  const rowsEl = document.getElementById('cost-source-rows');
-  if (!section || !rowsEl) return;
-
-  const totals = computeCostBySource(filteredData, filter);
-  const entries = COST_SOURCE_ORDER
-    .map((src) => [src, Number(totals[src]) || 0])
-    .filter(([, value]) => value > 0);
-  const total = entries.reduce((sum, [, value]) => sum + value, 0);
-
-  section.hidden = total <= 0;
-  if (total <= 0) {
-    rowsEl.innerHTML = '';
-    return;
-  }
-
-  rowsEl.innerHTML = entries.map(([src, value]) => `
-    <div class="cost-source-row" data-cost-source="${escapeAttr(src)}">
-      ${costSourceBadgeHtml(src)}
-      <span class="share-bar"><span class="share-bar-fill" style="width:${(value / total) * 100}%;background:${COST_SOURCE_META[src].color}"></span></span>
-      <span class="cost-value">${formatCost(value)}</span>
-      <span class="share-text">${formatPercent(value, total)}</span>
-    </div>
-  `).join('');
-}
-
 // ---- Render Sessions Table with Pagination ----
 
 let allSessions = [];
@@ -636,6 +583,22 @@ function getFilteredSessions(sessions) {
   return filtered;
 }
 
+/**
+ * 列排序箭头指示：当前排序列高亮并显示 ▲/▼，其余列清除状态。
+ * @param {string} tableSelector 表选择器
+ * @param {string} attrName 排序字段所在的 data 属性名（如 data-sort）
+ * @param {string} activeField 当前排序字段
+ * @param {boolean} asc 是否升序
+ */
+function updateSortIndicators(tableSelector, attrName, activeField, asc) {
+  document.querySelectorAll(`${tableSelector} thead th[${attrName}]`).forEach((th) => {
+    const active = th.getAttribute(attrName) === activeField;
+    th.classList.toggle('sorted-asc', active && asc);
+    th.classList.toggle('sorted-desc', active && !asc);
+    th.setAttribute('aria-sort', active ? (asc ? 'ascending' : 'descending') : 'none');
+  });
+}
+
 function renderSessionsTable(sessions) {
   const tbody = document.getElementById('sessions-tbody');
   const filtered = getFilteredSessions(sessions);
@@ -658,13 +621,16 @@ function renderSessionsTable(sessions) {
       </tr>
     `;
   } else {
-    tbody.innerHTML = pageItems.map((s) => `
+    tbody.innerHTML = pageItems.map((s) => {
+      const providersText = s.providers.join(', ');
+      const modelsText = s.models.join(', ');
+      return `
       <tr>
         <td>${statusBadge(s.status)}</td>
         <td><span class="source-label" title="${escapeAttr(s.sourceId || '')}">${escapeHtml(s.sourceLabel || s.sourceId || '—')}</span></td>
-        <td><span class="session-id" title="${escapeAttr(s.id)}">${escapeHtml(s.id.substring(0, 8))}…</span></td>
-        <td>${escapeHtml(s.providers.join(', '))}</td>
-        <td>${escapeHtml(s.models.join(', '))}</td>
+        <td><button type="button" class="session-id session-id-copy" data-session-id="${escapeAttr(s.id)}" title="${escapeAttr(t('dashboard.copySessionIdHint'))}: ${escapeAttr(s.id)}">${escapeHtml(s.id.substring(0, 8))}…</button></td>
+        <td title="${escapeAttr(providersText)}">${escapeHtml(providersText)}</td>
+        <td><span class="cell-scroll" title="${escapeAttr(modelsText)}">${escapeHtml(modelsText)}</span></td>
         <td><span class="token-value">${formatNumber(s.totalTokens)}</span></td>
         <td>${formatNumber(s.totalInput)}</td>
         <td>${formatNumber(s.totalOutput)}</td>
@@ -672,8 +638,11 @@ function renderSessionsTable(sessions) {
         <td>${s.requestCount}</td>
         <td>${formatDate(s.lastTimestamp)}</td>
       </tr>
-    `).join('');
+    `;
+    }).join('');
   }
+
+  updateSortIndicators('#sessions-table', 'data-sort', sortField, sortAsc);
 
   const info = document.getElementById('pagination-info');
   if (totalItems === 0) {
@@ -862,7 +831,6 @@ function applyFilter(filter, resetPage = true) {
   renderSourceOverview(filter);
   renderDimensionSummary(filteredData);
   renderBreakdownTable(filteredData);
-  renderCostBySource(filteredData, filter);
   destroyCharts();
   renderCharts(filteredData, { timelineMetric });
 
@@ -1067,6 +1035,18 @@ function bindEventsOnce() {
       currentPage = 1;
       refreshTable();
     });
+  });
+
+  // Session ID 点击复制完整值（事件委托，tbody 重渲染后仍生效）
+  document.getElementById('sessions-tbody').addEventListener('click', async (e) => {
+    const btn = e.target.closest('.session-id-copy');
+    if (!btn) return;
+    try {
+      await navigator.clipboard.writeText(btn.dataset.sessionId);
+      showToast(t('dashboard.sessionIdCopied'));
+    } catch {
+      showToast(t('dashboard.sessionIdCopyFailed'), true);
+    }
   });
 
   document.getElementById('status-filter').addEventListener('change', () => {

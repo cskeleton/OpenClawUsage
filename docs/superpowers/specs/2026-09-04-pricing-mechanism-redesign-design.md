@@ -217,6 +217,8 @@ pricing 页：
 > - `filterData` 切片会丢 `meta`/`costBySource` 且 `data-filter.js` 不动：成本构成区块在无筛选时直读 merge 输出 `summary.costBySource`；有筛选时按同一口径扫描 `byDateModel` cell 携带的 `costSource` meta 展示层重算（旧快照 cell 缺 meta 按 `openclaw` 账面价计）。
 > - 来源徽标复用 pricing 页既有 `badge-muted` / `badge-ok` / `badge-warn` 变体（无新增徽标 CSS）；`openclaw`（账面价）复用 `badge-muted`。
 > - canonical 分组聚合做了 null 安全化（`groupModelsByCanonical`）；成员 `costSource` 不一致的混合分组行不挂徽标。
+>
+> 后续变更（2026-09-09）：统计页移除「成本构成（按计费来源）」区块（UI 不再展示；后端 `summary.costBySource` 数据口径保留）；Session 明细表改为固定列宽布局（Model 列限宽、格内横向滚动 + 悬停 title 看全文），Session ID 点击复制完整值，两张表排序列头增加 ▲/▼ 指示，零费用统一显示 `$0`（原 `$0.000000`）。
 
 全部新增文案中英双语（`src/locales/zh-CN.js` / `en-US.js`），README.md ↔ README_EN.md 价格章节同步重写。
 

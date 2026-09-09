@@ -177,23 +177,4 @@ describe('stats canonical view', () => {
     const plain = breakdownRows().find((r) => r.textContent.includes('bohe/deepseek-v4-flash'));
     expect(plain.querySelector('.canonical-name')).toBeNull();
   });
-
-  it('renders cost-by-source breakdown from summary.costBySource', async () => {
-    await loadDashboard(makeStats());
-
-    const section = document.getElementById('cost-source-section');
-    expect(section).not.toBeNull();
-    expect(section.hidden).toBe(false);
-    expect(section.querySelector('#cost-source-title').textContent).toBe('成本构成（按计费来源）');
-
-    const rows = [...section.querySelectorAll('.cost-source-row')];
-    // 0 值来源（pattern）被过滤
-    expect(rows.map((r) => r.dataset.costSource)).toEqual(['manual', 'models.dev', 'openclaw']);
-
-    const openclawRow = section.querySelector('[data-cost-source="openclaw"]');
-    expect(openclawRow.textContent).toContain('账面价');
-    expect(openclawRow.textContent).toContain('$2.00');
-    expect(openclawRow.textContent).toContain('20.0%');
-    expect(openclawRow.querySelector('.share-bar-fill').style.width).toBe('20%');
-  });
 });

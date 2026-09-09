@@ -115,6 +115,9 @@ export const zhCNMessages = {
     statusDone: 'Done',
     statusReset: 'Reset',
     statusDeleted: 'Deleted',
+    copySessionIdHint: '点击复制完整 Session ID',
+    sessionIdCopied: '已复制 Session ID',
+    sessionIdCopyFailed: '复制失败',
   },
   pricing: {
     pageTitle: '价格配置 - OpenClaw Usage',
@@ -168,7 +171,6 @@ export const zhCNMessages = {
   },
   stats: {
     groupByCanonical: '按 canonical 分组',
-    costBySourceTitle: '成本构成（按计费来源）',
   },
   settings: {
     pageTitle: '同步设置 - OpenClaw Usage',

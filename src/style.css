@@ -740,6 +740,7 @@ table {
 }
 
 thead th {
+  position: relative;
   text-align: left;
   padding: 10px 12px;
   color: var(--text-secondary);
@@ -752,6 +753,32 @@ thead th {
   cursor: pointer;
   user-select: none;
   transition: color 0.2s;
+}
+
+thead th[data-sort],
+thead th[data-breakdown-sort] {
+  padding-right: 20px;
+}
+
+thead th.sorted-asc,
+thead th.sorted-desc {
+  color: var(--accent-orange);
+}
+
+thead th.sorted-asc::after,
+thead th.sorted-desc::after {
+  position: absolute;
+  right: 6px;
+  font-size: 0.6rem;
+  color: var(--accent-orange);
+}
+
+thead th.sorted-asc::after {
+  content: '▲';
+}
+
+thead th.sorted-desc::after {
+  content: '▼';
 }
 
 thead th:hover {
@@ -770,6 +797,54 @@ tbody tr:hover {
 tbody td {
   padding: 10px 12px;
   white-space: nowrap;
+}
+
+/* Session 明细表固定布局：限定各列宽度，整表无需横向滚动；
+   文本列省略号截断（title 悬停看全文），Model 列支持格内横向滚动 */
+#sessions-table {
+  table-layout: fixed;
+}
+
+#sessions-table .col-status { width: 96px; }
+#sessions-table .col-source { width: 92px; }
+#sessions-table .col-session-id { width: 100px; }
+#sessions-table .col-provider { width: 128px; }
+#sessions-table .col-model { width: 150px; }
+#sessions-table .col-total-tokens { width: 120px; }
+#sessions-table .col-input { width: 88px; }
+#sessions-table .col-output { width: 88px; }
+#sessions-table .col-cost { width: 92px; }
+#sessions-table .col-requests { width: 84px; }
+#sessions-table .col-last-active { width: 108px; }
+
+#sessions-table th,
+#sessions-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#sessions-table .cell-scroll {
+  display: block;
+  overflow-x: auto;
+  white-space: nowrap;
+  text-overflow: clip;
+  scrollbar-width: thin;
+}
+
+/* Session ID 复制按钮：沿用 .session-id 等宽字体样式，悬停给出可点击反馈 */
+.session-id-copy {
+  background: none;
+  border: none;
+  padding: 2px 6px;
+  margin: -2px -6px;
+  border-radius: var(--radius-sm);
+  cursor: copy;
+  transition: background 0.2s, color 0.2s;
+}
+
+.session-id-copy:hover {
+  background: rgba(234, 88, 12, 0.12);
+  color: var(--accent-orange);
 }
 
 .status-badge {

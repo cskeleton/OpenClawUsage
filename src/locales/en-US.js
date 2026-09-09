@@ -115,6 +115,9 @@ export const enUSMessages = {
     statusDone: 'Done',
     statusReset: 'Reset',
     statusDeleted: 'Deleted',
+    copySessionIdHint: 'Click to copy full session ID',
+    sessionIdCopied: 'Session ID copied',
+    sessionIdCopyFailed: 'Copy failed',
   },
   pricing: {
     pageTitle: 'Pricing Configuration - OpenClaw Usage',
@@ -168,7 +171,6 @@ export const enUSMessages = {
   },
   stats: {
     groupByCanonical: 'Group by canonical',
-    costBySourceTitle: 'Cost by pricing source',
   },
   settings: {
     pageTitle: 'Sync Settings - OpenClaw Usage',
