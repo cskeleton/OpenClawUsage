@@ -21,7 +21,9 @@ snapshot schema, sync behavior, pricing, or chart datasets.
 - Show it only when the selected source is `all` and at least two configured
   sources exist. Hide it for a concrete source or fewer than two configured
   sources.
-- Render every configured source, including `stale` and `missing` sources.
+- Render every configured live source, including `stale` and `missing` sources.
+  Static one-time archive imports (`kind: archive`) remain available in the
+  source filter and All-source totals, but do not occupy the overview.
 - Every source row displays:
   - source label and sync freshness state;
   - total tokens and share of the displayed sources' token total;

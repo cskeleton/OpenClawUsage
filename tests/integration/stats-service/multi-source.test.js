@@ -35,12 +35,12 @@ function syncConfig(overrides = {}) {
   };
 }
 
-function importedSnapshot(provider = 'openai') {
+function importedSnapshot(provider = 'openai', source = { id: 'remote', label: 'Remote laptop' }) {
   return {
     version: 1,
     kind: 'openclaw-usage-source-contributions',
     scope: 'local-only',
-    source: { id: 'remote', label: 'Remote laptop' },
+    source,
     revision: 'remote-revision',
     generatedAt: '2026-04-20T00:00:00.000Z',
     contributions: [{
@@ -61,7 +61,7 @@ function importedSnapshot(provider = 'openai') {
   };
 }
 
-async function setup({ withImport = true, missingImport = false } = {}) {
+async function setup({ withImport = true, missingImport = false, importSource = { id: 'remote', label: 'Remote laptop' } } = {}) {
   const ws = await createTmpWorkspace();
   disposables.push(ws.cleanup);
   // 本地 SQLite 会话：id 与导入快照携带的会话语义冲突（same-session），
@@ -98,14 +98,14 @@ async function setup({ withImport = true, missingImport = false } = {}) {
     patterns: {},
   }));
   writeFileSync(join(ws.configDir, 'openclaw-usage-sync.json'), JSON.stringify(syncConfig({
-    imports: { allowedSourceIds: missingImport ? ['remote', 'missing'] : ['remote'] },
+    imports: { allowedSourceIds: missingImport ? ['remote', 'missing'] : [importSource.id] },
   })));
   if (withImport && !missingImport) {
     const importDir = join(ws.configDir, 'cache/openclaw-usage/imports');
     mkdirSync(importDir, { recursive: true });
-    writeFileSync(join(importDir, 'remote.json'), JSON.stringify(importedSnapshot()));
+    writeFileSync(join(importDir, `${importSource.id}.json`), JSON.stringify(importedSnapshot('openai', importSource)));
     const old = new Date('2026-04-20T00:00:00.000Z');
-    utimesSync(join(importDir, 'remote.json'), old, old);
+    utimesSync(join(importDir, `${importSource.id}.json`), old, old);
   }
   return ws;
 }
@@ -165,6 +165,15 @@ describe('multi-source stats aggregation', () => {
     expect(remote.staleSince).toBe('2026-04-20T01:00:00.000Z');
     expect(remote.status).toBe('stale');
     expect(result.statsBySource.remote.summary.totalTokens).toBeGreaterThan(0);
+  });
+
+  it('treats the one-time session archive import as static history', async () => {
+    await setup({ importSource: { id: 'archive-import', label: 'session 归档导入' } });
+    const result = await getStats({ waitForRefresh: true });
+    const archive = result.sources.find((source) => source.id === 'archive-import');
+
+    expect(archive).toMatchObject({ kind: 'archive', status: 'fresh', stale: false, staleSince: null });
+    expect(result.statsBySource['archive-import'].summary.totalTokens).toBeGreaterThan(0);
   });
 
   it('observes imported replacement and removal on the next request', async () => {

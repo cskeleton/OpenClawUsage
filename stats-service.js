@@ -741,6 +741,11 @@ async function getLocalStats({ forceFresh = false, waitForRefresh = false } = {}
 }
 
 const IMPORT_SUBDIR = 'cache/openclaw-usage/imports';
+const ARCHIVE_IMPORT_SOURCE_ID = 'archive-import';
+
+function importedSourceKind(sourceId) {
+  return sourceId === ARCHIVE_IMPORT_SOURCE_ID ? 'archive' : 'imported';
+}
 
 function importedSnapshotPath(sourceId) {
   return join(getOpenClawConfigDir(), IMPORT_SUBDIR, `${sourceId}.json`);
@@ -927,19 +932,21 @@ export async function getStats(options = {}) {
     const imported = importedById.get(sourceId);
     if (!imported) {
       statsBySource[sourceId] = attachPricingMeta(buildEmptyStats(), pricingConfig);
-      sources.push(addSourceInfo({ id: sourceId, label: sourceId }, 'imported', {
+      sources.push(addSourceInfo({ id: sourceId, label: sourceId }, importedSourceKind(sourceId), {
         status: 'missing',
       }));
       continue;
     }
     const generatedAt = imported.snapshot.generatedAt;
     const lastReceivedAt = imported.lastReceivedAt;
-    const staleSinceMs = Date.parse(lastReceivedAt)
-      + syncConfig.settings.intervalMinutes * 60 * 1000;
-    const staleSince = new Date(staleSinceMs).toISOString();
-    const status = now >= staleSinceMs ? 'stale' : 'fresh';
+    const isArchive = sourceId === ARCHIVE_IMPORT_SOURCE_ID;
+    const staleSinceMs = isArchive
+      ? null
+      : Date.parse(lastReceivedAt) + syncConfig.settings.intervalMinutes * 60 * 1000;
+    const staleSince = staleSinceMs === null ? null : new Date(staleSinceMs).toISOString();
+    const status = staleSinceMs !== null && now >= staleSinceMs ? 'stale' : 'fresh';
     statsBySource[sourceId] = statsForContributions(imported.files, pricingConfig, tzOffsetMinutes);
-    sources.push(addSourceInfo(imported.snapshot.source, 'imported', {
+    sources.push(addSourceInfo(imported.snapshot.source, importedSourceKind(sourceId), {
       status,
       lastReceivedAt,
       generatedAt,

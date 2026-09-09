@@ -220,6 +220,11 @@ describe('Dashboard multi-source DOM flow', () => {
 
   it('renders cache hierarchy and filter-aware source overview drill-down', async () => {
     const stats = makeStats();
+    stats.sources.push({ id: 'archive-import', label: 'session 归档导入', kind: 'archive', status: 'fresh' });
+    stats.statsBySource['archive-import'] = sourceStats(
+      'archive-import', 'session 归档导入', 'openai/gpt-4o', 300, 2,
+      Object.keys(stats.byDate).sort().at(-1), Object.keys(stats.byDate).sort().at(0),
+    );
     await loadDashboard([stats]);
 
     const cacheCard = document.querySelector('#summary-cards .stat-card:nth-child(4)');
@@ -233,6 +238,8 @@ describe('Dashboard multi-source DOM flow', () => {
     expect(overview.textContent).toContain('Local');
     expect(overview.textContent).toContain('MBP');
     expect(overview.textContent).toContain('Other');
+    expect(overview.textContent).not.toContain('session 归档导入');
+    expect(overview.querySelector('[data-source-overview-id="archive-import"]')).toBeNull();
     expect(overview.textContent).toContain('Stale');
     expect(overview.textContent).toContain('Missing');
 

@@ -243,7 +243,9 @@ function renderSourceOverview(filter) {
   const rowsContainer = document.getElementById('source-overview-rows');
   if (!container || !rowsContainer || !fullData) return;
 
-  const sources = Array.isArray(fullData.sources) ? fullData.sources : [];
+  const sources = Array.isArray(fullData.sources)
+    ? fullData.sources.filter((source) => source.kind !== 'archive')
+    : [];
   const visible = filterSource === 'all' && sources.length >= 2;
   container.hidden = !visible;
   if (!visible) {
